@@ -1,0 +1,12 @@
+{
+  "name": "错题收集工具",
+  "short_name": "错题本",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F2F2F7",
+  "theme_color": "#007AFF",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

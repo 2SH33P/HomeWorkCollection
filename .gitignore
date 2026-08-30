@@ -1,0 +1,23 @@
+# 敏感配置(包含 API Key)
+.ai_config.json
+
+# 用户数据
+错题库.json
+错题库_大题模板.json
+页/
+错题/
+
+# 运行/构建产物
+.tmp/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+download/
+测试/
+
+# 系统
+.DS_Store
+Thumbs.db
+.venv/

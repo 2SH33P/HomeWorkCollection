@@ -1,0 +1,1518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#007AFF">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<title>错题收集工具</title>
+<style>
+/* ===== Cupertino 设计令牌 (apple-design-skill) ===== */
+:root {
+  --accent: #007AFF; --danger: #FF3B30; --success: #34C759; --warn: #FF9500;
+  --t1: #1C1C1E; --t2: #3C3C43; --t3: #8E8E93;
+  --sep: rgba(60,60,67,.15);
+  --bg: #F2F2F7; --card: #FFFFFF; --elev: #F7F7F9;
+  --r-sm: 10px; --r-md: 14px; --r-lg: 18px;
+  --shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08);
+  --shadow-hover: 0 4px 12px rgba(0,0,0,.08), 0 14px 36px rgba(0,0,0,.12);
+  --motion: cubic-bezier(.4,0,.2,1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --t1: #F2F2F7; --t2: #D1D1D6; --t3: #8E8E93;
+    --sep: rgba(255,255,255,.14);
+    --bg: #000000; --card: #1C1C1E; --elev: #2C2C2E;
+    --accent: #0A84FF;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
+    --shadow-hover: 0 4px 12px rgba(0,0,0,.5), 0 14px 36px rgba(0,0,0,.6);
+  }
+}
+
+/* ===== silk 基础: 去回弹 + 细滚动条 ===== */
+html { scroll-behavior: smooth; }
+html, body { overscroll-behavior: none; }
+* { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,.3) transparent; }
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--t1);
+  padding-bottom: env(safe-area-inset-bottom);
+  touch-action: manipulation;
+}
+
+/* ===== 顶栏 ===== */
+header { padding: 28px 24px 14px; }
+header h1 { font-size: clamp(22px, 4vw, 28px); font-weight: 700; letter-spacing: .02em; }
+header p { color: var(--t3); font-size: 13px; margin-top: 4px; }
+nav { display: flex; gap: 8px; padding: 4px 24px 14px; position: sticky; top: 0; z-index: 40;
+      background: linear-gradient(var(--bg) 82%, transparent); }
+.seg { display: inline-flex; background: rgba(118,118,128,.14); border-radius: 10px; padding: 2px; }
+.seg button { border: none; background: none; padding: 8px 18px; min-height: 40px; border-radius: 8px;
+              font-size: 14px; color: var(--t2); cursor: pointer; transition: all .2s var(--motion); }
+.seg button.active { background: var(--card); color: var(--t1); font-weight: 600;
+                     box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+
+/* ===== 移动端底部 tab 栏 (silk 附录: 桌面侧边栏 -> 移动端底栏) ===== */
+.tabbar { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+          background: var(--card); border-top: 1px solid var(--sep);
+          padding-bottom: env(safe-area-inset-bottom); }
+.tabbar button { flex: 1; border: none; background: none; color: var(--t3); font-size: 11px;
+                 padding: 9px 4px 7px; display: flex; flex-direction: column; align-items: center;
+                 gap: 2px; cursor: pointer; min-height: 52px; transition: color .2s var(--motion); }
+.tabbar button .ic { font-size: 21px; line-height: 1; }
+.tabbar button.active { color: var(--accent); font-weight: 600; }
+
+main { max-width: 1280px; margin: 0 auto; padding: 8px 24px 90px; }
+section { display: none; }
+section.active { display: block; animation: fadeSlide .28s var(--motion); }
+@keyframes fadeSlide { from { opacity: 0; transform: translateY(8px); }
+                       to   { opacity: 1; transform: none; } }
+[data-reveal] { opacity: 0; transform: translateY(14px); transition:
+                opacity .5s ease-out, transform .5s ease-out; }
+[data-reveal].in { opacity: 1; transform: none; }
+
+/* ===== 通用组件 ===== */
+.card { background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow);
+        padding: 16px; transition: transform .2s var(--motion), box-shadow .2s var(--motion); }
+.btn { background: var(--accent); color: #fff; border: none; padding: 0 18px; height: 44px;
+       border-radius: 12px; font-size: 15px; font-weight: 500; cursor: pointer;
+       transition: transform .15s var(--motion), opacity .2s; white-space: nowrap; }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .5; pointer-events: none; }
+.btn.ghost { background: var(--elev); color: var(--accent); }
+.btn.danger { background: var(--danger); }
+select, input[type=text], input:not([type]) {
+  background: var(--elev); border: 1px solid transparent; color: var(--t1);
+  border-radius: var(--r-sm); padding: 9px 12px; font-size: 14px; font-family: inherit;
+  min-height: 40px; transition: box-shadow .2s var(--motion), border-color .2s;
+}
+select:focus, input:focus { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+label.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--t2);
+            cursor: pointer; min-height: 40px; }
+label.chk input { width: 18px; height: 18px; accent-color: var(--accent); }
+.hint { color: var(--t3); font-size: 12px; }
+
+/* ===== toast (silk: 成功绿色 / 信息深色) ===== */
+.toast { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%) translateY(10px);
+         background: var(--t1); color: var(--bg); padding: 10px 20px; border-radius: 999px;
+         font-size: 14px; opacity: 0; pointer-events: none; z-index: 99;
+         transition: all .25s var(--motion); max-width: 86vw; text-align: center; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.ok { background: var(--success); color: #fff; }
+.toast.err { background: var(--danger); color: #fff; }
+
+/* ===== 清理弹层 (移动端底部 sheet) ===== */
+.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 90;
+              display: none; align-items: flex-end; justify-content: center; }
+.modal-mask.show { display: flex; }
+.sheet { width: 100%; max-width: 880px; background: var(--card); border-radius: 20px 20px 0 0;
+         padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); max-height: 94vh;
+         overflow-y: auto; animation: sheetUp .28s var(--motion); }
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@media (min-width: 640px) {
+  .modal-mask { align-items: center; }
+  .sheet { border-radius: 20px; }
+}
+.sheet h3 { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+.sheet .sub { color: var(--t3); font-size: 12px; margin-bottom: 10px; }
+.sheet .ctools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.sheet .ctools .btn { height: 38px; padding: 0 14px; font-size: 13px; border-radius: 10px; }
+.sheet .ctools .btn.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sheet canvas { width: 100%; border-radius: var(--r-sm); background: #fff; cursor: crosshair;
+                display: block; touch-action: none; }
+.sheet .cops { display: flex; gap: 10px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+
+/* ===== 上传区 ===== */
+#drop { border: 2px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+        border-radius: var(--r-lg); padding: 30px 20px; text-align: center; cursor: pointer;
+        background: color-mix(in srgb, var(--card) 60%, transparent);
+        transition: all .2s var(--motion); }
+#drop:hover { background: var(--card); }
+#drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+#drop input { display: none; }
+#drop .big { font-size: 34px; }
+#drop .t { font-size: 15px; font-weight: 600; margin-top: 8px; }
+
+/* ===== 跨页拼接 ===== */
+.merge-card { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.merge-card .m-title { font-size: 14px; font-weight: 600; width: 100%; }
+.merge-card .m-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* ===== 页面缩略图 ===== */
+.pages { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.page-thumb { width: 108px; cursor: pointer; border-radius: var(--r-sm); padding: 4px;
+              background: var(--card); box-shadow: var(--shadow); border: 2px solid transparent;
+              position: relative; transition: transform .15s var(--motion), border-color .2s; }
+.page-thumb:hover { transform: translateY(-2px); }
+.page-thumb.active { border-color: var(--accent); }
+.page-thumb img { width: 100%; height: 76px; object-fit: cover; border-radius: 7px; }
+.page-thumb .pn { font-size: 11px; color: var(--t3); text-align: center; margin-top: 3px; }
+.page-thumb .pdel { position: absolute; top: 6px; right: 6px; background: rgba(255,59,48,.92);
+                     color: #fff; border: none; border-radius: 6px; padding: 2px 8px; cursor: pointer;
+                     font-size: 11px; opacity: 0; transition: opacity .15s; }
+.page-thumb:hover .pdel { opacity: 1; }
+
+/* ===== 编辑器 ===== */
+.editor { display: flex; gap: 16px; margin-top: 14px; align-items: flex-start; }
+.canvas-wrap { flex: 1; min-width: 0; background: var(--card); border-radius: var(--r-lg);
+               box-shadow: var(--shadow); padding: 12px; }
+.crop-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 8px;
+            background: color-mix(in srgb, var(--warn) 10%, var(--card));
+            border-radius: var(--r-sm); border: 1px dashed var(--warn); }
+.crop-bar .hint { flex: 1; }
+.crop-bar .btn { height: 34px; padding: 0 14px; font-size: 13px; }
+canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-sm);
+         touch-action: none; }
+.side { width: 330px; background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow);
+        padding: 14px; max-height: 80vh; overflow-y: auto; position: sticky; top: 60px; }
+.side h3 { font-size: 13px; color: var(--t2); margin-bottom: 10px; font-weight: 600; }
+.box-card { border: 1px solid var(--sep); border-radius: var(--r-md); padding: 10px; margin-bottom: 10px;
+            animation: fadeSlide .2s var(--motion); }
+.box-card .bhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.box-card .bno { font-weight: 700; color: var(--danger); font-size: 14px; }
+.box-card .badge { font-size: 11px; background: color-mix(in srgb, var(--warn) 18%, transparent);
+                   color: var(--warn); border-radius: 5px; padding: 2px 7px; margin-left: 6px; }
+.box-card input, .box-card select { width: 100%; margin-bottom: 6px; }
+.box-card .row2 { display: flex; gap: 6px; }
+.box-card .row2 select { flex: 0 0 92px; }
+.box-card .del { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 13px; }
+.box-card .mini { font-size: 12px; color: var(--accent); background: none; border: none;
+                  cursor: pointer; padding: 5px 0; }
+.box-card .mini.on { color: var(--accent); font-weight: 700; outline: 1px solid var(--accent);
+                      border-radius: 6px; padding: 4px 8px; }
+.box-card .brow { display: flex; gap: 14px; }
+.actions { display: flex; gap: 10px; margin-top: 6px; }
+.subj-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.subj-line select { flex: 1; }
+.pg-group { margin-bottom: 6px; }
+.pg-head { font-size: 12px; font-weight: 700; color: var(--t2); margin: 8px 0 6px;
+           display: flex; align-items: center; gap: 6px; }
+.pg-head::before { content: ""; width: 3px; height: 11px; background: var(--accent); border-radius: 2px; }
+.pg-head .cnt { font-size: 10px; font-weight: 400; color: var(--t3); background: var(--elev);
+                border-radius: 999px; padding: 0 7px; }
+.box-card.dim { opacity: .65; }
+
+/* ===== 错题库 ===== */
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.toolbar .count { color: var(--t3); font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+/* 科目相册卡片(仿 iOS 相册分组) */
+.album-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
+.album-card { display: block; background: transparent; border-radius: 0; cursor: pointer;
+              overflow: hidden; transition: transform .15s var(--motion); }
+.album-card:hover { transform: translateY(-2px); box-shadow: none; }
+.album-card:active { transform: scale(.985); }
+.album-thumbs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px;
+                aspect-ratio: 2 / 1; overflow: hidden; border-radius: 12px; background: var(--elev); }
+.album-thumbs img { width: 100%; height: 100%; object-fit: cover; background: #fff; }
+.album-name { padding: 8px 2px 2px; font-size: 17px; font-weight: 800; color: var(--t1); }
+.album-name span { font-size: 13px; font-weight: 400; color: var(--t3); margin-left: 8px; }
+/* 相册内顶部返回栏 */
+.album-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 18px;
+              font-size: 20px; font-weight: 800; color: var(--t1); }
+.album-head button { border: none; background: none; color: var(--accent); font-size: 17px;
+                     cursor: pointer; padding: 6px 10px 6px 0; font-weight: 600; }
+/* 大题分组标题(第二级) */
+.chapter-head { font-size: 17px; font-weight: 800; color: var(--t1); margin: 22px 0 4px;
+                display: flex; align-items: center; gap: 8px; }
+.chapter-head::before { content: ""; width: 4px; height: 15px; background: var(--accent);
+                        border-radius: 2px; }
+.chapter-head .cnt { font-size: 11px; font-weight: 400; color: var(--t3);
+                     background: var(--elev); border-radius: 999px; padding: 0 8px; }
+/* 日期是照片墙的一级标题, 左对齐 */
+.date-head { font-size: clamp(26px, 3vw, 34px); line-height: 1.15; font-weight: 700;
+             letter-spacing: 0; color: var(--t1); margin: 28px 0 14px; text-align: left; }
+.date-head:first-child { margin-top: 0; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 2px; }
+.card.photo-card { min-width: 0; padding: 0; border-radius: 0; box-shadow: none; background: var(--elev);
+                   aspect-ratio: 1; overflow: hidden; cursor: pointer; }
+.card.photo-card:hover { transform: none; box-shadow: none; }
+.card.photo-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card.photo-card.selected { outline: 4px solid var(--accent); outline-offset: -4px; }
+.card.photo-card .cln, .card.photo-card .aif { top: 6px; opacity: 0; }
+.card.photo-card .cln { left: 6px; }
+.card.photo-card .aif { left: 66px; }
+.card.photo-card .meta { display: none; }
+.card { overflow: hidden; cursor: pointer; position: relative; }
+.card.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+.card.fig-issue { outline: 2px solid var(--danger); outline-offset: -2px; }
+.card.fig-issue.selected { outline: 4px solid var(--danger); outline-offset: -4px; }
+.card.fig-issue .fig-tag { position: absolute; bottom: 38px; right: 6px; background: var(--danger);
+                            color: #fff; font-size: 10px; border-radius: 5px; padding: 1px 6px; z-index: 3; }
+.card img { width: 100%; height: 140px; object-fit: cover; background: #fff; display: block; }
+.card .meta { padding: 10px; font-size: 12px; color: var(--t2); }
+.card .meta b { color: var(--t1); display: block; margin-bottom: 4px; }
+.card .badge { display: inline-block; background: var(--elev); border-radius: 5px; padding: 2px 7px;
+               margin: 1px 4px 0 0; font-size: 11px; }
+.card .rm { position: absolute; bottom: 8px; right: 8px; width: 26px; height: 26px;
+            border-radius: 50%; background: rgba(255,59,48,.92); color: #fff; border: none;
+            display: flex; align-items: center; justify-content: center; font-size: 15px;
+            line-height: 1; cursor: pointer; padding: 0; opacity: 0; transition: opacity .15s;
+            box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+.card .cln { position: absolute; top: 8px; left: 8px; background: rgba(0,122,255,.92); color: #fff;
+             border: none; border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+             opacity: 0; transition: opacity .15s; }
+.card .aif { position: absolute; top: 8px; left: 68px; background: rgba(52,199,89,.92); color: #fff;
+             border: none; border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+             opacity: 0; transition: opacity .15s; }
+.card:hover .rm, .card:hover .cln, .card:hover .aif { opacity: 1; }
+/* 选中勾选框(右上角, iOS 相册风格) */
+.sel-badge { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px;
+             border-radius: 50%; border: 2.5px solid #fff; background: rgba(0,0,0,.28);
+             color: transparent; display: flex; align-items: center; justify-content: center;
+             font-size: 13px; font-weight: 700; z-index: 3; cursor: pointer;
+             box-shadow: 0 1px 4px rgba(0,0,0,.4); transition: all .15s var(--motion); }
+.sel-badge.on { background: var(--accent); border-color: var(--accent); color: #fff;
+                box-shadow: 0 1px 6px rgba(0,122,255,.55); }
+.sel-badge:hover { transform: scale(1.12); }
+.empty { color: var(--t3); text-align: center; padding: 48px 0; }
+
+/* ===== 题目预览/编辑弹层 ===== */
+.prev-sheet { max-width: 1020px; }
+.prev-grid { display: flex; gap: 16px; }
+.prev-img { flex: 1; min-width: 0; background: #fff; border-radius: var(--r-sm);
+            position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.prev-img img { max-width: 100%; max-height: 68vh; object-fit: contain; }
+#pvCv { position: absolute; display: none; background: transparent;
+        cursor: crosshair; touch-action: none; }
+#pvCv.on { display: block; }
+#cfigCv { position: absolute; display: none; background: transparent;
+          cursor: crosshair; touch-action: none; }
+#cfigMask.show #cfigCv { display: block; }
+#pvCropHint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+              background: rgba(0,0,0,.65); color: #fff; padding: 4px 12px; border-radius: 6px;
+              font-size: 12px; z-index: 5; white-space: nowrap; }
+.prev-side { width: 360px; display: flex; flex-direction: column; gap: 9px; }
+.prev-side .fld { display: flex; flex-direction: column; gap: 4px; }
+.prev-side .fld span { font-size: 12px; color: var(--t3); }
+.prev-side textarea { resize: vertical; min-height: 170px; font-family: inherit; line-height: 1.6; }
+.prev-ops { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+#pvToggle.on { background: var(--elev); color: var(--accent); outline: 2px solid var(--accent); }
+.fig-warn { color: var(--danger) !important; font-weight: 600; }
+
+/* ===== 组卷已选列表 ===== */
+.paper-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px;
+             border-radius: var(--r-sm); animation: fadeSlide .2s var(--motion); }
+.paper-row:nth-child(odd) { background: var(--elev); }
+.paper-row img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; background: #fff; }
+.pr-info { flex: 1; min-width: 0; }
+.pr-info b { display: block; font-size: 14px; margin-bottom: 3px; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis; }
+.pr-info .badge { display: inline-block; background: var(--card); border-radius: 5px;
+                  padding: 2px 7px; margin: 1px 4px 0 0; font-size: 11px; }
+.pr-ops { display: flex; gap: 6px; }
+.pr-ops button { border: none; background: var(--card); border-radius: 7px; padding: 5px 10px;
+                 cursor: pointer; font-size: 13px; color: var(--accent);
+                 box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.pr-ops .pr-del { color: var(--danger); }
+/* 大题模板管理 */
+.tpl-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
+.tpl-row input { flex: 1; }
+.tpl-del { border: none; background: var(--elev); color: var(--danger); border-radius: 7px;
+           padding: 6px 12px; cursor: pointer; min-height: 40px; }
+@media (max-width: 639px) {
+  .prev-grid { flex-direction: column; }
+  .prev-side { width: 100%; }
+  .pr-info b { white-space: normal; }
+}
+
+@media (max-width: 639px) {
+  header { padding: 20px 18px 10px; }
+  nav { display: none; }
+  .tabbar { display: flex; }
+  main { padding: 6px 16px 96px; }
+  .editor { flex-direction: column; }
+  .side { width: 100%; max-height: none; position: static; }
+  .card .rm { opacity: 1; }
+  .card .cln { opacity: 1; }
+  .card .aif { opacity: 1; }
+  .photo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sel-badge { width: 34px; height: 34px; font-size: 16px; top: 6px; right: 6px; }
+  .card.photo-card .cln, .card.photo-card .aif { top: 4px; padding: 2px 5px; font-size: 10px; border-radius: 5px; }
+  .card.photo-card .rm { bottom: 4px; right: 4px; }
+  .card.photo-card .cln { left: 4px; }
+  .card.photo-card .aif { left: 44px; }
+  .page-thumb .pdel { opacity: 1; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>错题收集</h1>
+  <p>拍一整页，框选题目，重新组卷</p>
+</header>
+
+<nav>
+  <div class="seg">
+    <button data-tab="editor" class="active">① 整页框选</button>
+    <button data-tab="library">② 错题库</button>
+    <button data-tab="paper">③ 组卷打印</button>
+  </div>
+</nav>
+
+<main>
+  <!-- ========== ① 整页框选 ========== -->
+  <section id="tab-editor" class="active">
+    <div id="drop">
+      <input type="file" id="file" accept="image/*" multiple>
+      <div class="big"></div>
+      <div class="t">点击或拖入整页照片</div>
+      <div class="hint" style="margin-top:6px">支持 jpg / png / webp，可多选；手机拍照直接上传</div>
+    </div>
+
+    <div class="card merge-card" data-reveal>
+      <div class="m-title">跨页拼接 <span class="hint">—— 一道题跨正反两页时：两张照片拼成一张，再正常框选</span></div>
+      <div class="m-row">
+        <select id="m1"></select><span class="hint">＋</span><select id="m2"></select>
+        <label class="chk"><input type="checkbox" id="flip2"> 第二页已翻转 180°</label>
+        <button class="btn" id="mergeBtn">拼接</button>
+      </div>
+    </div>
+
+    <div class="pages" id="pages"></div>
+
+    <div class="editor" id="editorArea" style="display:none">
+      <div class="canvas-wrap" id="canvasWrap">
+        <div class="crop-bar" id="cropBar" style="display:none">
+          <span class="hint">裁图模式：在红色题框内拖拽框选图形区域</span>
+          <button class="btn" id="cropOk">确认</button>
+          <button class="btn ghost" id="cropCancel">取消</button>
+        </div>
+        <canvas id="cv"></canvas>
+        <div class="hint" style="margin-top:8px"> 拖拽框选题目 · 在框内按住可微调 · 点「 续块」把同一题的接续部分连在一起 · 保存后 AI 自动识别文字并裁剪题内图形</div>
+      </div>
+      <div class="side">
+        <h3>框选列表（<span id="boxCount">0</span> 题）</h3>
+        <div class="subj-line">
+          <span class="hint">科目（统一）</span>
+          <select id="curSubj"></select>
+        </div>
+        <div id="boxList"></div>
+        <div class="actions">
+          <button class="btn" id="saveBtn"> 保存到错题库</button>
+          <button class="btn ghost" id="clearBtn">清空全部</button>
+        </div>
+        <div class="hint" style="margin-top:8px">列表汇总所有整页的框选 · 保存后自动 AI 识别文字并裁剪题内图形</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ② 错题库 ========== -->
+  <section id="tab-library">
+    <div class="toolbar">
+      <span class="count" id="libCount">共 0 题</span>
+      <button class="btn ghost" id="selAll">全选</button>
+      <button class="btn ghost" id="selNone">清空选择</button>
+      <button class="btn danger" id="selDel" style="display:none">删除选中</button>
+      <span class="count" id="selCount">已选 0 题</span>
+    </div>
+    <div id="libGrid"></div>
+  </section>
+
+  <!-- ========== ③ 组卷 ========== -->
+  <section id="tab-paper">
+    <div class="card" style="max-width:660px">
+      <h3 style="margin-bottom:8px"> 错题重组试卷</h3>
+      <p style="font-size:13px;color:var(--t2);line-height:1.8">
+        在「② 错题库」勾选要组卷的题目  生成试卷页面：
+        自动编号、按勾选顺序排列，可直接打印或另存为 PDF。
+        同一题的「续块」会合并编号，显示为 (续)。
+      </p>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" id="paperBtn"> 生成试卷（网页打印）</button>
+        <button class="btn" id="pdfBtn"> 生成 PDF（Typst）</button>
+      </div>
+      <div class="hint" style="margin-top:8px">打印对话框选「另存为 PDF」即导出电子版</div>
+    </div>
+    <div class="card paper-card" style="max-width:660px;margin-top:14px">
+      <h3 style="margin-bottom:6px">已选题目（按顺序编号）</h3>
+      <div class="hint" style="margin-bottom:10px;line-height:1.7">
+        在「② 错题库」点图片，在预览里点「加入组卷」。这里可上下调整顺序决定题号，
+        同「大题归属」的题自动归为一道大题（黑体标题）。
+      </div>
+      <div id="paperList"></div>
+      <div class="empty" id="paperEmpty">还没选题目，去「② 错题库」点图片加入</div>
+    </div>
+    <div class="card" style="max-width:660px;margin-top:14px">
+      <h3 style="margin-bottom:6px">大题模板</h3>
+      <div class="hint" style="line-height:1.7;margin-bottom:10px">按科目预设大题归类，框选题目和预览里可直接选择</div>
+      <div class="actions" style="margin-bottom:10px">
+        <select id="tplSubject" style="flex:0 0 120px"></select>
+        <button class="btn ghost" id="tplAdd">添加大题</button>
+        <button class="btn" id="tplSave">保存模板</button>
+      </div>
+      <div id="tplList"></div>
+      <div class="hint" id="tplEmpty" style="display:none">该科目还没有大题，点「添加大题」开始设置</div>
+    </div>
+  </section>
+</main>
+
+<!-- 移动端底部 tab 栏 -->
+<div class="tabbar">
+  <button data-tab="editor" class="active">整页框选</button>
+  <button data-tab="library">错题库</button>
+  <button data-tab="paper">组卷</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 清理弹层 -->
+<div class="modal-mask" id="cleanMask">
+  <div class="sheet">
+    <h3> 清理错题图片</h3>
+    <div class="sub">去除红笔批改与手写痕迹 · 保存前原图自动备份为「_原版」</div>
+    <div class="ctools">
+      <button class="btn" id="clnRed"> 去红笔</button>
+      <button class="btn" id="clnErase"> 橡皮擦</button>
+      <button class="btn ghost" id="clnUndo"> 撤销一步</button>
+      <button class="btn ghost" id="clnReset"> 重来</button>
+    </div>
+    <canvas id="clnCv"></canvas>
+    <div class="cops">
+      <label class="chk"><input type="checkbox" id="clnKeep" checked> 保留原版副本</label>
+      <button class="btn" id="clnSave"> 保存</button>
+      <button class="btn ghost" id="clnClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 题目预览/编辑弹层 -->
+<div class="modal-mask" id="prevMask">
+  <div class="sheet prev-sheet">
+    <div class="prev-grid">
+      <div class="prev-img" id="pvImgWrap"><img id="pvImg" alt="">
+        <canvas id="pvCv"></canvas>
+        <div class="hint" id="pvCropHint" style="display:none">拖拽框选图形区域</div>
+      </div>
+      <div class="prev-side">
+        <h3>题目详情</h3>
+        <div class="hint" id="pvMeta"></div>
+        <label class="fld"><span>标题</span><input type="text" id="pvTitle" placeholder="未命名"></label>
+        <label class="fld"><span>科目</span><select id="pvSubject"></select></label>
+        <label class="fld"><span>大题归属</span><input type="text" id="pvChapter" list="chapterTpl" placeholder="如：三、解答题（同大题的题会归到一起，大题标题用黑体）">
+          <datalist id="chapterTpl">
+            <option value="一、选择题"><option value="二、填空题"><option value="三、解答题">
+            <option value="四、计算题"><option value="五、实验题"><option value="六、证明题">
+          </datalist></label>
+        <label class="fld"><span>识别内容（公式用 $...$，图形位置 AI 会自动标 [图]）</span>
+          <textarea id="pvNote" rows="10"></textarea></label>
+        <div class="prev-ops">
+          <button class="btn ghost" id="pvCropBtn">裁图</button>
+          <button class="btn" id="pvCropOk" style="display:none">确认裁剪</button>
+          <button class="btn ghost" id="pvCropCancel" style="display:none">取消</button>
+          <button class="btn" id="pvSave">保存</button>
+          <button class="btn ghost" id="pvToggle">加入组卷</button>
+          <button class="btn ghost" id="pvClose">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const SUBJECTS = ["数学", "物理", "化学", "生物", "英语", "语文", "其他"];
+const REASONS = ["概念不清", "计算失误", "审题错误", "方法不当", "记忆不牢", "其他"];
+
+let pages = [], curPage = null, img = null, imgW = 0, imgH = 0, scale = 1;
+let boxes = [], drag = null, selected = new Set(), library = [];
+// 初始化科目下拉
+(() => {
+  const sel = $("pvSubject");
+  sel.innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("") + "<option>未分类</option>";
+})();
+
+/* ---------- toast (silk: 成功绿 / 错误红) ---------- */
+function toast(msg, kind = "") {
+  const t = $("toast");
+  t.textContent = msg; t.className = "toast show " + kind;
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2400);
+}
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.msg || r.statusText);
+  return d;
+}
+
+/* ---------- 标签切换 (silk: fadeSlide 过渡) ---------- */
+function switchTab(name) {
+  document.querySelectorAll("nav .seg button, .tabbar button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("main section").forEach(s =>
+    s.classList.toggle("active", s.id === "tab-" + name));
+  if (name === "library") loadLibrary();
+  if (name === "paper") { updateSelCount(); renderPaperList(); }
+}
+document.querySelectorAll("nav .seg button, .tabbar button").forEach(b =>
+  b.onclick = () => switchTab(b.dataset.tab));
+
+/* ---------- silk: 进场揭示 ---------- */
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+}), { threshold: .15 });
+document.querySelectorAll("[data-reveal]").forEach(el => io.observe(el));
+
+/* ---------- 上传 ---------- */
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); uploadFiles([...e.dataTransfer.files]); };
+$("file").onchange = e => uploadFiles([...e.target.files]);
+
+async function uploadFiles(files) {
+  for (const f of files) {
+    const fd = new FormData(); fd.append("file", f);
+    try { const d = await api("/api/upload", { method: "POST", body: fd });
+          toast(`已上传「${d.name}」`, "ok"); }
+    catch (err) { toast("上传失败: " + err.message, "err"); }
+  }
+  $("file").value = "";
+  await loadPages();
+}
+
+/* ---------- 页面列表 ---------- */
+async function loadPages() {
+  pages = await api("/api/pages");
+  const box = $("pages");
+  box.innerHTML = pages.map(p => `
+    <div class="page-thumb ${p.page === curPage ? "active" : ""}" data-page="${p.page}">
+      <button class="pdel" data-page="${p.page}">删</button>
+      <img src="${p.web_url}"><div class="pn">${timeLabel(p.page)}</div>
+    </div>`).join("") || '<div class="hint">还没有上传整页照片</div>';
+  box.querySelectorAll(".page-thumb").forEach(el => el.onclick = () => openEditor(el.dataset.page));
+  box.querySelectorAll(".pdel").forEach(btn => btn.onclick = async e => {
+    e.stopPropagation();
+    if (!confirm("删除这张整页照片？已裁剪的错题不受影响。")) return;
+    await api("/api/page/" + btn.dataset.page, { method: "DELETE" });
+    if (curPage === btn.dataset.page) { curPage = null; $("editorArea").style.display = "none"; }
+    loadPages(); toast("已删除", "ok");
+  });
+  fillMergeSelects();
+  if (pages.length && !curPage) openEditor(pages[0].page);
+}
+function timeLabel(pid) {
+  const ms = parseInt(pid.replace("p", ""), 10);
+  if (!ms) return pid;
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/* ---------- 跨页拼接 ---------- */
+function fillMergeSelects() {
+  const opts = pages.map(p =>
+    `<option value="${p.page}">${timeLabel(p.page)} 上传的整页</option>`).join("");
+  $("m1").innerHTML = opts; $("m2").innerHTML = opts;
+  if (pages.length > 1) $("m2").selectedIndex = 1;
+}
+$("mergeBtn").onclick = async () => {
+  const p1 = $("m1").value, p2 = $("m2").value;
+  if (!p1 || !p2 || p1 === p2) return toast("请选择两页不同的照片", "err");
+  const btn = $("mergeBtn"); btn.disabled = true; btn.textContent = "拼接中…";
+  try {
+    const d = await api("/api/merge", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pages: [p1, p2], flip2: $("flip2").checked }) });
+    toast(" 拼接完成，已在下方打开", "ok");
+    await loadPages();
+    openEditor(d.page);
+  } catch (err) { toast("拼接失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "拼接";
+};
+
+/* ---------- 编辑器 ---------- */
+async function openEditor(pageId) {
+  curPage = pageId;
+  $("editorArea").style.display = "flex";
+  document.querySelectorAll(".page-thumb").forEach(el =>
+    el.classList.toggle("active", el.dataset.page === pageId));
+  const page = pages.find(p => p.page === pageId);
+  img = new Image();
+  img.onload = () => { imgW = img.naturalWidth; imgH = img.naturalHeight;
+                       boxes = loadBoxes(pageId); renderCanvas(); renderBoxList(); };
+  img.src = page.web_url;
+}
+function loadBoxes(pid) { try { return JSON.parse(localStorage.getItem("boxes_" + pid)) || []; } catch { return []; } }
+function saveBoxes() { localStorage.setItem("boxes_" + curPage, JSON.stringify(boxes));
+                       $("boxCount").textContent = boxes.length; }
+function uid() { return Date.now() + "_" + Math.random().toString(36).slice(2, 7); }
+
+/* ---------- Canvas ---------- */
+const cv = $("cv"), ctx = cv.getContext("2d");
+function renderCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  // 桌面双栏(canvas+侧栏)减侧栏宽, 手机单栏直接用画布容器宽
+  const wrapW = Math.min($("canvasWrap").clientWidth - 24, 1200);
+  if (wrapW < 100) { cv.style.width = "100%"; return; }
+  scale = imgW / wrapW;
+  const dispW = wrapW, dispH = imgH / scale;
+  cv.style.width = dispW + "px"; cv.style.height = dispH + "px";
+  cv.width = dispW * dpr; cv.height = dispH * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.drawImage(img, 0, 0, dispW, dispH);
+  const firstOf = {}; // group -> 首个成员
+  boxes.forEach(b => { if (b.group && !(b.group in firstOf)) firstOf[b.group] = b.id; });
+  boxes.forEach((b, i) => {
+    const x = b.x / scale, y = b.y / scale, w = b.w / scale, h = b.h / scale;
+    const isCont = b.group && firstOf[b.group] !== b.id;
+    ctx.fillStyle = isCont ? "rgba(255,149,0,.14)" : "rgba(0,122,255,.13)";
+    ctx.strokeStyle = isCont ? "#FF9500" : "#007AFF";
+    ctx.lineWidth = 2; ctx.setLineDash(isCont ? [7, 5] : []);
+    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = isCont ? "#FF9500" : "#007AFF";
+    ctx.font = "bold 14px sans-serif";
+    const label = (isCont ? "续 " : "") + (i + 1) + (b.title ? "·" + b.title : "");
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillRect(x, y - 20, tw, 20);
+    ctx.fillStyle = "#fff"; ctx.fillText(label, x + 5, y - 6);
+    // 四角手柄(可拖动微调)
+    const hs = 5;
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = isCont ? "#FF9500" : "#007AFF";
+    ctx.lineWidth = 1.5;
+    [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([hx, hy]) => {
+      ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
+      ctx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+    });
+  });
+  if (cropMode) {                        // 裁图模式: 红色题框 + 蓝色图形框
+    const bx = cropMode.x / scale, by = cropMode.y / scale;
+    const bw = cropMode.w / scale, bh = cropMode.h / scale;
+    ctx.strokeStyle = "rgba(255,59,48,.85)"; ctx.lineWidth = 3;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = "rgba(255,59,48,.05)"; ctx.fillRect(bx, by, bw, bh);
+    if (cropRect) {
+      const gx = cropRect.x / scale, gy = cropRect.y / scale;
+      const gw = cropRect.w / scale, gh = cropRect.h / scale;
+      ctx.fillStyle = "rgba(0,122,255,.22)"; ctx.strokeStyle = "#007AFF";
+      ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+      ctx.fillRect(gx, gy, gw, gh); ctx.strokeRect(gx, gy, gw, gh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(0,122,255,.9)"; ctx.fillRect(gx, gy - 20, 64, 18);
+      ctx.fillStyle = "#fff"; ctx.font = "bold 12px sans-serif";
+      ctx.fillText("图形区域", gx + 5, gy - 6);
+      // 四角手柄(可拖动调整)
+      const hs = 5;
+      ctx.fillStyle = "#fff"; ctx.strokeStyle = "#007AFF"; ctx.lineWidth = 1.5;
+      [[gx, gy], [gx + gw, gy], [gx, gy + gh], [gx + gw, gy + gh]].forEach(([hx, hy]) => {
+        ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
+        ctx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+      });
+    }
+  }
+}
+function mousePos(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * scale, y: (e.clientY - r.top) * scale };
+}
+function cropHit(p) {                 // 裁图模式下图形框的命中检测(拖动/调整)
+  if (!cropRect) return null;
+  const T = 22 / scale, r = cropRect;
+  const inX = p.x >= r.x - T && p.x <= r.x + r.w + T;
+  const inY = p.y >= r.y - T && p.y <= r.y + r.h + T;
+  if (!inX || !inY) return null;
+  const nearL = Math.abs(p.x - r.x) <= T, nearR = Math.abs(p.x - (r.x + r.w)) <= T;
+  const nearT = Math.abs(p.y - r.y) <= T, nearB = Math.abs(p.y - (r.y + r.h)) <= T;
+  if (nearL && nearT) return { mode: "resize", edge: "nw" };
+  if (nearR && nearT) return { mode: "resize", edge: "ne" };
+  if (nearL && nearB) return { mode: "resize", edge: "sw" };
+  if (nearR && nearB) return { mode: "resize", edge: "se" };
+  if (nearL || nearR) return { mode: "resize", edge: nearL ? "w" : "e" };
+  if (nearT || nearB) return { mode: "resize", edge: nearT ? "n" : "s" };
+  return { mode: "move", offX: p.x - r.x, offY: p.y - r.y };
+}
+function hitTest(p) {
+  const T = 22 / scale;                    // 角/边命中容差(约22px, 触摸友好)
+  for (const b of boxes) {
+    const inX = p.x >= b.x - T && p.x <= b.x + b.w + T;
+    const inY = p.y >= b.y - T && p.y <= b.y + b.h + T;
+    if (inX && inY) {
+      const nearL = Math.abs(p.x - b.x) <= T, nearR = Math.abs(p.x - (b.x + b.w)) <= T;
+      const nearT = Math.abs(p.y - b.y) <= T, nearB = Math.abs(p.y - (b.y + b.h)) <= T;
+      if (nearL && nearT) return { mode: "resize", b, edge: "nw" };
+      if (nearR && nearT) return { mode: "resize", b, edge: "ne" };
+      if (nearL && nearB) return { mode: "resize", b, edge: "sw" };
+      if (nearR && nearB) return { mode: "resize", b, edge: "se" };
+      if (nearL || nearR) return { mode: "resize", b, edge: nearL ? "w" : "e" };
+      if (nearT || nearB) return { mode: "resize", b, edge: nearT ? "n" : "s" };
+      return { mode: "move", b, offX: p.x - b.x, offY: p.y - b.y };
+    }
+  }
+  return null;
+}
+
+function cvDown(e) {
+  const p = mousePos(e);
+  if (cropMode) {                       // 裁图模式: 新建/拖动/调整图形框
+    const hit = cropHit(p);
+    if (hit) cropDrag = hit;
+    else { cropDrag = { mode: "new", startX: p.x, startY: p.y }; cropRect = null; }
+    return;
+  }
+  const hit = hitTest(p);
+  if (hit) drag = hit.mode === "resize"
+    ? { mode: "resize", b: hit.b, edge: hit.edge }
+    : { mode: "move", boxId: hit.b.id, offX: hit.offX, offY: hit.offY };
+  else drag = { mode: "new", startX: p.x, startY: p.y };
+};
+function cvMove(e) {
+  if (cropMode) {                       // 裁图模式: 新建/拖动/调整图形框
+    if (!cropDrag) return;
+    const p = mousePos(e);
+    const r = cropRect, MIN = 20;
+    if (cropDrag.mode === "new") {
+      cropRect = { x: Math.min(cropDrag.startX, p.x), y: Math.min(cropDrag.startY, p.y),
+                   w: Math.abs(p.x - cropDrag.startX), h: Math.abs(p.y - cropDrag.startY) };
+    } else if (cropDrag.mode === "move" && r) {
+      r.x = Math.max(0, Math.min(imgW - r.w, p.x - cropDrag.offX));
+      r.y = Math.max(0, Math.min(imgH - r.h, p.y - cropDrag.offY));
+    } else if (cropDrag.mode === "resize" && r) {
+      const e = cropDrag.edge;
+      if (e.includes("e")) r.w = Math.max(MIN, Math.min(imgW - r.x, p.x - r.x));
+      if (e.includes("s")) r.h = Math.max(MIN, Math.min(imgH - r.y, p.y - r.y));
+      if (e.includes("w")) { const nx = Math.min(p.x, r.x + r.w - MIN); r.w += r.x - nx; r.x = Math.max(0, nx); }
+      if (e.includes("n")) { const ny = Math.min(p.y, r.y + r.h - MIN); r.h += r.y - ny; r.y = Math.max(0, ny); }
+    }
+    renderCanvas();
+    return;
+  }
+  if (!drag) return;
+  const p = mousePos(e);
+  if (drag.mode === "new") {
+    const b = boxes.find(x => x.id === "new");
+    if (b) { b.x = Math.min(drag.startX, p.x); b.y = Math.min(drag.startY, p.y);
+             b.w = Math.abs(p.x - drag.startX); b.h = Math.abs(p.y - drag.startY); }
+    else boxes.push({ id: "new", x: drag.startX, y: drag.startY, w: 0, h: 0,
+                      title: "", subject: "数学", chapter: "", reason: "", note: "", group: "" });
+  } else if (drag.mode === "resize") {
+    const b = drag.b, MIN = 30;
+    if (drag.edge.includes("e")) b.w = Math.max(MIN, Math.min(imgW - b.x, p.x - b.x));
+    if (drag.edge.includes("s")) b.h = Math.max(MIN, Math.min(imgH - b.y, p.y - b.y));
+    if (drag.edge.includes("w")) { const nx = Math.min(p.x, b.x + b.w - MIN); b.w += b.x - nx; b.x = Math.max(0, nx); }
+    if (drag.edge.includes("n")) { const ny = Math.min(p.y, b.y + b.h - MIN); b.h += b.y - ny; b.y = Math.max(0, ny); }
+  } else {
+    const b = boxes.find(x => x.id === drag.boxId);
+    if (b) { b.x = Math.max(0, Math.min(imgW - b.w, p.x - drag.offX));
+             b.y = Math.max(0, Math.min(imgH - b.h, p.y - drag.offY)); }
+  }
+  renderCanvas();
+};
+function cvUp() {
+  if (cropMode) { cropDrag = null; return; }   // 裁图模式: 结束图形框拖拽
+  if (!drag) return;
+  let needList = false;
+  if (drag.mode === "new") {
+    const b = boxes.find(x => x.id === "new");
+    if (b && (b.w < 15 || b.h < 15)) boxes = boxes.filter(x => x.id !== "new");
+    else if (b) { b.id = uid(); if (pendingGroup) b.group = pendingGroup; needList = true; }
+  }
+  drag = null; saveBoxes();
+  if (needList) renderBoxList();      // 先持久化再刷新列表
+};
+/* 统一 Pointer Events: 鼠标+触摸都走这里, 单一事件源 */
+cv.addEventListener("pointerdown", cvDown);
+cv.addEventListener("pointermove", cvMove);
+cv.addEventListener("pointerup", cvUp);
+cv.addEventListener("pointercancel", cvUp);
+/* 阻止触摸滚动/缩放, 避免坐标漂移 */
+cv.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
+
+/* ---------- 框选列表(多页统一) + 续块分组 ---------- */
+let curSubject = localStorage.getItem("curSubject") || "数学";
+let pendingGroup = null;    // 跨页续块: 点某框「续块」后, 新框选自动并入该组
+$("curSubj").innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("") + "<option>未分类</option>";
+$("curSubj").value = curSubject;
+$("curSubj").onchange = () => {
+  curSubject = $("curSubj").value;
+  localStorage.setItem("curSubject", curSubject);
+  renderBoxList(); updateChapterDatalist(curSubject);
+};
+
+function allPageBoxes() {
+  const out = [];
+  for (const pg of pages) {
+    const bs = loadBoxes(pg.page);
+    if (bs.length) out.push({ pid: pg.page, boxes: bs });
+  }
+  return out;
+}
+
+function boxCardHTML(b, i, pid) {
+  const isCont = b.group && loadBoxes(pid).find(x => x.id === b.group);
+  const other = pid !== curPage;
+  return `
+    <div class="box-card ${other ? "dim" : ""}" data-id="${b.id}" data-pid="${pid}">
+      <div class="bhead">
+        <span class="bno">#${i + 1}${other ? ` <span class="badge">${timeLabel(pid)}</span>` : ""}${b.group ? '<span class="badge">续块组</span>' : ""}</span>
+        <button class="del" data-id="${b.id}"> 删除</button>
+      </div>
+      <div class="row2">
+        <span class="subj-note">${esc(curSubject)}</span>
+        <input type="text" data-f="chapter" list="chapterTpl" value="${esc(b.chapter)}" placeholder="大题归类">
+      </div>
+      <select data-f="reason">${REASONS.map(r => `<option ${r === b.reason ? "selected" : ""}>${r}</option>`).join("")}</select>
+      <input type="text" data-f="note" value="${esc(b.note)}" placeholder="备注（错因细节）">
+      <div class="brow">
+        <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
+        <button class="mini cfig" data-id="${b.id}">裁图</button>
+      </div>
+    </div>`;
+}
+
+function renderBoxList() {
+  const el = $("boxList");
+  const groups = allPageBoxes();
+  let total = 0;
+  el.innerHTML = groups.map(g => {
+    total += g.boxes.length;
+    return `<div class="pg-group">
+      <div class="pg-head">${timeLabel(g.pid)} <span class="cnt">${g.boxes.length} 题</span></div>
+      ${g.boxes.map((b, i) => boxCardHTML(b, i, g.pid)).join("")}
+    </div>`;
+  }).join("") || '<div class="hint">在下方整页图上拖拽框选题目</div>';
+  $("boxCount").textContent = total;
+  el.querySelectorAll(".del").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const bs = loadBoxes(pid).filter(x => x.id !== bid);
+    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    if (pid === curPage) { boxes = bs; renderCanvas(); }
+    renderBoxList();
+  });
+  el.querySelectorAll(".cfig").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    enterCropMode(pid, bid);
+  });
+  el.querySelectorAll(".cont").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (pendingGroup === bid) {          // 再点一次: 取消续块
+      pendingGroup = null;
+      if (b && b.group === bid) b.group = "";
+      toast("已取消续块", "");
+    } else {
+      pendingGroup = bid;
+      if (b && !b.group) b.group = bid;  // 源框成为组首
+      toast("已标记续块：接下来在任意页新框选的框将并入此题（可跨页）", "ok");
+    }
+    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    if (pid === curPage) { boxes = bs; renderCanvas(); }
+    renderBoxList();
+  });
+  el.querySelectorAll("input[data-f], select[data-f]").forEach(inp => {
+    const card = inp.closest(".box-card"), pid = card.dataset.pid, bid = card.dataset.id;
+    inp.oninput = inp.onchange = () => {
+      const bs = loadBoxes(pid);
+      const b = bs.find(x => x.id === bid);
+      if (b) b[inp.dataset.f] = inp.value;
+      localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+      if (pid === curPage) { boxes = bs; renderCanvas(); }
+    };
+  });
+  updateChapterDatalist(curSubject);
+}
+/* ---------- 裁图模式: 在原图画布上直接框选, 换算坐标 ---------- */
+let cropMode = null, cropRect = null, cropDrag = null;
+
+function enterCropMode(pid, bid) {
+  if (pid !== curPage) {                 // 框在别的页: 先切过去
+    const thumb = document.querySelector(`.page-thumb[data-page="${pid}"]`);
+    if (thumb) thumb.click();
+    setTimeout(() => enterCropMode(pid, bid), 900);
+    return;
+  }
+  const bs = loadBoxes(pid);
+  const b = bs.find(x => x.id === bid);
+  if (!b) return toast("未找到该框选", "err");
+  cropMode = { pid, bid, x: b.x, y: b.y, w: b.w, h: b.h };
+  cropRect = null; cropDrag = null;
+  $("cropBar").style.display = "flex";
+  toast("在该题框内拖拽框选图形区域", "ok");
+  renderCanvas();
+}
+function exitCropMode() {
+  cropMode = null; cropRect = null; cropDrag = null;
+  $("cropBar").style.display = "none";
+  renderCanvas();
+}
+$("cropCancel").onclick = exitCropMode;
+$("cropOk").onclick = () => {
+  if (!cropRect || cropRect.w < 10 || cropRect.h < 10) return toast("先拖拽框选图形区域", "err");
+  const b = cropMode;
+  // 画布(缩略图)坐标 -> 相对题图的 0-1000 坐标
+  const rx = Math.max(0, Math.min(1000, (cropRect.x - b.x) / b.w * 1000));
+  const ry = Math.max(0, Math.min(1000, (cropRect.y - b.y) / b.h * 1000));
+  const rw = Math.max(20, Math.min(1000 - rx, cropRect.w / b.w * 1000));
+  const rh = Math.max(20, Math.min(1000 - ry, cropRect.h / b.h * 1000));
+  const tag = `[图@${Math.round(rx)},${Math.round(ry)},${Math.round(rw)},${Math.round(rh)}]`;
+  const bs = loadBoxes(b.pid);
+  const box = bs.find(x => x.id === b.bid);
+  if (box) {
+    const note = (box.note || "").trim();
+    box.note = note ? note + "\n" + tag : tag;
+    localStorage.setItem("boxes_" + b.pid, JSON.stringify(bs));
+    toast("图形已标记，保存后自动裁剪插入", "ok");
+  }
+  exitCropMode();
+  renderBoxList();
+};
+
+function esc(s) { return (s || "").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+$("clearBtn").onclick = () => {
+  if (!allPageBoxes().length) return;
+  if (!confirm("清空所有整页的框选？")) return;
+  for (const pg of pages) localStorage.removeItem("boxes_" + pg.page);
+  boxes = []; renderBoxList(); renderCanvas(); saveBoxes();
+};
+
+/* ---------- 保存裁剪(保存所有页的框选, 统一科目) ---------- */
+$("saveBtn").onclick = async () => {
+  const groups = allPageBoxes();
+  const total = groups.reduce((n, g) => n + g.boxes.length, 0);
+  if (!total) return toast("还没有框选任何题目", "err");
+  const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "保存中…";
+  let saved = 0, failed = null;
+  for (const g of groups) {
+    const payload = g.boxes.map(b => ({
+      subject: curSubject, chapter: b.chapter, title: b.title,
+      reason: b.reason, note: b.note, group: b.group || "",
+      x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h),
+    }));
+    try {
+      const d = await api("/api/crop", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page: g.pid, boxes: payload }) });
+      saved += d.count;
+      localStorage.removeItem("boxes_" + g.pid);
+    } catch (err) { failed = err.message; break; }
+  }
+  for (const pg of pages) {
+    if (!localStorage.getItem("boxes_" + pg.page)) continue;
+    if (!loadBoxes(pg.page).length) localStorage.removeItem("boxes_" + pg.page);
+  }
+  boxes = []; pendingGroup = null; renderBoxList(); renderCanvas(); saveBoxes();
+  if (failed) toast("部分失败: " + failed, "err");
+  else toast(`已保存 ${saved} 道，AI 自动识别文字并裁剪题内图形…`, "ok");
+  loadLibrary();
+  setTimeout(loadLibrary, 8000);   // 后台 AI 识别完成后刷新显示文字
+  btn.disabled = false; btn.textContent = " 保存到错题库";
+};
+
+/* ---------- 错题库 ---------- */
+function cardHTML(it, compact = false) {
+  return `
+    <div class="card ${compact ? "photo-card" : ""} ${it.fig_issue ? "fig-issue" : ""} ${selected.has(it.id) ? "selected" : ""}" data-id="${it.id}">
+      ${it.fig_issue ? '<span class="fig-tag">图未裁</span>' : ""}
+      <div class="sel-badge" data-id="${it.id}">${selected.has(it.id) ? [...selected].indexOf(it.id) + 1 : ""}</div>
+      <button class="cln" data-id="${it.id}"> 清理</button>
+      <button class="aif" data-id="${it.id}">AI识别</button>
+      <button class="rm" data-id="${it.id}" title="删除">×</button>
+      <img src="/files/${it.image}" loading="lazy" alt="错题图片">
+      ${compact ? "" : `<div class="meta">
+        <b>${esc(it.title || "未命名")}${it.group ? ' <span class="badge">多块</span>' : ""}</b>
+        <span class="badge">${esc(it.subject)}</span>${it.chapter ? `<span class="badge">${esc(it.chapter)}</span>` : ""}${it.reason ? `<span class="badge">${esc(it.reason)}</span>` : ""}
+        <div style="color:var(--t3);margin-top:4px">${esc(it.created)}</div>
+      </div>`}
+    </div>`;
+}
+
+/* ===== iPhone 相册式: 科目=相册, 点进去按日期分组 ===== */
+let libView = { mode: "subjects" };        // subjects | album
+
+function fmtDate(d) {
+  const p = d.split("-");
+  return `${parseInt(p[1])}月${parseInt(p[2])}日`;
+}
+
+function renderSubjects() {
+  const bySubj = {};
+  library.forEach(it => {
+    const s = it.subject || "未分类";
+    (bySubj[s] = bySubj[s] || []).push(it);
+  });
+  const subs = Object.keys(bySubj).sort();
+  const cards = subs.map(s => {
+    const items = bySubj[s];
+    const thumbs = items.slice(0, 4).map(it =>
+      `<img src="/files/${it.image}" loading="lazy">`).join("");
+    return `<div class="album-card" data-subj="${esc(s)}">
+      <div class="album-thumbs">${thumbs}</div>
+      <div class="album-name">${esc(s)}<span>${items.length} 题</span></div>
+    </div>`;
+  }).join("");
+  $("libGrid").innerHTML = cards
+    ? `<div class="album-list">${cards}</div>`
+    : '<div class="empty">还没有错题，去「① 整页框选」裁剪几道吧</div>';
+  $("libGrid").querySelectorAll(".album-card").forEach(c => c.onclick = () => {
+    libView = { mode: "album", subject: c.dataset.subj };
+    renderLibrary();
+  });
+}
+
+function renderAlbum(subj) {
+  const items = library.filter(it => (it.subject || "未分类") === subj);
+  // 第二级: 大题归属
+  const byChapter = {};
+  items.forEach(it => {
+    const c = (it.chapter || "").trim() || "未分类";
+    (byChapter[c] = byChapter[c] || []).push(it);
+  });
+  let html = `<div class="album-head"><button id="backBtn">‹ 科目</button>`
+           + `<span>${esc(subj)}</span></div>`;
+  for (const c of Object.keys(byChapter)) {
+    // 第三级: 日期(新到旧)
+    const byDate = {};
+    byChapter[c].forEach(it => {
+      const d = (it.created || "").slice(0, 10);
+      (byDate[d] = byDate[d] || []).push(it);
+    });
+    const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+    html += `<div class="chapter-head">${esc(c)}<span class="cnt">${byChapter[c].length}</span></div>`;
+    for (const d of dates) {
+      html += `<div class="date-head">${fmtDate(d)}</div>`
+           + `<div class="photo-grid">${byDate[d].map(it => cardHTML(it, true)).join("")}</div>`;
+    }
+  }
+  $("libGrid").innerHTML = html;
+  const back = $("backBtn");
+  if (back) back.onclick = () => { libView = { mode: "subjects" }; renderLibrary(); };
+}
+
+function renderLibrary() {
+  if (libView.mode === "subjects") renderSubjects();
+  else renderAlbum(libView.subject);
+  bindCards();
+  updateSelCount();
+}
+
+function bindCards() {
+  $("libGrid").querySelectorAll(".card").forEach(c => c.onclick = e => {
+    if (e.target.classList.contains("rm") || e.target.classList.contains("cln")
+        || e.target.classList.contains("aif") || e.target.classList.contains("sel-badge")) return;
+    const it = library.find(i => i.id === c.dataset.id);
+    if (it) openPreview(it);
+  });
+  $("libGrid").querySelectorAll(".sel-badge").forEach(badge => badge.onclick = e => {
+    e.stopPropagation();
+    const id = badge.closest(".card").dataset.id;
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+    renderSelected();
+  });
+  $("libGrid").querySelectorAll(".rm").forEach(btn => btn.onclick = async e => {
+    e.stopPropagation();
+    if (!confirm("删除这道错题？")) return;
+    await api("/api/item/" + btn.dataset.id, { method: "DELETE" });
+    selected.delete(btn.dataset.id);
+    loadLibrary(); updateSelCount(); toast("已删除", "ok");
+  });
+  $("libGrid").querySelectorAll(".cln").forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    const it = library.find(i => i.id === btn.dataset.id);
+    if (it) openClean(it);
+  });
+  $("libGrid").querySelectorAll(".aif").forEach(btn => btn.onclick = async e => {
+    e.stopPropagation();
+    const it = library.find(i => i.id === btn.dataset.id);
+    if (!it) return;
+    btn.disabled = true; btn.textContent = "识别中…";
+    try {
+      const d = await api("/api/ocr/ai", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: it.image }) });
+      if (d.text) {
+        await api("/api/item/" + it.id, { method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ note: d.text }) });
+        toast("AI 已识别（公式为 LaTeX）", "ok");
+        loadLibrary();
+      } else toast("未识别到内容", "err");
+    } catch (err) { toast("识别失败: " + err.message, "err"); }
+  });
+}
+
+async function loadLibrary() {
+  const d = await api("/api/items");
+  library = d.items;
+  $("libCount").textContent = `共 ${library.length} 题`;
+  renderLibrary();
+}
+
+/* ---------- 去手写 / 清理 ---------- */
+const cln = { item: null, actions: [], img: null, nw: 0, nh: 0, scale: 1,
+              erasing: false, stroke: [], drawing: false };
+const ccv = $("clnCv"), cctx = ccv.getContext("2d");
+
+function openClean(item) {
+  cln.item = item; cln.actions = []; cln.erasing = false; cln.stroke = [];
+  $("clnErase").classList.remove("on");
+  $("cleanMask").classList.add("show");
+  const im = new Image();
+  im.onload = () => { cln.nw = im.naturalWidth; cln.nh = im.naturalHeight;
+                      drawClean(im, []); };
+  im.src = "/files/" + item.image;
+}
+
+function drawClean(img, stroke) {
+  cln.img = img;
+  const dpr = window.devicePixelRatio || 1;
+  const wrapW = Math.min($("cleanMask").clientWidth - 40, 820);
+  cln.scale = cln.nw / wrapW;
+  const dispW = wrapW, dispH = cln.nh / cln.scale;
+  ccv.style.width = dispW + "px"; ccv.style.height = dispH + "px";
+  ccv.width = dispW * dpr; ccv.height = dispH * dpr;
+  cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cctx.drawImage(img, 0, 0, dispW, dispH);
+  if (stroke && stroke.length > 1) {
+    cctx.strokeStyle = "rgba(255,59,48,.55)"; cctx.lineWidth = 12; cctx.lineCap = "round";
+    cctx.beginPath();
+    stroke.forEach((p, i) => i ? cctx.lineTo(p.x / cln.scale, p.y / cln.scale)
+                               : cctx.moveTo(p.x / cln.scale, p.y / cln.scale));
+    cctx.stroke();
+  }
+}
+
+function clnPos(e) {
+  const r = ccv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * cln.scale, y: (e.clientY - r.top) * cln.scale };
+}
+
+async function applyCleanPreview(popOnError = true) {
+  if (!cln.actions.length) { drawClean(cln.img, []); return; }
+  try {
+    const d = await api("/api/clean/preview", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: cln.item.image, actions: cln.actions }) });
+    const im = new Image();
+    im.onload = () => drawClean(im, []);
+    im.src = d.url;
+  } catch (err) {
+    if (popOnError) cln.actions.pop();
+    toast(err.message, "err");
+    applyCleanPreview(false);
+  }
+}
+
+$("clnRed").onclick = () => { cln.actions.push({ type: "red" }); applyCleanPreview(); };
+$("clnErase").onclick = () => {
+  cln.erasing = !cln.erasing;
+  $("clnErase").classList.toggle("on", cln.erasing);
+  ccv.style.cursor = cln.erasing ? "cell" : "crosshair";
+};
+$("clnUndo").onclick = () => { cln.actions.pop(); applyCleanPreview(); };
+$("clnReset").onclick = () => { cln.actions = []; applyCleanPreview(); };
+$("clnClose").onclick = () => $("cleanMask").classList.remove("show");
+$("cleanMask").onclick = e => { if (e.target === $("cleanMask")) $("cleanMask").classList.remove("show"); };
+
+ccv.onmousedown = e => {
+  if (!cln.erasing) return;
+  cln.drawing = true; cln.stroke = [clnPos(e)];
+};
+ccv.onmousemove = e => {
+  if (!cln.drawing) return;
+  cln.stroke.push(clnPos(e));
+  drawClean(cln.img, cln.stroke);
+};
+ccv.onmouseup = () => {
+  if (!cln.drawing) return;
+  cln.drawing = false;
+  if (cln.stroke.length > 1) {
+    cln.actions.push({ type: "mask", radius: 24, strokes: [cln.stroke.map(p => [Math.round(p.x), Math.round(p.y)])] });
+    applyCleanPreview();
+  }
+  cln.stroke = [];
+};
+/* 统一 Pointer Events */
+ccv.addEventListener("pointerdown", ccv.onmousedown);
+ccv.addEventListener("pointermove", ccv.onmousemove);
+ccv.addEventListener("pointerup", ccv.onmouseup);
+ccv.addEventListener("pointercancel", ccv.onmouseup);
+ccv.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
+
+$("clnSave").onclick = async () => {
+  if (!cln.actions.length) return toast("还没有做任何清理", "err");
+  const btn = $("clnSave"); btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    const d = await api("/api/clean/save", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: cln.item.image, actions: cln.actions,
+                             keep_original: $("clnKeep").checked }) });
+    toast(" 已清理" + (d.backup ? "，原图备份为 _原版" : ""), "ok");
+    $("cleanMask").classList.remove("show");
+    loadLibrary();
+  } catch (err) { toast("保存失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = " 保存";
+};
+function updateSelCount() { $("selCount").textContent = `已选 ${selected.size} 题`;
+  $("selDel").style.display = selected.size ? "" : "none"; }
+$("selAll").onclick = () => { library.forEach(i => selected.add(i.id)); renderSelected(); };
+$("selNone").onclick = () => { selected.clear(); renderSelected(); };
+$("selDel").onclick = async () => {
+  if (!selected.size) return;
+  if (!confirm(`删除选中的 ${selected.size} 道错题？删除后不可恢复！`)) return;
+  const ids = [...selected];
+  for (const id of ids) {
+    try { await api("/api/item/" + id, { method: "DELETE" }); } catch { }
+  }
+  selected.clear();
+  toast(`已删除 ${ids.length} 道错题`, "ok");
+  loadLibrary();
+};
+function renderSelected() {
+  document.querySelectorAll("#libGrid .card").forEach(c => {
+    const id = c.dataset.id;
+    const on = selected.has(id);
+    c.classList.toggle("selected", on);
+    const badge = c.querySelector(".sel-badge");
+    if (badge) {
+      badge.classList.toggle("on", on);
+      badge.textContent = on ? [...selected].indexOf(id) + 1 : "";
+    }
+  });
+  updateSelCount();
+}
+
+/* ---------- 题目预览/编辑 ---------- */
+let pvItem = null;
+function openPreview(it) {
+  pvItem = it;
+  pvCropOn = false; pvRect = null; pvDrag = null;
+  pvcv.classList.remove("on"); $("pvCropBtn").classList.remove("on");
+  $("pvCropOk").style.display = "none"; $("pvCropCancel").style.display = "none";
+  $("pvCropHint").style.display = "none";
+  $("pvImg").src = "/files/" + it.image;
+  $("pvTitle").value = it.title || "";
+  $("pvSubject").value = it.subject || "未分类";
+  $("pvChapter").value = it.chapter || "";
+  $("pvNote").value = it.note || "";
+  $("pvMeta").textContent = (it.created || "") + (it.group ? " · 多块续接" : "");
+  $("pvMeta").classList.toggle("fig-warn", !!it.fig_issue);
+  $("pvMeta").textContent += it.fig_issue ? " · 图形未裁剪，请点「裁图」手动框选" : "";
+  updateChapterDatalist($("pvSubject").value);
+  updatePvToggle();
+  $("prevMask").classList.add("show");
+}
+function updatePvToggle() {
+  const b = $("pvToggle");
+  if (pvItem && selected.has(pvItem.id)) {
+    b.textContent = "移出组卷"; b.classList.add("on");
+  } else {
+    b.textContent = "加入组卷"; b.classList.remove("on");
+  }
+}
+$("pvToggle").onclick = () => {
+  if (!pvItem) return;
+  selected.has(pvItem.id) ? selected.delete(pvItem.id) : selected.add(pvItem.id);
+  renderSelected(); updatePvToggle();
+};
+$("pvSave").onclick = async () => {
+  if (!pvItem) return;
+  const btn = $("pvSave"); btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    await api("/api/item/" + pvItem.id, { method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: $("pvTitle").value, subject: $("pvSubject").value,
+                             chapter: $("pvChapter").value, note: $("pvNote").value }) });
+    pvItem.title = $("pvTitle").value; pvItem.subject = $("pvSubject").value;
+    pvItem.chapter = $("pvChapter").value; pvItem.note = $("pvNote").value;
+    toast("已保存", "ok");
+    loadLibrary();
+  } catch (err) { toast("保存失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "保存";
+};
+$("pvClose").onclick = () => $("prevMask").classList.remove("show");
+$("pvSubject").onchange = () => updateChapterDatalist($("pvSubject").value);
+$("prevMask").onclick = e => { if (e.target === $("prevMask")) $("prevMask").classList.remove("show"); };
+
+/* ---------- 手动裁图: 在预览大图上框选图形区域 -> [图@x,y,w,h] ---------- */
+let pvCropOn = false, pvDrag = null, pvRect = null, pvScale = 1;
+const pvcv = $("pvCv"), pvctx = pvcv.getContext("2d");
+
+function pvResizeCv() {
+  const im = $("pvImg"), wrap = $("pvImgWrap");
+  const ir = im.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  // canvas 精确覆盖图片显示区域(含居中偏移), 保证坐标空间与图片一致
+  pvcv.style.left = (ir.left - wr.left) + "px";
+  pvcv.style.top = (ir.top - wr.top) + "px";
+  pvcv.style.width = ir.width + "px";
+  pvcv.style.height = ir.height + "px";
+  pvcv.width = Math.round(ir.width * dpr);
+  pvcv.height = Math.round(ir.height * dpr);
+  pvctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pvScale = im.naturalWidth / ir.width;
+}
+function pvDraw() {
+  pvctx.clearRect(0, 0, pvcv.width, pvcv.height);
+  if (!pvRect) return;
+  pvctx.fillStyle = "rgba(0,122,255,.18)";
+  pvctx.strokeStyle = "#007AFF"; pvctx.lineWidth = 2; pvctx.setLineDash([6, 4]);
+  pvctx.fillRect(pvRect.x, pvRect.y, pvRect.w, pvRect.h);
+  pvctx.strokeRect(pvRect.x, pvRect.y, pvRect.w, pvRect.h);
+  pvctx.setLineDash([]);
+  pvctx.fillStyle = "rgba(0,122,255,.9)"; pvctx.fillRect(pvRect.x, pvRect.y - 20, 60, 18);
+  pvctx.fillStyle = "#fff"; pvctx.font = "12px sans-serif";
+  pvctx.fillText("图形区域", pvRect.x + 6, pvRect.y - 6);
+}
+function pvPos(e) {
+  const r = pvcv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+pvcv.addEventListener("pointerdown", e => {
+  if (!pvCropOn) return;
+  pvResizeCv();                         // 每次框选前对齐 canvas 与图片实际显示尺寸
+  const p = pvPos(e);
+  pvDrag = { x0: p.x, y0: p.y }; pvRect = null; pvcv.setPointerCapture(e.pointerId);
+});
+pvcv.addEventListener("pointermove", e => {
+  if (!pvCropOn || !pvDrag) return;
+  const p = pvPos(e);
+  pvRect = { x: Math.min(pvDrag.x0, p.x), y: Math.min(pvDrag.y0, p.y),
+             w: Math.abs(p.x - pvDrag.x0), h: Math.abs(p.y - pvDrag.y0) };
+  pvDraw();
+});
+pvcv.addEventListener("pointerup", () => { pvDrag = null; });
+
+$("pvCropBtn").onclick = () => {
+  pvCropOn = !pvCropOn;
+  pvcv.classList.toggle("on", pvCropOn);
+  $("pvCropBtn").classList.toggle("on", pvCropOn);
+  $("pvCropOk").style.display = pvCropOn ? "" : "none";
+  $("pvCropCancel").style.display = pvCropOn ? "" : "none";
+  $("pvCropHint").style.display = pvCropOn ? "block" : "none";
+  if (pvCropOn) {
+    const im = $("pvImg");
+    const start = () => { pvResizeCv(); pvRect = null; pvDraw(); };
+    if (im.complete && im.naturalWidth) start();
+    else { im.onload = start; }        // 图片加载完再对齐, 避免坐标偏移
+  } else { pvctx.clearRect(0, 0, pvcv.width, pvcv.height); }
+};
+$("pvCropCancel").onclick = () => { $("pvCropBtn").click(); };
+$("pvCropOk").onclick = () => {
+  if (!pvRect || pvRect.w < 20 || pvRect.h < 20) return toast("先拖拽框选图形区域", "err");
+  pvResizeCv();                         // 用最新图片尺寸做比例换算
+  const dispW = parseFloat(pvcv.style.width) || 1;
+  const dispH = parseFloat(pvcv.style.height) || 1;
+  const x = Math.round(pvRect.x / dispW * 1000);
+  const y = Math.round(pvRect.y / dispH * 1000);
+  const w = Math.round(pvRect.w / dispW * 1000);
+  const h = Math.round(pvRect.h / dispH * 1000);
+  const tag = `[图@${Math.max(0, x)},${Math.max(0, y)},${Math.min(1000, w)},${Math.min(1000, h)}]`;
+  const note = $("pvNote").value.trim();
+  $("pvNote").value = note ? note + "\n" + tag : tag;
+  toast("图形位置已标记，保存后生成 PDF 时自动裁剪插入", "ok");
+  $("pvCropBtn").click();          // 关闭裁图模式
+};
+
+/* ---------- 组卷列表(选图顺序 = 题号顺序) ---------- */
+function renderPaperList() {
+  const arr = [...selected];
+  $("paperEmpty").style.display = arr.length ? "none" : "block";
+  $("paperList").innerHTML = arr.map((id, i) => {
+    const it = library.find(x => x.id === id);
+    if (!it) return "";
+    return `<div class="paper-row" data-i="${i}">
+      <img src="/files/${it.image}" loading="lazy">
+      <div class="pr-info"><b>${i + 1}. ${esc(it.title || "未命名")}</b>
+        <span class="badge">${esc(it.subject)}</span>${it.chapter ? `<span class="badge">${esc(it.chapter)}</span>` : ""}
+      </div>
+      <div class="pr-ops">
+        <button class="pr-up">↑</button>
+        <button class="pr-down">↓</button>
+        <button class="pr-del">移除</button>
+      </div>
+    </div>`;
+  }).join("");
+  $("paperList").querySelectorAll(".pr-up").forEach(b =>
+    b.onclick = () => movePaper(+b.closest(".paper-row").dataset.i, -1));
+  $("paperList").querySelectorAll(".pr-down").forEach(b =>
+    b.onclick = () => movePaper(+b.closest(".paper-row").dataset.i, 1));
+  $("paperList").querySelectorAll(".pr-del").forEach(b =>
+    b.onclick = () => removePaper(+b.closest(".paper-row").dataset.i));
+}
+function movePaper(i, d) {
+  const arr = [...selected];
+  const j = i + d;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  selected = new Set(arr);
+  renderPaperList();
+}
+function removePaper(i) {
+  const arr = [...selected];
+  selected.delete(arr[i]);
+  renderPaperList(); renderSelected();
+}
+
+/* ---------- 组卷 ---------- */
+$("pdfBtn").onclick = async () => {
+  if (!selected.size) return toast("先在错题库里勾选题目", "err");
+  const btn = $("pdfBtn"); btn.disabled = true; btn.textContent = "排版中…";
+  try {
+    const d = await api("/api/paper/pdf?ids=" + [...selected].join(","));
+    window.open(d.url, "_blank");
+    toast(`已生成 ${d.count} 题的 PDF`, "ok");
+  } catch (err) { toast("生成失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "生成 PDF（Typst）";
+};
+
+/* ---------- 大题模板(按科目) ---------- */
+let TPLS = {};
+async function loadTpl() {
+  try { TPLS = (await api("/api/chapter-tpl")).templates || {}; } catch { TPLS = {}; }
+}
+function updateChapterDatalist(subj) {
+  const dl = $("chapterTpl");
+  if (dl) dl.innerHTML = (TPLS[subj] || []).map(t => `<option value="${esc(t)}">`).join("");
+}
+function renderTplList() {
+  const subj = $("tplSubject").value;
+  const list = TPLS[subj] || [];
+  $("tplEmpty").style.display = list.length ? "none" : "block";
+  $("tplList").innerHTML = list.map((t, i) => `
+    <div class="tpl-row" data-i="${i}">
+      <input type="text" value="${esc(t)}" placeholder="大题名，如：一、选择题">
+      <button class="tpl-del">删</button>
+    </div>`).join("");
+  $("tplList").querySelectorAll("input").forEach(inp => inp.oninput = () => {
+    const i = +inp.closest(".tpl-row").dataset.i;
+    (TPLS[subj] || (TPLS[subj] = []))[i] = inp.value;
+  });
+  $("tplList").querySelectorAll(".tpl-del").forEach(b => b.onclick = () => {
+    const i = +b.closest(".tpl-row").dataset.i;
+    (TPLS[subj] || []).splice(i, 1);
+    renderTplList();
+  });
+}
+$("tplSubject").innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("");
+$("tplSubject").onchange = renderTplList;
+$("tplAdd").onclick = () => {
+  const subj = $("tplSubject").value || "未分类";
+  (TPLS[subj] = TPLS[subj] || []).push("");
+  renderTplList();
+};
+$("tplSave").onclick = async () => {
+  const btn = $("tplSave"); btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    const d = await api("/api/chapter-tpl", { method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templates: TPLS }) });
+    TPLS = d.templates;
+    toast("大题模板已保存", "ok");
+  } catch (err) { toast("保存失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "保存模板";
+};
+
+/* ---------- 启动 ---------- */
+loadPages();
+loadLibrary();
+loadTpl();
+window.addEventListener("resize", () => { if (img) renderCanvas(); });
+</script>
+</body>
+</html>
