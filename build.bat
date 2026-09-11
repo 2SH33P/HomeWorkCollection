@@ -31,12 +31,12 @@ python -m venv .venv
 :deps
 echo 安装依赖与打包工具（约3-5分钟）...
 ".venv\Scripts\python.exe" -m pip install -q --upgrade pip
-".venv\Scripts\python.exe" -m pip install -q pyinstaller fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy
+".venv\Scripts\python.exe" -m pip install -q pyinstaller fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
 if errorlevel 1 goto deps_fail
 
 echo 开始打包...
-".venv\Scripts\python.exe" -m PyInstaller --onefile --name 错题收集工具 ^
-  --add-data "工具\错题裁剪工具\static;static" ^
+".venv\Scripts\python.exe" -m PyInstaller --onefile --name HomeWorkCollection ^
+  --add-data "tools\crop-tool\static;static" ^
   --hidden-import uvicorn.logging ^
   --hidden-import uvicorn.loops.auto ^
   --hidden-import uvicorn.protocols.http.auto ^
@@ -46,8 +46,9 @@ echo 开始打包...
 if errorlevel 1 goto build_fail
 
 echo.
-echo 完成! 免安装版: dist\错题收集工具.exe
-echo 拷到任何电脑双击即用，数据保存在 exe 同目录。
+echo 完成! 免安装版: dist\HomeWorkCollection.exe
+echo 使用时把 exe 与 fonts、typst-packages 两个文件夹放在同一目录，
+echo 数据(pages、items、library.json)也会保存在该目录。
 echo.
 pause
 exit /b 0
