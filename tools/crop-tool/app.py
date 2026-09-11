@@ -1110,7 +1110,27 @@ def call_ai_vision(img_rgb):
     _, buf = cv2.imencode(".jpg", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR),
                           [cv2.IMWRITE_JPEG_QUALITY, 90])
     b64 = base64.b64encode(buf).decode()
-    prompt = '你是试卷题目识别工具。识别图片中的题目，注意：\n1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n3. 忽略与题目无关的内容：专题/章节标题、知识点标签、出题人/审题人署名、页码、页眉页脚、水印、练习册名称等，只保留题目本身的题干和选项；\n4. 第一行输出【题干】，后跟题干文字；\n5. 只输出题干与选项本身。绝对不要输出答案、解析、点评、解题过程、方法总结、易错点等任何附加内容(图片中即使有也全部忽略)：题干括号中的答案如（A）（D C）、选项后的对勾√×、答案行、答案解析段落一律忽略，无论括号是否闭合；\n6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / D．选项内容（用全角句点．）；\n7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界（含图形外框线），不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，如 [图@620,280,240,180]，没有图形不要加。\n输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n只输出识别结果，不要解释。'
+    prompt = ('你是试卷题目识别工具。识别图片中的题目，注意：\n'
+              '1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n'
+              '2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n'
+              '3. 忽略与题目无关的内容：页眉页脚、页码、水印、练习册名称、出题人/审题人署名；'
+              '但题目自带的提示语、注意事项、说明文字要保留；\n'
+              '4. 第一行输出【题干】，后跟题干文字；\n'
+              '5. 只输出题干与选项本身。绝对不要输出答案、解析、点评、解题过程、方法总结等任何附加内容'
+              '（图片中即使有也全部忽略）：题干括号中的答案如（A）（D C）、选项后的对勾√×、答案行、'
+              '答案解析段落一律忽略，无论括号是否闭合；\n'
+              '6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / '
+              'D．选项内容（用全角句点．）；\n'
+              '7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n'
+              '8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界（含图形外框线），'
+              '不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，'
+              '如 [图@620,280,240,180]，没有图形不要加。\n')
+    if ai_config().get("font_marks", True):
+        prompt += ('9. 还原原题的字体差异：原题中明显加粗或黑体的文字用 **文字** 标记；'
+                   '明显是楷体的文字用 *文字* 标记；普通宋体不加标记；'
+                   '只对确实能分辨的印刷体标记，不确定或手写内容不要标记；\n')
+    prompt += ('输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
+               '只输出识别结果，不要解释。')
     body = {
         "model": ai_config()["model"] or "glm-4v-flash",
         "messages": [{"role": "user", "content": [
@@ -1214,10 +1234,12 @@ def render_simple(txt, it, lines):
 
     def md(t):
         out = ""
-        for seg in re.split(r"(\*\*.+?\*\*|\*[^*]+?\*)", t):
+        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*)", t):
             if not seg:
                 continue
-            if seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
+            if seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
+                out += "#kb[" + esc1(seg[3:-3]) + "]"
+            elif seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
                 out += "*" + esc1(seg[2:-2]) + "*"
             elif seg.startswith("*") and seg.endswith("*") and len(seg) > 2:
                 out += "_" + esc1(seg[1:-1]) + "_"
@@ -1297,7 +1319,9 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         '#let F_LATIN = "Times New Roman"',                          # 西文/数字: 保留真粗体与真斜体
         '#let F_SONG = (F_LATIN, "SimSun")',                         # 正文: 中文宋体
         '#let F_HEI = (F_LATIN, "SimHei")',                          # 强调/标题: 中文黑体
-        '#let F_KAI = (F_LATIN, "KaiTi")',                           # 斜体: 中文楷体                        # LaTeX 公式支持
+        '#let F_KAI = (F_LATIN, "KaiTi")',                           # 斜体: 中文楷体
+        '#let kb(body) = text(font: F_KAI, stroke: 0.035em, body)',   # 楷体粗体(楷体无 Bold 变体, 描边合成)
+        '#let __unused_hb = 0',    # 黑体加粗(同上)                        # LaTeX 公式支持
         '#set text(font: F_SONG, size: 10.5pt, lang: "zh")',          # 英文 Times 新罗马 / 中文宋体
         '#set par(justify: true, leading: 0.95em, spacing: 0.95em)',  # 行距=段距=块距, 全局统一
         '#show heading: set text(font: F_HEI, size: 12pt)',           # 大题标题: 小四黑体(西文 Times-Bold)
@@ -1355,12 +1379,15 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     return s
 
                 def md_inline(s):
-                    """markdown: *斜体* -> Typst _.._(楷体) ; **粗体** -> Typst *..*(黑体)"""
+                    """markdown 字体标记:
+                    *斜体* -> 楷体 ; **粗体** -> 黑体 ; ***粗斜体*** -> 楷体+描边(楷体粗体)"""
                     out = ""
-                    for seg in re.split(r"(\*\*.+?\*\*|\*[^*]+?\*)", s):
+                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*)", s):
                         if not seg:
                             continue
-                        if seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
+                        if seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
+                            out += "#kb[" + esc_one(seg[3:-3]) + "]"          # 楷体粗体
+                        elif seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
                             out += "*" + esc_one(seg[2:-2]) + "*"
                         elif seg.startswith("*") and seg.endswith("*") and len(seg) > 2:
                             out += "_" + esc_one(seg[1:-1]) + "_"
@@ -1589,7 +1616,8 @@ def clear_logs():
 
 
 def ai_config():
-    cfg = {"base_url": "", "key": "", "model": "", "proofread": False, "max_px": 1600}
+    cfg = {"base_url": "", "key": "", "model": "", "proofread": False, "max_px": 1600,
+           "font_marks": True}     # font_marks: AI 是否标记原题的加粗/楷体字体差异
     if AI_CONFIG_FILE.exists():
         try:
             cfg.update(json.loads(AI_CONFIG_FILE.read_text(encoding="utf-8")))
@@ -1616,6 +1644,7 @@ def get_ai_config():
             "key_set": bool(key),
             "key_hint": (key[:4] + "****" + key[-4:]) if len(key) > 10 else ("****" if key else ""),
             "max_px": cfg.get("max_px", 1600), "proofread": bool(cfg.get("proofread")),
+            "font_marks": bool(cfg.get("font_marks", True)),
             "presets": AI_PRESETS}
 
 
@@ -1627,6 +1656,8 @@ def set_ai_config(payload: dict):
             cfg[k] = str(payload[k]).strip()
     if "proofread" in payload:
         cfg["proofread"] = bool(payload["proofread"])
+    if "font_marks" in payload:
+        cfg["font_marks"] = bool(payload["font_marks"])
     if "max_px" in payload:
         try:
             cfg["max_px"] = max(800, min(3000, int(payload["max_px"])))

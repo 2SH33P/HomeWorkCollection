@@ -951,6 +951,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <option value="2200">高清 2200px（小字更准）</option>
             <option value="2800">超清 2800px（最准，最慢）</option>
           </select></label>
+        <label class="chk" style="margin:4px 0 0"><input type="checkbox" id="aiFontMarks">
+          识别原题字体差异（黑体/加粗 → <b>粗体</b>，楷体 → <i>斜体</i>，PDF 会对应排版）</label>
         <label class="chk" style="margin:4px 0 0"><input type="checkbox" id="aiProofread">
           额外一轮 AI 校对（对照原图再核查一遍，耗时约翻倍）</label>
         <div class="actions" style="margin-top:14px">
@@ -3155,6 +3157,7 @@ function renderAiCfg() {
   $("aiModel").value = AICFG.model || "";
   $("aiMaxPx").value = String(AICFG.max_px || 1600);
   $("aiProofread").checked = !!AICFG.proofread;
+  $("aiFontMarks").checked = AICFG.font_marks !== false;
 }
 
 /* ---------- 科目管理 ---------- */
@@ -3233,7 +3236,8 @@ $("aiSave").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_url: url, model, key,
                              max_px: +$("aiMaxPx").value,
-                             proofread: $("aiProofread").checked }) });
+                             proofread: $("aiProofread").checked,
+                             font_marks: $("aiFontMarks").checked }) });
     toast("已保存", "ok");
     await loadAiCfg();
 loadSubjects();
