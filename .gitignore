@@ -2,10 +2,11 @@
 .ai_config.json
 
 # 用户数据
-错题库.json
-错题库_大题模板.json
-页/
-错题/
+library.json
+chapter_templates.json
+code_prefix.json
+pages/
+items/
 
 # 运行/构建产物
 .tmp/
@@ -15,7 +16,8 @@ build/
 dist/
 *.spec
 download/
-测试/
+downloads/
+tests/
 
 # 系统
 .DS_Store

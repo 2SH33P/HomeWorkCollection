@@ -31,9 +31,19 @@ if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
 else:
     ROOT = Path(__file__).resolve().parents[2]      # HomeWorkCollection/
-PAGES_DIR = ROOT / "页"                             # 整页照片
-ITEMS_DIR = ROOT / "错题"                           # 裁剪出的错题图
-DB_FILE = ROOT / "错题库.json"
+PAGES_DIR = ROOT / "pages"                           # 整页照片
+ITEMS_DIR = ROOT / "items"                           # 裁剪出的错题图
+DB_FILE = ROOT / "library.json"
+
+# 科目 -> 英文目录名(界面仍显示中文)
+SUBJ_DIRNAME = {"数学": "math", "物理": "physics", "化学": "chemistry",
+                "生物": "biology", "英语": "english", "语文": "chinese",
+                "政治": "politics", "历史": "history", "地理": "geography",
+                "其他": "other", "未分类": "uncategorized"}
+
+
+def subj_dirname(subject):
+    return SUBJ_DIRNAME.get(subject or "", "other")
 TMP_DIR = ROOT / ".tmp"                            # 清理预览临时文件
 if getattr(sys, "frozen", False):
     STATIC_DIR = Path(getattr(sys, "_MEIPASS", ROOT)) / "static"
@@ -42,7 +52,7 @@ else:
 
 for d in (PAGES_DIR, ITEMS_DIR, TMP_DIR):
     d.mkdir(parents=True, exist_ok=True)
-FONTS_DIR = ROOT / "字体"
+FONTS_DIR = ROOT / "fonts"
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="错题收集工具")
@@ -50,8 +60,68 @@ app = FastAPI(title="错题收集工具")
 
 def load_db():
     if DB_FILE.exists():
-        return json.loads(DB_FILE.read_text(encoding="utf-8"))
-    return {"items": []}
+        db = json.loads(DB_FILE.read_text(encoding="utf-8"))
+    else:
+        db = {"items": []}
+    # 兼容旧数据: 补全新增字段(编号/答案/解析/关键字/星级/图块)
+    dirty = False
+    for it in db.get("items", []):
+        if "code" not in it:
+            it["code"] = next_code(db, it.get("subject") or "未分类")
+            dirty = True
+        for k, v in (("answer", ""), ("analysis", ""), ("keywords", ""),
+                     ("star", 0), ("figures", [])):
+            if k not in it:
+                it[k] = v
+                dirty = True
+    if dirty:
+        save_db(db)
+    return db
+
+
+# ---------- 编号前缀 (按科目, 可在界面修改) ----------
+PREFIX_FILE = ROOT / "code_prefix.json"
+DEFAULT_PREFIX = {"数学": "MA", "物理": "PH", "化学": "CH", "生物": "BI",
+                 "英语": "EN", "语文": "CN", "政治": "ZZ", "历史": "LS",
+                 "地理": "DL", "其他": "OT", "未分类": "OT"}
+
+
+def load_prefix():
+    p = dict(DEFAULT_PREFIX)
+    if PREFIX_FILE.exists():
+        try:
+            p.update({k: str(v).strip().upper()[:4]
+                      for k, v in json.loads(PREFIX_FILE.read_text("utf-8")).items()})
+        except Exception:
+            pass
+    return p
+
+
+@app.get("/api/prefix")
+def get_prefix():
+    return {"ok": True, "prefix": load_prefix(), "defaults": DEFAULT_PREFIX}
+
+
+@app.put("/api/prefix")
+def put_prefix(payload: dict):
+    p = load_prefix()
+    for k, v in (payload.get("prefix") or {}).items():
+        v = str(v).strip().upper()[:4]
+        if v:
+            p[k] = v
+    PREFIX_FILE.write_text(json.dumps(p, ensure_ascii=False, indent=2), "utf-8")
+    return {"ok": True, "prefix": p}
+
+
+def next_code(db, subject):
+    """生成编号: 科目前缀 + 4 位流水号 (如 MA0001)。"""
+    pfx = load_prefix().get(subject, "OT")
+    nums = []
+    for it in db.get("items", []):
+        c = it.get("code") or ""
+        if c.startswith(pfx) and c[len(pfx):].isdigit():
+            nums.append(int(c[len(pfx):]))
+    return f"{pfx}{max(nums, default=0) + 1:04d}"
 
 
 def save_db(db):
@@ -99,7 +169,7 @@ async def upload(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     make_thumbnail(src, PAGES_DIR / f"{page_id}_web.jpg")
     return {"ok": True, "page": page_id, "name": file.filename,
-            "web_url": f"/files/页/{page_id}_web.jpg"}
+            "web_url": f"/files/pages/{page_id}_web.jpg"}
 
 
 @app.get("/api/pages")
@@ -108,12 +178,12 @@ def list_pages():
     for f in sorted(PAGES_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if f.name.endswith("_web.jpg"):
             out.append({"page": f.name[:-len("_web.jpg")],
-                        "web_url": f"/files/页/{f.name}"})
+                        "web_url": f"/files/pages/{f.name}"})
     return out
 
 
 DB_LOCK = threading.Lock()
-TPL_PATH = ROOT / "错题库_大题模板.json"
+TPL_PATH = ROOT / "chapter_templates.json"
 
 
 @app.get("/api/chapter-tpl")
@@ -150,6 +220,12 @@ def _auto_ai_bg(saved_items):
         f = ROOT / it["image"]
         if not f.exists():
             return
+        # A 策略: 已有识别内容则跳过 AI, 保护手动输入(想重新识别可点卡片「AI识别」)
+        with DB_LOCK:
+            db0 = load_db()
+            cur = next((x for x in db0["items"] if x["id"] == it["id"]), None)
+            if cur and (cur.get("note") or "").strip():
+                return
         try:
             text = call_ai_vision(np.array(open_photo(f)))
         except Exception:
@@ -157,28 +233,39 @@ def _auto_ai_bg(saved_items):
         if not text:
             return
         issue = False
-        figs = re.findall(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", text)
-        if figs:
+        figs = []
+        raws = re.findall(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", text)
+        if raws:
             full = np.array(open_photo(f))
             FH, FW = full.shape[:2]
-            ok_n = 0
-            for fx, fy, fw, fh in figs:
+            for i, (fx, fy, fw, fh) in enumerate(raws, start=1):
                 x0 = max(0, int(int(fx) / 1000 * FW)); y0 = max(0, int(int(fy) / 1000 * FH))
                 w0 = min(FW - x0, max(20, int(int(fw) / 1000 * FW)))
                 h0 = min(FH - y0, max(20, int(int(fh) / 1000 * FH)))
                 fig = trim_blank(full[y0:y0 + h0, x0:x0 + w0])
-                if fig.shape[0] >= 10 and fig.shape[1] >= 10:
-                    ok_n += 1
-                    fp = ROOT / (it["image"][:-4] + f"_fig{ok_n}.jpg")
-                    cv2.imwrite(str(fp), cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
-            if ok_n < len(figs):
-                issue = True                 # 有图但没裁好 -> 红色标记
+                if fig.shape[0] < 10 or fig.shape[1] < 10:
+                    issue = True              # 有图但没裁好 -> 红色标记
+                    continue
+                rel = f"{it['image'][:-4]}_fig{i}.jpg"
+                cv2.imwrite(str(ROOT / rel), cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
+                figs.append({"n": i, "file": rel, "x": int(fx), "y": int(fy),
+                             "w": int(fw), "h": int(fh)})
+            cnt = [0]
+
+            def _renum(m):
+                cnt[0] += 1
+                return f"[图{cnt[0]}]"
+
+            text = re.sub(r"\[图@\d+,\d+,\d+,\d+\]", _renum, text)   # 坐标->图N
         with DB_LOCK:
             db = load_db()
             for x in db["items"]:
                 if x["id"] == it["id"]:
-                    x["note"] = text[:2000]
-                    if issue:
+                    if not (x.get("note") or "").strip():      # A: 只填充空内容
+                        x["note"] = text[:4000]
+                        if figs and not (x.get("figures") or []):
+                            x["figures"] = figs
+                    if issue and not (x.get("figures") or []):
                         x["fig_issue"] = True
                     break
             save_db(db)
@@ -234,23 +321,52 @@ async def crop(payload: dict):
         subject = safe_name(b.get("subject") or "未分类")
         chapter = safe_name(b.get("chapter") or "")
         title = safe_name(b.get("title") or "")
-        subj_dir = ITEMS_DIR / subject
+        subj_dir = ITEMS_DIR / subj_dirname(subject)
         subj_dir.mkdir(parents=True, exist_ok=True)
         crop_img = img.crop((x, y, x + w, y + h))
         item_id = f"q{int(time.time() * 1000)}{len(saved)}"
         img_name = f"{item_id}.jpg"
         img_path = subj_dir / img_name
         crop_img.save(img_path, "JPEG", quality=95)
+        # 图块: box.figures 里的相对坐标(0-1000) -> 裁出图块文件
+        figs = []
+        for fi, fg in enumerate(b.get("figures") or [], start=1):
+            fx, fy, fw, fh = (int(fg.get(k, 0)) for k in ("x", "y", "w", "h"))
+            W, H = crop_img.size
+            x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
+            w0 = min(W - x0, max(20, int(fw / 1000 * W)))
+            h0 = min(H - y0, max(20, int(fh / 1000 * H)))
+            if x0 >= W or y0 >= H or w0 < 5 or h0 < 5:
+                continue                      # 坐标越界/太小: 跳过该图块, 不中断保存
+            try:
+                fimg = trim_margins(crop_img.crop((x0, y0, x0 + w0, y0 + h0)))
+            except Exception:
+                continue
+            if fimg.size[0] < 3 or fimg.size[1] < 3:
+                continue
+            fname = f"{item_id}_fig{len(figs) + 1}.jpg"
+            try:
+                fimg.save(subj_dir / fname, "JPEG", quality=95)
+            except Exception:
+                continue
+            figs.append({"n": len(figs) + 1, "file": f"items/{subject}/{fname}",
+                         "x": fx, "y": fy, "w": fw, "h": fh})
         item = {
             "id": item_id,
-            "image": f"错题/{subject}/{img_name}",
+            "code": next_code(db, subject),
+            "image": f"items/{subject}/{img_name}",
             "subject": subject,
             "chapter": chapter,
             "title": title,
             "reason": b.get("reason", ""),
             "note": b.get("note", ""),
+            "answer": b.get("answer", ""),
+            "analysis": b.get("analysis", ""),
+            "keywords": b.get("keywords", ""),
+            "star": max(0, min(5, int(b.get("star") or 0))),
+            "figures": figs,
             "group": b.get("group", ""),   # 续块分组: 同一组的多块视为一道题
-            "source_page": f"页/{srcs[0].name}",
+            "source_page": f"pages/{srcs[0].name}",
             "created": time.strftime("%Y-%m-%d %H:%M"),
         }
         db["items"].append(item)
@@ -301,7 +417,7 @@ async def merge_pages(payload: dict):
     page_id = f"p{int(time.time() * 1000)}"
     canvas.save(PAGES_DIR / f"{page_id}.jpg", "JPEG", quality=92)
     make_thumbnail(PAGES_DIR / f"{page_id}.jpg", PAGES_DIR / f"{page_id}_web.jpg")
-    return {"ok": True, "page": page_id, "web_url": f"/files/页/{page_id}_web.jpg"}
+    return {"ok": True, "page": page_id, "web_url": f"/files/pages/{page_id}_web.jpg"}
 
 
 # ---------- 去手写 / 去红笔 (轻量本地处理) ----------
@@ -692,6 +808,8 @@ def paper_pdf(ids: str = ""):
         '#show heading: set text(font: "SimHei")',                    # 题型/大题标题: 黑体
         '#show heading: set par(leading: 0.7em)',
         '#show heading: set block(spacing: 0.95em)',
+        '#show emph: set text(font: "KaiTi")',                        # *斜体* -> 楷体
+        '#show strong: set text(font: "SimHei")',                     # **粗体** -> 黑体
         '#set block(spacing: 0.95em)',
         # ---- 卷头: 三号标题 / 二号黑体科目 / 五号说明 ----
         '#align(center)[#text(size: 16pt, font: "SimHei")[错题重组试卷]]',
@@ -725,20 +843,37 @@ def paper_pdf(ids: str = ""):
                 fig_tokens = []
                 opt_buf = []
                 first_ln = True      # 题号后的第一个文本行, 与题号同行(不加换行符)
+                align_mode = None    # ::: center 段落对齐
+                figmap = {int(f.get("n", 0)): f for f in (it.get("figures") or [])}
+
+                def esc_one(s):
+                    for ch, e2 in (("#", "\\#"), ("$", "\\$"), ("{", "\\{"), ("}", "\\}"),
+                                   ("[", "\\["), ("]", "\\]"), ("_", "\\_")):
+                        s = s.replace(ch, e2)
+                    return s
+
+                def md_inline(s):
+                    """markdown: *斜体* -> Typst _.._(楷体) ; **粗体** -> Typst *..*(黑体)"""
+                    out = ""
+                    for seg in re.split(r"(\*\*.+?\*\*|\*[^*]+?\*)", s):
+                        if not seg:
+                            continue
+                        if seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
+                            out += "*" + esc_one(seg[2:-2]) + "*"
+                        elif seg.startswith("*") and seg.endswith("*") and len(seg) > 2:
+                            out += "_" + esc_one(seg[1:-1]) + "_"
+                        else:
+                            out += esc_one(seg)
+                    return out
 
                 def esc_ln(s):
-                    """公式 $..$ 转 Typst, 其余文本转义。"""
-                    segs = re.split(r"(\$[^$]+\$)", s)
+                    """公式 $..$ 转 Typst, 其余文本: markdown 字体标记 + 转义"""
                     out = ""
-                    for seg in segs:
+                    for seg in re.split(r"(\$[^$]+\$)", s):
                         if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
                             out += "$" + latex_to_typst(seg[1:-1]) + "$"
                         else:
-                            for ch, esc in (("#", "\\#"), ("$", "\\$"), ("{", "\\{"),
-                                            ("}", "\\}"), ("[", "\\["), ("]", "\\]"),
-                                            ("_", "\\_")):
-                                seg = seg.replace(ch, esc)
-                            out += seg
+                            out += md_inline(seg)
                     return out
 
                 def flush_opts():
@@ -758,57 +893,72 @@ def paper_pdf(ids: str = ""):
                                      f"row-gutter: 0.95em){cells}]")
                         opt_buf = []
 
+                def fig_file(n2):
+                    """图块文件: figures 优先, 否则 xxx_figN.jpg"""
+                    f0 = figmap.get(n2)
+                    if f0:
+                        p0 = ROOT / str(f0.get("file", ""))
+                        if p0.exists():
+                            return p0
+                    cand = ROOT / f"{it['image'][:-4]}_fig{n2}.jpg"
+                    return cand if cand.exists() else None
+
+                def crop_old(fx, fy, fw, fh, idx):
+                    """旧格式 [图@x,y,w,h]: 现场裁剪"""
+                    full = np.array(open_photo(ROOT / it["image"]))
+                    FH, FW = full.shape[:2]
+                    x0 = max(0, int(fx / 1000 * FW)); y0 = max(0, int(fy / 1000 * FH))
+                    w0 = min(FW - x0, max(20, int(fw / 1000 * FW)))
+                    h0 = min(FH - y0, max(20, int(fh / 1000 * FH)))
+                    fig = trim_blank(full[y0:y0 + h0, x0:x0 + w0])
+                    if fig.shape[0] < 10 or fig.shape[1] < 10:
+                        fig = full[y0:y0 + h0, x0:x0 + w0]
+                    fp = TMP_DIR / f"fig_{it['id']}_{n}_{idx}.jpg"
+                    cv2.imwrite(str(fp), cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
+                    return fp
+
+                def scan_figs(s):
+                    """提取行内图引用 -> (占位符文本, [{file,w,align}])。
+                    支持 [图N] / [图N|60%|left], 兼容旧 [图@x,y,w,h] 与 [图]。"""
+                    infos = []
+
+                    def rep_new(m):
+                        n2 = int(m.group(1))
+                        w = m.group(2) or "40%"
+                        if not w.endswith("%"):
+                            w += "%"
+                        al = m.group(3) or "center"
+                        fp = fig_file(n2)
+                        if fp:
+                            infos.append({"file": str(fp), "w": w, "align": al})
+                            return f"@@F{len(infos) - 1}@@"
+                        return f'#text(fill: rgb("#cc0000"))[图{n2}未裁好]'
+
+                    s = re.sub(r"\[图(\d+)(?:\|([\d.]+%?))?(?:\|(left|center|right))?\]",
+                               rep_new, s)
+
+                    def rep_old(m):
+                        fp = crop_old(*(int(v) for v in m.groups()), len(infos))
+                        infos.append({"file": str(fp), "w": "40%", "align": "center"})
+                        return f"@@F{len(infos) - 1}@@"
+
+                    s = re.sub(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", rep_old, s)
+                    if "[图]" in s:
+                        infos.append({"file": str(ROOT / it["image"]),
+                                      "w": "45%", "align": "center"})
+                        s = s.replace("[图]", f"@@F{len(infos) - 1}@@")
+                    s = s.replace("（图）", "").replace("(图)", "")
+                    return s, infos
+
                 for ln in txt.split("\n"):
                     ln = ln.strip()
                     if not ln:
                         continue
-                    if "[图]" in ln or "[图@" in ln or "（图）" in ln or "(图)" in ln:
-                        # 题内图形: 按 [图@x,y,w,h] 精确裁剪小块插入文字流
-                        full_img = None
-                        def fig_repl(m):
-                            nonlocal full_img
-                            fx, fy, fw, fh = (int(v) for v in m.groups())
-                            idx = len(fig_tokens) + 1
-                            saved = ROOT / (it["image"][:-4] + f"_fig{idx}.jpg")
-                            if saved.exists():          # 保存时已裁好的图块
-                                fp = saved
-                            else:                       # 兜底: 现场裁剪
-                                if full_img is None:
-                                    full_img = np.array(open_photo(ROOT / it["image"]))
-                                FH, FW = full_img.shape[:2]
-                                x0 = max(0, int(fx / 1000 * FW)); y0 = max(0, int(fy / 1000 * FH))
-                                w0 = min(FW - x0, max(20, int(fw / 1000 * FW)))
-                                h0 = min(FH - y0, max(20, int(fh / 1000 * FH)))
-                                fp = TMP_DIR / f"fig_{it['id']}_{n}_{len(fig_tokens)}.jpg"
-                                fig = trim_blank(full_img[y0:y0 + h0, x0:x0 + w0])
-                                if fig.shape[0] < 10 or fig.shape[1] < 10:
-                                    fig = full_img[y0:y0 + h0, x0:x0 + w0]
-                                cv2.imwrite(str(fp), cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
-                            fig_tokens.append(str(fp))
-                            return f"@@FIG{len(fig_tokens) - 1}@@"
-                        ln = re.sub(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", fig_repl, ln)
-                        if "[图]" in ln:
-                            ln = ln.replace("[图]", "@@IMG@@")
-                        ln = ln.replace("（图）", "").replace("(图)", "")
-                        segs = re.split(r"(\$[^$]+\$)", ln)
-                        out = ""
-                        for seg in segs:
-                            if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
-                                out += "$" + latex_to_typst(seg[1:-1]) + "$"
-                            else:
-                                for ch, esc in (("#", "\\#"), ("$", "\\$"), ("{", "\\{"),
-                                                ("}", "\\}"), ("[", "\\["), ("]", "\\]"),
-                                                ("_", "\\_")):
-                                    seg = seg.replace(ch, esc)
-                                out += seg
-                        for i, fp in enumerate(fig_tokens):
-                            out = out.replace(f"@@FIG{i}@@", f'#image("{fp}", width: 40%)')
-                        out = out.replace("@@IMG@@", f'#image("{ROOT / it["image"]}", width: 45%)')
-                        if out.strip():
-                            flush_opts()
-                            lines.append(out + ("" if first_ln else " \\"))
-                            first_ln = False
-                        placed = True
+                    if ln.startswith("::: "):            # ::: center 段落对齐块
+                        align_mode = ln[4:].strip() or None
+                        continue
+                    if ln == ":::":
+                        align_mode = None
                         continue
                     om = re.match(r"^([A-D])[．.、)）]\s*(.*)$", ln)
                     if om:                                # 选项行: 收集后 grid 对齐
@@ -816,11 +966,35 @@ def paper_pdf(ids: str = ""):
                             flush_opts()
                         opt_buf.append(ln)
                         continue
-                    flush_opts()
-                    out = esc_ln(ln)
-                    if out.strip():
-                        lines.append(out + ("" if first_ln else " \\"))
+                    ln2, infos = scan_figs(ln)
+                    rest = re.sub(r"@@F\d+@@", "", ln2).strip()
+                    if infos and not rest:
+                        # 整行只有图: 多图并排 / 单图对齐
+                        if len(infos) > 1:
+                            cells = "".join(f'[#image("{f0["file"]}", width: {f0["w"]})]'
+                                            for f0 in infos)
+                            lines.append(f"#grid(columns: {len(infos)}, "
+                                         f"column-gutter: 0.6em, row-gutter: 0.5em){cells}")
+                        else:
+                            f0 = infos[0]
+                            lines.append(f'#align({f0["align"]})'
+                                         f'[#image("{f0["file"]}", width: {f0["w"]})]')
+                        placed = True
                         first_ln = False
+                        continue
+                    out = esc_ln(ln2)
+                    for i, f0 in enumerate(infos):       # 混排: 行内插图
+                        out = out.replace(f"@@F{i}@@",
+                                          f'#image("{f0["file"]}", width: {f0["w"]})')
+                    if out.strip():
+                        if align_mode:
+                            flush_opts()
+                            lines.append(f"#align({align_mode})[{out}]")
+                            first_ln = False
+                        else:
+                            flush_opts()
+                            lines.append(out + ("" if first_ln else " \\"))
+                            first_ln = False
                 flush_opts()
             else:
                 # 未识别出文字: 保留原图
@@ -915,15 +1089,55 @@ def list_items():
 
 @app.put("/api/item/{item_id}")
 def update_item(item_id: str, payload: dict):
-    """更新错题信息(标题/章节/错因/备注/科目)。"""
+    """更新错题信息(标题/章节/错因/备注/科目/答案/解析/关键字/星级/图块)。"""
     db = load_db()
     for it in db["items"]:
         if it["id"] == item_id:
-            for k in ("title", "chapter", "reason", "note", "subject"):
+            for k in ("title", "chapter", "reason", "note", "subject",
+                      "answer", "analysis", "keywords"):
                 if k in payload:
-                    it[k] = str(payload[k])[:2000]
+                    it[k] = str(payload[k])[:4000]
+            if "star" in payload:
+                try:
+                    it["star"] = max(0, min(5, int(payload["star"] or 0)))
+                except (TypeError, ValueError):
+                    it["star"] = 0
+            if "figures" in payload:
+                it["figures"] = payload["figures"]
             save_db(db)
             return {"ok": True, "item": it}
+    return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
+
+
+@app.post("/api/item/{item_id}/figure")
+def add_figure(item_id: str, payload: dict):
+    """给已保存的错题添加图块: {x,y,w,h}(相对题图 0-1000 比例) -> 裁图块并返回编号。"""
+    db = load_db()
+    for it in db["items"]:
+        if it["id"] == item_id:
+            src = ROOT / it["image"]
+            if not src.exists():
+                return JSONResponse({"ok": False, "msg": "原图不存在"}, status_code=404)
+            img = open_photo(src)
+            W, H = img.size
+            fig = payload.get("figure") or payload
+            fx, fy, fw, fh = (int(fig.get(k, 0)) for k in ("x", "y", "w", "h"))
+            x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
+            w0 = min(W - x0, max(20, int(fw / 1000 * W)))
+            h0 = min(H - y0, max(20, int(fh / 1000 * H)))
+            if w0 < 20 or h0 < 20:
+                return JSONResponse({"ok": False, "msg": "框选区域太小"}, status_code=400)
+            figs = it.get("figures") or []
+            n = max((f.get("n", 0) for f in figs), default=0) + 1
+            fname = f"{item_id}_fig{n}.jpg"
+            fdir = src.parent
+            trim_margins(img.crop((x0, y0, x0 + w0, y0 + h0))).save(
+                fdir / fname, "JPEG", quality=95)
+            figs.append({"n": n, "file": str((fdir / fname).relative_to(ROOT)),
+                         "x": fx, "y": fy, "w": fw, "h": fh})
+            it["figures"] = figs
+            save_db(db)
+            return {"ok": True, "n": n, "figures": figs}
     return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
 
 

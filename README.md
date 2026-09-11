@@ -29,7 +29,7 @@
 
 ### 内置字体
 
-项目自带排版字体（已随仓库打包，无需上传）：`字体/` 目录中的宋体（SimSun）、黑体（SimHei）、楷体（KaiTi）与 Times New Roman，供 Typst 生成 PDF 使用。
+项目自带排版字体（已随仓库打包，无需上传）：`fonts/` 目录中的宋体（SimSun）、黑体（SimHei）、楷体（KaiTi）与 Times New Roman，供 Typst 生成 PDF 使用。
 
 ## 快速开始
 
@@ -44,7 +44,7 @@
 
 ```bash
 pip install fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
-python 工具/错题裁剪工具/app.py
+python tools/crop-tool/app.py
 # 访问 http://localhost:8091
 ```
 
@@ -77,15 +77,27 @@ python 工具/错题裁剪工具/app.py
 ## 目录结构
 
 ```
-├── 工具/错题裁剪工具/
+├── tools/crop-tool/
 │   ├── app.py                # FastAPI 后端（全部接口）
 │   └── static/index.html     # 单页前端
-├── 启动.bat / 启动.sh         # 一键启动
-├── 打包.bat                   # PyInstaller 打包
-└── Windows使用说明.txt        # Windows 详细说明
+├── fonts/                    # 内置排版字体（宋体/黑体/楷体/Times）
+├── start.bat / start.sh      # 一键启动
+├── build.bat                 # PyInstaller 打包
+└── README-Windows.txt        # Windows 详细说明
 ```
 
-运行时数据（页面照片、错题、题库）保存在项目目录下的 `页/`、`错题/`、`错题库.json`，直接复制目录即可备份。排版字体内置在 `字体/` 目录。
+运行时数据（英文目录名，界面上显示中文）：
+
+```
+pages/              整页上传照片
+items/math/         裁剪出的错题图（按科目: math / physics / chemistry / ...）
+library.json        错题库数据
+chapter_templates.json  大题模板
+code_prefix.json    编号前缀（MA/PH/CH/...）
+.tmp/               临时文件
+```
+
+直接复制这些目录即可备份。排版字体内置在 `fonts/` 目录。
 
 ## 隐私说明
 

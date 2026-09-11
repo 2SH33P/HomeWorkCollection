@@ -177,6 +177,17 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .box-card .badge { font-size: 11px; background: color-mix(in srgb, var(--warn) 18%, transparent);
                    color: var(--warn); border-radius: 5px; padding: 2px 7px; margin-left: 6px; }
 .box-card input, .box-card select { width: 100%; margin-bottom: 6px; }
+.box-card textarea { width: 100%; margin-bottom: 6px; min-height: 56px; resize: vertical;
+                     font-family: inherit; font-size: 13px; line-height: 1.6;
+                     background: var(--elev); border: 1px solid transparent; color: var(--t1);
+                     border-radius: var(--r-sm); padding: 8px 10px; }
+.box-card textarea:focus { outline: none; border-color: var(--accent); }
+.star-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.star-row .stars { display: flex; gap: 2px; }
+.star-row .st { font-size: 20px; color: var(--sep); cursor: pointer; line-height: 1;
+                transition: color .12s, transform .12s; user-select: none; }
+.star-row .st.on { color: var(--warn); }
+.star-row .st:hover { transform: scale(1.15); }
 .box-card .row2 { display: flex; gap: 6px; }
 .box-card .row2 select { flex: 0 0 92px; }
 .box-card .del { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 13px; }
@@ -498,8 +509,17 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
             <option value="一、选择题"><option value="二、填空题"><option value="三、解答题">
             <option value="四、计算题"><option value="五、实验题"><option value="六、证明题">
           </datalist></label>
-        <label class="fld"><span>识别内容（公式用 $...$，图形位置 AI 会自动标 [图]）</span>
-          <textarea id="pvNote" rows="10"></textarea></label>
+        <div class="star-row" id="pvStarRow">
+          <span class="hint">难度</span>
+          <span class="stars"><span class="st" data-n="1">★</span><span class="st" data-n="2">★</span><span class="st" data-n="3">★</span><span class="st" data-n="4">★</span><span class="st" data-n="5">★</span></span>
+        </div>
+        <label class="fld"><span>关键字（搜索用，逗号分隔）</span><input type="text" id="pvKeywords" placeholder="如：三角函数,图像"></label>
+        <label class="fld"><span>识别内容（题干与选项，*楷体* **黑体** [图1]）</span>
+          <textarea id="pvNote" rows="9"></textarea></label>
+        <label class="fld"><span>答案（可选，支持 [图1]）</span>
+          <textarea id="pvAnswer" rows="3"></textarea></label>
+        <label class="fld"><span>解析（可选，支持 *楷体* **黑体** [图1]）</span>
+          <textarea id="pvAnalysis" rows="5"></textarea></label>
         <div class="prev-ops">
           <button class="btn ghost" id="pvCropBtn">裁图</button>
           <button class="btn" id="pvCropOk" style="display:none">确认裁剪</button>
@@ -778,6 +798,7 @@ function cvMove(e) {
       if (e.includes("w")) { const nx = Math.min(p.x, r.x + r.w - MIN); r.w += r.x - nx; r.x = Math.max(0, nx); }
       if (e.includes("n")) { const ny = Math.min(p.y, r.y + r.h - MIN); r.h += r.y - ny; r.y = Math.max(0, ny); }
     }
+    clampCropRect();                     // 图形框限制在题框范围内
     renderCanvas();
     return;
   }
@@ -843,8 +864,8 @@ function allPageBoxes() {
 }
 
 function boxCardHTML(b, i, pid) {
-  const isCont = b.group && loadBoxes(pid).find(x => x.id === b.group);
   const other = pid !== curPage;
+  const star = b.star || 0;
   return `
     <div class="box-card ${other ? "dim" : ""}" data-id="${b.id}" data-pid="${pid}">
       <div class="bhead">
@@ -855,8 +876,17 @@ function boxCardHTML(b, i, pid) {
         <span class="subj-note">${esc(curSubject)}</span>
         <input type="text" data-f="chapter" list="chapterTpl" value="${esc(b.chapter)}" placeholder="大题归类">
       </div>
+      <input type="text" data-f="keywords" value="${esc(b.keywords)}" placeholder="关键字（搜索用，逗号分隔）">
+      <div class="star-row" data-id="${b.id}">
+        <span class="hint">难度</span>
+        <span class="stars">${[1, 2, 3, 4, 5].map(n =>
+          `<span class="st ${star >= n ? "on" : ""}" data-n="${n}">★</span>`).join("")}</span>
+        <span class="hint">${star ? star + " 星（再点同一星取消）" : "未评"}</span>
+      </div>
       <select data-f="reason">${REASONS.map(r => `<option ${r === b.reason ? "selected" : ""}>${r}</option>`).join("")}</select>
-      <input type="text" data-f="note" value="${esc(b.note)}" placeholder="备注（错因细节）">
+      <textarea data-f="note" placeholder="题干与选项（AI 自动识别可编辑，[图1] 表示图块）">${esc(b.note)}</textarea>
+      <textarea data-f="answer" placeholder="答案（可选）">${esc(b.answer)}</textarea>
+      <textarea data-f="analysis" placeholder="解析（可选，支持 *楷体* **黑体** 与 [图1]）">${esc(b.analysis)}</textarea>
       <div class="brow">
         <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
         <button class="mini cfig" data-id="${b.id}">裁图</button>
@@ -904,7 +934,7 @@ function renderBoxList() {
     if (pid === curPage) { boxes = bs; renderCanvas(); }
     renderBoxList();
   });
-  el.querySelectorAll("input[data-f], select[data-f]").forEach(inp => {
+  el.querySelectorAll("input[data-f], select[data-f], textarea[data-f]").forEach(inp => {
     const card = inp.closest(".box-card"), pid = card.dataset.pid, bid = card.dataset.id;
     inp.oninput = inp.onchange = () => {
       const bs = loadBoxes(pid);
@@ -913,6 +943,18 @@ function renderBoxList() {
       localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
       if (pid === curPage) { boxes = bs; renderCanvas(); }
     };
+  });
+  el.querySelectorAll(".star-row").forEach(row => {
+    const card = row.closest(".box-card"), pid = card.dataset.pid, bid = card.dataset.id;
+    row.querySelectorAll(".st").forEach(st => st.onclick = () => {
+      const n = +st.dataset.n;
+      const bs = loadBoxes(pid);
+      const b = bs.find(x => x.id === bid);
+      if (!b) return;
+      b.star = ((b.star || 0) === n) ? 0 : n;      // 再点同一星 -> 归零
+      localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+      renderBoxList();
+    });
   });
   updateChapterDatalist(curSubject);
 }
@@ -944,23 +986,38 @@ $("cropCancel").onclick = exitCropMode;
 $("cropOk").onclick = () => {
   if (!cropRect || cropRect.w < 10 || cropRect.h < 10) return toast("先拖拽框选图形区域", "err");
   const b = cropMode;
+  clampCropRect();
   // 画布(缩略图)坐标 -> 相对题图的 0-1000 坐标
-  const rx = Math.max(0, Math.min(1000, (cropRect.x - b.x) / b.w * 1000));
-  const ry = Math.max(0, Math.min(1000, (cropRect.y - b.y) / b.h * 1000));
-  const rw = Math.max(20, Math.min(1000 - rx, cropRect.w / b.w * 1000));
-  const rh = Math.max(20, Math.min(1000 - ry, cropRect.h / b.h * 1000));
-  const tag = `[图@${Math.round(rx)},${Math.round(ry)},${Math.round(rw)},${Math.round(rh)}]`;
+  const rx = Math.round(Math.max(0, Math.min(1000, (cropRect.x - b.x) / b.w * 1000)));
+  const ry = Math.round(Math.max(0, Math.min(1000, (cropRect.y - b.y) / b.h * 1000)));
+  let rw = Math.round(Math.max(20, Math.min(1000 - rx, cropRect.w / b.w * 1000)));
+  let rh = Math.round(Math.max(20, Math.min(1000 - ry, cropRect.h / b.h * 1000)));
+  if (rx + rw > 1000) rw = 1000 - rx;
+  if (ry + rh > 1000) rh = 1000 - ry;
+  if (rw < 20 || rh < 20) return toast("框选区域无效，请重新框选", "err");
   const bs = loadBoxes(b.pid);
   const box = bs.find(x => x.id === b.bid);
   if (box) {
+    const figs = box.figures || (box.figures = []);
+    const n = figs.length + 1;
+    figs.push({ n, x: rx, y: ry, w: rw, h: rh });
     const note = (box.note || "").trim();
-    box.note = note ? note + "\n" + tag : tag;
+    box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
     localStorage.setItem("boxes_" + b.pid, JSON.stringify(bs));
-    toast("图形已标记，保存后自动裁剪插入", "ok");
+    toast(`已裁好图${n}，可在题干中移动 [图${n}] 的位置`, "ok");
   }
   exitCropMode();
   renderBoxList();
 };
+
+function clampCropRect() {
+  const L = cropMode;
+  if (!L || !cropRect) return;
+  cropRect.w = Math.max(20, Math.min(cropRect.w, L.w));
+  cropRect.h = Math.max(20, Math.min(cropRect.h, L.h));
+  cropRect.x = Math.max(L.x, Math.min(L.x + L.w - cropRect.w, cropRect.x));
+  cropRect.y = Math.max(L.y, Math.min(L.y + L.h - cropRect.h, cropRect.y));
+}
 
 function esc(s) { return (s || "").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
@@ -982,6 +1039,9 @@ $("saveBtn").onclick = async () => {
     const payload = g.boxes.map(b => ({
       subject: curSubject, chapter: b.chapter, title: b.title,
       reason: b.reason, note: b.note, group: b.group || "",
+      answer: b.answer || "", analysis: b.analysis || "",
+      keywords: b.keywords || "", star: b.star || 0,
+      figures: b.figures || [],
       x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h),
     }));
     try {
@@ -1279,6 +1339,16 @@ function renderSelected() {
 
 /* ---------- 题目预览/编辑 ---------- */
 let pvItem = null;
+let pvStar = 0;
+function renderPvStars(n) {
+  pvStar = n || 0;
+  $("pvStarRow").querySelectorAll(".st").forEach(s =>
+    s.classList.toggle("on", pvStar >= +s.dataset.n));
+}
+$("pvStarRow").querySelectorAll(".st").forEach(s => s.onclick = () => {
+  const n = +s.dataset.n;
+  renderPvStars(pvStar === n ? 0 : n);      // 再点同一星 -> 归零
+});
 function openPreview(it) {
   pvItem = it;
   pvCropOn = false; pvRect = null; pvDrag = null;
@@ -1290,6 +1360,10 @@ function openPreview(it) {
   $("pvSubject").value = it.subject || "未分类";
   $("pvChapter").value = it.chapter || "";
   $("pvNote").value = it.note || "";
+  $("pvKeywords").value = it.keywords || "";
+  $("pvAnswer").value = it.answer || "";
+  $("pvAnalysis").value = it.analysis || "";
+  renderPvStars(it.star || 0);
   $("pvMeta").textContent = (it.created || "") + (it.group ? " · 多块续接" : "");
   $("pvMeta").classList.toggle("fig-warn", !!it.fig_issue);
   $("pvMeta").textContent += it.fig_issue ? " · 图形未裁剪，请点「裁图」手动框选" : "";
@@ -1317,9 +1391,15 @@ $("pvSave").onclick = async () => {
     await api("/api/item/" + pvItem.id, { method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: $("pvTitle").value, subject: $("pvSubject").value,
-                             chapter: $("pvChapter").value, note: $("pvNote").value }) });
+                             chapter: $("pvChapter").value, note: $("pvNote").value,
+                             keywords: $("pvKeywords").value,
+                             answer: $("pvAnswer").value,
+                             analysis: $("pvAnalysis").value,
+                             star: pvStar }) });
     pvItem.title = $("pvTitle").value; pvItem.subject = $("pvSubject").value;
     pvItem.chapter = $("pvChapter").value; pvItem.note = $("pvNote").value;
+    pvItem.keywords = $("pvKeywords").value; pvItem.answer = $("pvAnswer").value;
+    pvItem.analysis = $("pvAnalysis").value; pvItem.star = pvStar;
     toast("已保存", "ok");
     loadLibrary();
   } catch (err) { toast("保存失败: " + err.message, "err"); }

@@ -3,7 +3,7 @@
 # 双击或终端运行: bash 启动.sh
 set -e
 cd "$(dirname "$0")"
-APP="工具/错题裁剪工具/app.py"
+APP="tools/crop-tool/app.py"
 VENV=".venv"
 
 if [ ! -x "$VENV/bin/python" ]; then
