@@ -1126,9 +1126,11 @@ def call_ai_vision(img_rgb):
               '不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，'
               '如 [图@620,280,240,180]，没有图形不要加。\n')
     if ai_config().get("font_marks", True):
-        prompt += ('9. 还原原题的字体差异：原题中明显加粗或黑体的文字用 **文字** 标记；'
-                   '明显是楷体的文字用 *文字* 标记；普通宋体不加标记；'
-                   '只对确实能分辨的印刷体标记，不确定或手写内容不要标记；\n')
+        prompt += ('9. 标注原题的视觉强调，只用两种标记(不要用其他符号)：\n'
+                   '   - 比正文更粗更黑的文字(黑体、加粗的宋体等) -> **文字**\n'
+                   '   - 楷体或斜体的文字 -> *文字*\n'
+                   '   普通宋体正文不加任何标记；只标确实能分辨的印刷体，'
+                   '不确定或手写内容不要标记，宁可漏标不要标错；\n')
     prompt += ('输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
                '只输出识别结果，不要解释。')
     body = {
@@ -1234,13 +1236,17 @@ def render_simple(txt, it, lines):
 
     def md(t):
         out = ""
-        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*)", t):
+        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+)", t):
             if not seg:
                 continue
             if seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
                 out += "#kb[" + esc1(seg[3:-3]) + "]"
             elif seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
                 out += "*" + esc1(seg[2:-2]) + "*"
+            elif seg.startswith("==") and seg.endswith("==") and len(seg) > 4:
+                out += "#sb[" + esc1(seg[2:-2]) + "]"
+            elif seg.startswith("++") and seg.endswith("++") and len(seg) > 4:
+                out += "#hbk[" + esc1(seg[2:-2]) + "]"
             elif seg.startswith("*") and seg.endswith("*") and len(seg) > 2:
                 out += "_" + esc1(seg[1:-1]) + "_"
             else:
@@ -1320,7 +1326,9 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         '#let F_SONG = (F_LATIN, "SimSun")',                         # 正文: 中文宋体
         '#let F_HEI = (F_LATIN, "SimHei")',                          # 强调/标题: 中文黑体
         '#let F_KAI = (F_LATIN, "KaiTi")',                           # 斜体: 中文楷体
-        '#let kb(body) = text(font: F_KAI, stroke: 0.035em, body)',   # 楷体粗体(楷体无 Bold 变体, 描边合成)
+        '#let kb(body) = text(font: F_KAI, stroke: 0.03em, body)',    # 楷体加粗(中文字体无 Bold 变体, 描边合成)
+        '#let sb(body) = text(font: F_SONG, stroke: 0.03em, body)',   # 宋体加粗
+        '#let hbk(body) = text(font: F_HEI, stroke: 0.03em, body)',   # 黑体加粗
         '#let __unused_hb = 0',    # 黑体加粗(同上)                        # LaTeX 公式支持
         '#set text(font: F_SONG, size: 10.5pt, lang: "zh")',          # 英文 Times 新罗马 / 中文宋体
         '#set par(justify: true, leading: 0.95em, spacing: 0.95em)',  # 行距=段距=块距, 全局统一
@@ -1379,18 +1387,22 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     return s
 
                 def md_inline(s):
-                    """markdown 字体标记:
-                    *斜体* -> 楷体 ; **粗体** -> 黑体 ; ***粗斜体*** -> 楷体+描边(楷体粗体)"""
+                    """字体标记(中文均无 Bold 变体, 加粗用描边合成):
+                    *楷体*  **黑体**  ***楷体加粗***  ==宋体加粗==  ++黑体加粗++"""
                     out = ""
-                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*)", s):
+                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+)", s):
                         if not seg:
                             continue
                         if seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
-                            out += "#kb[" + esc_one(seg[3:-3]) + "]"          # 楷体粗体
+                            out += "#kb[" + esc_one(seg[3:-3]) + "]"           # 楷体加粗
                         elif seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
-                            out += "*" + esc_one(seg[2:-2]) + "*"
+                            out += "*" + esc_one(seg[2:-2]) + "*"              # 黑体
+                        elif seg.startswith("==") and seg.endswith("==") and len(seg) > 4:
+                            out += "#sb[" + esc_one(seg[2:-2]) + "]"           # 宋体加粗
+                        elif seg.startswith("++") and seg.endswith("++") and len(seg) > 4:
+                            out += "#hbk[" + esc_one(seg[2:-2]) + "]"          # 黑体加粗
                         elif seg.startswith("*") and seg.endswith("*") and len(seg) > 2:
-                            out += "_" + esc_one(seg[1:-1]) + "_"
+                            out += "_" + esc_one(seg[1:-1]) + "_"              # 楷体
                         else:
                             out += esc_one(seg)
                     return out
