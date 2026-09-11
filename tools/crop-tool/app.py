@@ -1295,8 +1295,18 @@ def render_simple(txt, it, lines):
 
 @app.get("/api/paper/pdf")
 def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = "",
-              title: str = "", subject_line: str = "", notice: str = ""):
-    """用 Typst 渲染试卷 PDF。attach: 附答案解析页; index: 1 附编号对照页; header: 页眉文字。"""
+              title: str = "", subject_line: str = "", notice: str = "",
+              body_size: str = "", leading: str = ""):
+    """用 Typst 渲染试卷 PDF。attach: 附答案解析页; index: 1 附编号对照页; header: 页眉文字。
+    body_size/leading: 正文字号(pt)与行距(em), 语文卷常用 12pt / 1.5em。"""
+    try:
+        size_pt = min(16.0, max(9.0, float(body_size))) if body_size else 10.5
+    except (TypeError, ValueError):
+        size_pt = 10.5
+    try:
+        lead_em = min(2.5, max(0.85, float(leading))) if leading else 0.95
+    except (TypeError, ValueError):
+        lead_em = 0.95
     db = load_db()
     wanted = [i for i in ids.split(",") if i]
     order = {iid: n for n, iid in enumerate(wanted)}
@@ -1330,14 +1340,15 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         '#let sb(body) = text(font: F_SONG, stroke: 0.03em, body)',   # 宋体加粗
         '#let hbk(body) = text(font: F_HEI, stroke: 0.03em, body)',   # 黑体加粗
         '#let __unused_hb = 0',    # 黑体加粗(同上)                        # LaTeX 公式支持
-        '#set text(font: F_SONG, size: 10.5pt, lang: "zh")',          # 英文 Times 新罗马 / 中文宋体
-        '#set par(justify: true, leading: 0.95em, spacing: 0.95em)',  # 行距=段距=块距, 全局统一
+        f'#set text(font: F_SONG, size: {size_pt}pt, lang: "zh")',    # 英文 Times 新罗马 / 中文宋体
+        f'#set par(justify: true, leading: {lead_em}em, spacing: {lead_em}em)',  # 行距=段距=块距
+        '#let BODY = ' + f'{size_pt}pt',
         '#show heading: set text(font: F_HEI, size: 12pt)',           # 大题标题: 小四黑体(西文 Times-Bold)
         '#show heading: set par(leading: 0.7em)',
         '#show heading: set block(spacing: 0.95em)',
         '#show emph: set text(font: F_KAI)',                          # *斜体*: 中文楷体 / 西文 Times-Italic(不写 style, 否则西文退化为正体)
         '#show strong: set text(font: F_HEI, weight: "bold")',        # **粗体**: 中文黑体 / 西文 Times-Bold
-        '#set block(spacing: 0.95em)',
+        f'#set block(spacing: {lead_em}em)',
         # ---- 卷头(可自定义): 三号标题 / 二号黑体科目 / 五号说明 ----
         f'#align(center)[#text(size: 16pt, font: F_HEI)[{typ_esc(title.strip() or "错题重组试卷")}]]',
         f'#align(center)[#text(size: 22pt, font: F_HEI, weight: "bold")[{typ_esc(subject_line.strip() or (subjects[0] if len(subjects) == 1 else " ".join(subjects)))}]]',
@@ -1351,7 +1362,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         if i == 0:
             lines.append(f'#text(font: F_HEI, size: 12pt)[{typ_esc(ln)}]')
         else:
-            lines.append(f'#text(size: 10.5pt)[{typ_esc(ln)}]')
+            lines.append(f'#text(size: BODY)[{typ_esc(ln)}]')
     lines.append('#v(0.45cm)')
     n, prev_g = 0, None
     ordered = {}                      # 题号 -> [该题的块(含续块)]
@@ -1361,7 +1372,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         for it in gitems:
             g = it.get("group") or ""
             if g and g == prev_g:
-                lines.append('#text(font: F_KAI, size: 10.5pt)[(续)] \\')
+                lines.append('#text(font: F_KAI, size: BODY)[(续)] \\')
             else:
                 n += 1
                 lines.append(f"{n}．")               # 题号顶格, 题干接同一行
@@ -1377,6 +1388,25 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                 fig_tokens = []
                 opt_buf = []
                 first_ln = True      # 题号后的第一个文本行, 与题号同行(不加换行符)
+                para_mode = None     # ::: poem / ::: quote 整段样式
+                para_buf = []
+
+                def flush_para():
+                    """输出 ::: poem(诗歌: 居中+大行距) / ::: quote(材料: 缩进+中行距) 整段。"""
+                    if not para_buf:
+                        return
+                    flush_opts()
+                    body = " \\\n".join(para_buf)
+                    if para_mode == "poem":
+                        lines.append("#align(center)[#set par(justify: false, "
+                                     "leading: 1.7em, spacing: 1.7em)\n" + body + "\n]")
+                        lines.append("#v(0.2cm)")
+                    else:                    # quote: 阅读材料/引文
+                        lines.append("#block(inset: (left: 1.4em, right: 1.4em))"
+                                     "[#set par(leading: 1.35em, spacing: 1.35em)\n"
+                                     + body + "\n]")
+                    para_buf.clear()
+                    first_ln = False
                 align_mode = None    # ::: center 段落对齐
                 figmap = {int(f.get("n", 0)): f for f in (it.get("figures") or [])}
 
@@ -1497,10 +1527,18 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     ln = ln.strip()
                     if not ln:
                         continue
-                    if ln.startswith("::: "):            # ::: center 段落对齐块
-                        align_mode = ln[4:].strip() or None
+                    if ln.startswith("::: "):            # ::: center / poem / quote / right
+                        mode = ln[4:].strip() or None
+                        if mode in ("poem", "quote", "material"):
+                            flush_para()
+                            para_mode = "poem" if mode == "poem" else "quote"
+                        else:
+                            align_mode = mode
                         continue
                     if ln == ":::":
+                        if para_mode:
+                            flush_para()
+                            para_mode = None
                         align_mode = None
                         continue
                     om = re.match(r"^([A-D])[．.、)）]\s*(.*)$", ln)
@@ -1510,6 +1548,10 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         opt_buf.append(ln)
                         continue
                     ln2, infos = scan_figs(ln)
+                    if para_mode:                        # 整段样式: 收集纯文本行(图仍走通用分支)
+                        if not infos:
+                            para_buf.append(esc_ln(ln2))
+                            continue
                     rest = re.sub(r"@@F\d+@@", "", ln2).strip()
                     if infos and not rest:
                         # 整行只有图: 多图并排 / 单图对齐
@@ -1538,6 +1580,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                             flush_opts()
                             lines.append(out + ("" if first_ln else " \\"))
                             first_ln = False
+                flush_para()
                 flush_opts()
             else:
                 # 未识别出文字: 保留原图(手动添加的纯文字题无图, 跳过)

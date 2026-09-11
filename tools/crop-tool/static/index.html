@@ -876,6 +876,22 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <input type="text" id="phSubject" placeholder="如：数　学"></label>
         <label class="fld"><span>注意事项（第一行为黑体标题，其余每行一条）</span>
           <textarea id="phNotice" rows="4" placeholder="注意事项：&#10;1．本试卷由错题收集工具生成，请在答题纸上作答；&#10;2．解答应写出文字说明、证明过程或演算步骤。"></textarea></label>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <label class="fld" style="flex:1;min-width:150px"><span>正文字号</span>
+            <select id="phBodySize">
+              <option value="10.5">五号 10.5pt（数学/理综）</option>
+              <option value="11">小四偏小 11pt</option>
+              <option value="12">小四 12pt（语文常用）</option>
+              <option value="14">四号 14pt</option>
+            </select></label>
+          <label class="fld" style="flex:1;min-width:150px"><span>行距</span>
+            <select id="phLeading">
+              <option value="0.95">紧凑 0.95 倍</option>
+              <option value="1.25">适中 1.25 倍</option>
+              <option value="1.5">宽松 1.5 倍（语文常用）</option>
+              <option value="1.75">很宽 1.75 倍</option>
+            </select></label>
+        </div>
         <label class="fld"><span>页眉文字（可留空；显示在每页顶部）</span>
           <input type="text" id="paperHeader" placeholder="如：错题重组试卷 · 内部资料"></label>
       </details>
@@ -3066,7 +3082,9 @@ $("pdfBtn").onclick = async () => {
       header: $("paperHeader").value || "",
       title: $("phTitle").value || "",
       subject_line: $("phSubject").value || "",
-      notice: $("phNotice").value || "" });
+      notice: $("phNotice").value || "",
+      body_size: $("phBodySize").value || "",
+      leading: $("phLeading").value || "" });
     const d = await api("/api/paper/pdf?" + q.toString());
     window.open(d.url, "_blank");
     toast(`已生成 ${d.count} 题的 PDF`, "ok");
@@ -3081,7 +3099,8 @@ function savePaperHead() {
   try {
     localStorage.setItem("paperHead", JSON.stringify({
       title: $("phTitle").value, subject: $("phSubject").value,
-      notice: $("phNotice").value, header: $("paperHeader").value }));
+      notice: $("phNotice").value, header: $("paperHeader").value,
+      bodySize: $("phBodySize").value, leading: $("phLeading").value }));
   } catch (e) { }
 }
 function loadPaperHead() {
@@ -3092,6 +3111,8 @@ function loadPaperHead() {
     $("phNotice").value = d.notice ||
       "注意事项：\n1．本试卷由错题收集工具生成，请在答题纸上作答；\n2．解答应写出文字说明、证明过程或演算步骤。";
     $("paperHeader").value = d.header || "";
+    $("phBodySize").value = d.bodySize || "10.5";
+    $("phLeading").value = d.leading || "0.95";
   } catch (e) { }
 }
 
