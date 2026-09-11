@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 
@@ -233,6 +233,29 @@ def save_db(db):
                        encoding="utf-8")
 
 
+def imread_u(path):
+    """Windows 下 cv2.imread 不支持中文路径(用 ANSI 编码), 改用二进制解码。"""
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+        return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+    except Exception:
+        return None
+
+
+def imwrite_u(path, img, ext=None, params=None) -> bool:
+    """Windows 下 cv2.imwrite 不支持中文路径, 改用二进制编码写盘。"""
+    ext = ext or (Path(str(path)).suffix or ".jpg")
+    try:
+        ok, buf = cv2.imencode(ext, img, params or [])
+        if not ok:
+            return False
+        buf.tofile(str(path))          # tofile 走 Python IO, 支持中文路径
+        return True
+    except Exception as e:
+        log_ai("写图失败", f"{path}: {e}")
+        return False
+
+
 def open_photo(path: Path) -> Image.Image:
     """读图并按 EXIF 自动摆正方向。"""
     img = Image.open(path)
@@ -251,6 +274,22 @@ def make_thumbnail(src: Path, dst: Path, max_side=2000):
 
 def safe_name(name: str) -> str:
     return "".join(c for c in name if c not in '\\/:*?"<>|').strip() or "未命名"
+
+
+# ---------- 静态文件: 只开放 pages/ items/ .tmp/(避免 library.json、.ai_config.json 被下载) ----------
+FILES_ALLOWED = ("pages/", "items/", ".tmp/")
+
+
+@app.get("/files/{path:path}")
+def serve_file(path: str):
+    rel = path.replace("\\", "/").lstrip("/")
+    if ".." in rel or not rel.startswith(FILES_ALLOWED):
+        return JSONResponse({"ok": False, "msg": "forbidden"}, status_code=403)
+    fp = ROOT / rel
+    if not fp.is_file():
+        log_ai("文件缺失", f"/files/{rel} → {fp}")
+        return JSONResponse({"ok": False, "msg": "not found"}, status_code=404)
+    return FileResponse(fp)
 
 
 # ---------- 页面路由 ----------
@@ -395,7 +434,7 @@ def _auto_ai_bg(saved_items):
                     issue = True              # 有图但没裁好 -> 红色标记
                     continue
                 rel = f"{it['image'][:-4]}_fig{i}.jpg"
-                cv2.imwrite(str(ROOT / rel), cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
+                imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
                 figs.append({"n": i, "file": rel, "x": int(fx), "y": int(fy),
                              "w": int(fw), "h": int(fh)})
             cnt = [0]
@@ -443,7 +482,9 @@ def crop_preview(payload: dict):
     if (cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY) > 245).mean() > 0.97:
         return JSONResponse({"ok": False, "msg": "框选区域几乎为空白，请重新框选"}, status_code=400)
     fp = TMP_DIR / f"cfig_{int(time.time() * 1000)}.jpg"
-    cv2.imwrite(str(fp), cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+    if not imwrite_u(fp, cv2.cvtColor(crop, cv2.COLOR_RGB2BGR)):
+        return JSONResponse({"ok": False, "msg": "预览图写入失败（检查路径是否含中文/权限）"},
+                            status_code=500)
     return {"ok": True, "url": f"/files/.tmp/{fp.name}"}
 
 
@@ -630,12 +671,12 @@ def clean_preview(payload: dict):
     f = resolve_item_path(payload.get("image", ""))
     if f is None:
         return JSONResponse({"ok": False, "msg": "图片不存在"}, status_code=404)
-    img = cv2.imread(str(f))
+    img = imread_u(f)
     out, done = apply_actions(img, payload.get("actions"))
     if not done:
         return JSONResponse({"ok": False, "msg": "未检测到需要清理的痕迹（红笔或无涂抹区域）"}, status_code=400)
     name = f"clean_{int(time.time() * 1000)}.jpg"
-    cv2.imwrite(str(TMP_DIR / name), out, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    imwrite_u(TMP_DIR / name, out, params=[cv2.IMWRITE_JPEG_QUALITY, 95])
     return {"ok": True, "url": f"/files/.tmp/{name}"}
 
 
@@ -645,7 +686,7 @@ def clean_save(payload: dict):
     f = resolve_item_path(payload.get("image", ""))
     if f is None:
         return JSONResponse({"ok": False, "msg": "图片不存在"}, status_code=404)
-    img = cv2.imread(str(f))
+    img = imread_u(f)
     out, done = apply_actions(img, payload.get("actions"))
     if not done:
         return JSONResponse({"ok": False, "msg": "没有需要保存的清理效果"}, status_code=400)
@@ -655,7 +696,7 @@ def clean_save(payload: dict):
         if not bf.exists():
             shutil.copyfile(f, bf)
             backup = bf.name
-    cv2.imwrite(str(f), out, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    imwrite_u(f, out, params=[cv2.IMWRITE_JPEG_QUALITY, 95])
     return {"ok": True, "image": payload.get("image"), "backup": backup}
 
 
@@ -1268,7 +1309,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     if fig.shape[0] < 10 or fig.shape[1] < 10:
                         fig = full[y0:y0 + h0, x0:x0 + w0]
                     fp = TMP_DIR / f"fig_{it['id']}_{n}_{idx}.jpg"
-                    cv2.imwrite(str(fp), cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
+                    imwrite_u(fp, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
                     return fp
 
                 def scan_figs(s):
@@ -1785,7 +1826,6 @@ class NoCacheStaticFiles(StaticFiles):
         return resp
 
 
-app.mount("/files", StaticFiles(directory=ROOT), name="files")
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
 

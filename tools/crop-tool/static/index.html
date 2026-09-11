@@ -1974,7 +1974,11 @@ function openBoxPop(b) {
     .then(d => {
       const im = $("bpImg");
       im.onload = () => { $("bpImgHint").style.display = "none"; im.style.display = ""; };
-      im.onerror = () => { $("bpImgHint").textContent = "预览图片加载失败"; };
+      im.onerror = () => {
+        $("bpImgHint").innerHTML = "预览图片加载失败<br><span style='font-size:11px;opacity:.7'>" +
+          esc(im.getAttribute("src") || "") + "</span><br><span style='font-size:11px;opacity:.7'>" +
+          "请截图此提示反馈</span>";
+      };
       im.src = d.url;
     })
     .catch(err => { $("bpImgHint").textContent = err.message || "预览加载失败"; });
@@ -2226,7 +2230,8 @@ function cardHTML(it, compact = false) {
       <button class="cln" data-id="${it.id}"> 清理</button>
       <button class="aif" data-id="${it.id}">AI识别</button>
       <button class="rm" data-id="${it.id}" title="删除"><svg class="ic"><use href="#ic-x"/></svg></button>
-      ${it.image ? `<img src="/files/${it.image}" loading="lazy" alt="错题图片">` : '<div class="no-img">无图片（手动添加）</div>'}
+      ${it.image ? `<img src="/files/${it.image}" loading="lazy" alt="错题图片"
+        onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'no-img',textContent:'图片加载失败: '+'/files/${it.image}'}))">` : '<div class="no-img">无图片（手动添加）</div>'}
       ${compact ? "" : `<div class="meta">
         <b>${esc(it.title || "未命名")}${it.group ? ' <span class="badge">多块</span>' : ""}</b>
         <span class="badge">${esc(it.subject)}</span>${it.chapter ? `<span class="badge">${esc(it.chapter)}</span>` : ""}
@@ -2678,6 +2683,7 @@ function openPreview(it) {
   pvcv.classList.remove("on"); $("pvCropBtn").classList.remove("on");
   $("pvCropOk").style.display = "none"; $("pvCropCancel").style.display = "none";
   $("pvCropHint").style.display = "none";
+  $("pvImg").onerror = () => toast("图片加载失败: /files/" + it.image, "err");
   $("pvImg").src = "/files/" + it.image;
   $("pvTitle").value = it.title || "";
   $("pvSubject").value = it.subject || "未分类";
