@@ -1,4 +1,5 @@
 @echo off
+chcp 936 >nul 2>nul
 setlocal
 cd /d "%~dp0"
 echo 打包错题收集工具 - 生成免安装单文件

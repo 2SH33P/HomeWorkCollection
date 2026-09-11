@@ -1,4 +1,5 @@
 @echo off
+chcp 936 >nul 2>nul
 setlocal
 cd /d "%~dp0"
 echo 错题收集工具 - 启动

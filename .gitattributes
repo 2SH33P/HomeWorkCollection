@@ -1,0 +1,11 @@
+# Windows 批处理必须是 CRLF 行尾, 否则 cmd 解析错位(行首字符被吞)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# Windows 说明文档
+*.txt text eol=crlf
+# Shell 脚本必须是 LF
+*.sh text eol=lf
+# 字体与本地 Typst 包按二进制处理
+*.ttf binary
+*.ttc binary
+*.otf binary
