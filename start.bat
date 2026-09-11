@@ -5,9 +5,9 @@ cd /d "%~dp0"
 echo 错题收集工具 - 启动
 echo.
 
-if exist ".venv\Scripts\python.exe" goto run
+if exist ".venv\Scripts\python.exe" goto checkdeps
 
-echo [首次运行] 正在准备环境，约2分钟，请耐心等待...
+echo [首次运行] 正在准备运行环境（约 2 分钟），请耐心等待...
 where py >nul 2>&1
 if not errorlevel 1 goto mkvenv_py
 where python >nul 2>&1
@@ -29,13 +29,23 @@ goto deps
 python -m venv .venv
 
 :deps
-".venv\Scripts\python.exe" -m pip install -q --upgrade pip
-".venv\Scripts\python.exe" -m pip install -q fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
+echo 正在安装依赖（首次约 2-3 分钟，请勿关闭本窗口）...
+".venv\Scripts\python.exe" -m pip install --upgrade pip
+".venv\Scripts\python.exe" -m pip install fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
 if errorlevel 1 goto deps_fail
 
+:checkdeps
+rem 检查依赖是否齐(升级版本后可能新增依赖, 缺失则自动补装)
+".venv\Scripts\python.exe" -c "import fastapi, uvicorn, cv2, PIL, numpy, typst" >nul 2>&1
+if not errorlevel 1 goto run
+if "%TRIED%"=="1" goto deps_fail
+set TRIED=1
+goto deps
+
 :run
-echo 正在启动服务，稍后自动打开浏览器...
-echo 关闭本窗口即停止服务。
+echo.
+echo 服务已启动，浏览器将自动打开...
+echo 关闭本窗口即停止服务
 echo.
 start "" cmd /c "ping -n 3 127.0.0.1 >nul && start http://localhost:8091"
 ".venv\Scripts\python.exe" "tools\crop-tool\app.py"
