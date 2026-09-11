@@ -7,7 +7,10 @@
 访问:  http://localhost:8091
 """
 import base64
+import collections
+import io
 import json
+import zipfile
 import os
 import re
 import shutil
@@ -17,7 +20,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
@@ -81,6 +85,100 @@ def load_db():
     return db
 
 
+# ---------- 数据导入 / 导出 (ZIP 完整包) ----------
+
+@app.get("/api/export")
+def export_data():
+    """打包全部数据: library.json + items 图片 + 配置, 下载 ZIP。"""
+    buf = io.BytesIO()
+    db = load_db()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("library.json", json.dumps(db, ensure_ascii=False, indent=2))
+        for f, name in ((TPL_PATH, "chapter_templates.json"),
+                        (PREFIX_FILE, "code_prefix.json")):
+            if f.exists():
+                z.write(f, name)
+        for f in ITEMS_DIR.rglob("*"):
+            if f.is_file():
+                z.write(f, str(f.relative_to(ROOT)))
+        z.writestr("export_info.json", json.dumps({
+            "tool": "HomeWorkCollection", "format": 1,
+            "exported": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "items": len(db.get("items", [])),
+        }, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    fname = f"homework_export_{time.strftime('%Y%m%d_%H%M')}.zip"
+    return Response(buf.read(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.post("/api/import")
+async def import_data(file: UploadFile = File(...)):
+    """导入导出的 ZIP 包: 图片解压 + 题目全部重新编号(不覆盖现有数据)。"""
+    data = await file.read()
+    if len(data) < 50:
+        return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except Exception:
+        return JSONResponse({"ok": False, "msg": "不是有效的 ZIP 文件"}, status_code=400)
+    names = zf.namelist()
+    if "library.json" not in names:
+        return JSONResponse({"ok": False, "msg": "压缩包里没有 library.json（不是本工具导出的数据包）"},
+                            status_code=400)
+    try:
+        incoming = json.loads(zf.read("library.json")).get("items", [])
+    except Exception:
+        return JSONResponse({"ok": False, "msg": "library.json 解析失败"}, status_code=400)
+    if not incoming:
+        return JSONResponse({"ok": False, "msg": "数据包里没有题目"}, status_code=400)
+
+    # 1) 解压图片(同名文件加时间戳, 不覆盖现有)
+    img_map, img_n = {}, 0
+    for nm in names:
+        if not nm.startswith("items/") or nm.endswith("/"):
+            continue
+        rel = Path(nm)
+        target = ROOT / rel
+        if target.exists():
+            target = target.with_name(f"{target.stem}_{int(time.time() * 1000)}{target.suffix}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(zf.read(nm))
+        img_map[nm] = str(target.relative_to(ROOT))
+        img_n += 1
+
+    # 2) 题目入库: 新 id + 重新编号
+    db = load_db()
+    before = len(db.get("items", []))
+    added = 0
+    for it in incoming:
+        if not isinstance(it, dict):
+            continue
+        subject = (it.get("subject") or "未分类").strip()
+        new = dict(it)
+        new["id"] = f"q{int(time.time() * 1000)}{added}"
+        new["code"] = next_code(db, subject)                 # 冲突时重新编号
+        new["subject"] = subject
+        if it.get("image") and it["image"] in img_map:
+            new["image"] = img_map[it["image"]]
+        figs = []
+        for fg in it.get("figures") or []:
+            g = dict(fg)
+            if g.get("file") in img_map:
+                g["file"] = img_map[g["file"]]
+            figs.append(g)
+        new["figures"] = figs
+        new.setdefault("created", time.strftime("%Y-%m-%d %H:%M"))
+        for k, v in (("note", ""), ("answer", ""), ("analysis", ""), ("keywords", ""),
+                     ("chapter", ""), ("title", ""), ("group", ""), ("star", 0)):
+            new.setdefault(k, v)
+        db["items"].append(new)
+        added += 1
+    save_db(db)
+    return {"ok": True, "added": added, "images": img_n,
+            "total_before": before, "total_after": len(db["items"])}
+
+
 # ---------- 编号前缀 (按科目, 可在界面修改) ----------
 PREFIX_FILE = ROOT / "code_prefix.json"
 DEFAULT_PREFIX = {"数学": "MA", "物理": "PH", "化学": "CH", "生物": "BI",
@@ -116,17 +214,21 @@ def put_prefix(payload: dict):
 
 
 def next_code(db, subject):
-    """生成编号: 科目前缀 + 4 位流水号 (如 MA0001)。"""
+    """生成编号: 科目前缀 + 流水号(至少 4 位, 超过自动扩位 -> 近乎无限)。
+    如 MA0001 … MA9999 → MA10000 → MA100000; 各科目独立计数。"""
     pfx = load_prefix().get(subject, "OT")
     nums = []
     for it in db.get("items", []):
         c = it.get("code") or ""
         if c.startswith(pfx) and c[len(pfx):].isdigit():
             nums.append(int(c[len(pfx):]))
-    return f"{pfx}{max(nums, default=0) + 1:04d}"
+    nxt = max(nums, default=0) + 1
+    width = max(4, len(str(nxt)))          # 4 位起步, 超出自动加位
+    return f"{pfx}{nxt:0{width}d}"
 
 
 def save_db(db):
+    backup_db()                                   # 每次写库前留一份旧版
     DB_FILE.write_text(json.dumps(db, ensure_ascii=False, indent=2),
                        encoding="utf-8")
 
@@ -153,9 +255,19 @@ def safe_name(name: str) -> str:
 
 # ---------- 页面路由 ----------
 
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache", "Expires": "0"}
+
+
+def _index_html():
+    """返回首页 HTML, 强制禁用浏览器缓存(否则改动后刷新仍是旧版)。"""
+    return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"),
+                        headers=NO_CACHE_HEADERS)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return _index_html()
 
 
 # ---------- 接口 ----------
@@ -176,15 +288,49 @@ async def upload(file: UploadFile = File(...)):
 
 @app.get("/api/pages")
 def list_pages():
+    """整页照片列表(含编号 P1、P2…, 按上传时间正序编号, 最新在前)。"""
+    files = [f for f in sorted(PAGES_DIR.iterdir(), key=lambda p: p.stat().st_mtime)
+             if f.name.endswith("_web.jpg")]
     out = []
-    for f in sorted(PAGES_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if f.name.endswith("_web.jpg"):
-            out.append({"page": f.name[:-len("_web.jpg")],
-                        "web_url": f"/files/pages/{f.name}"})
-    return out
+    for i, f in enumerate(files, start=1):          # P1 = 最早上传
+        pid = f.name[:-len("_web.jpg")]
+        out.append({"page": pid, "no": i,
+                    "web_url": f"/files/pages/{f.name}"})
+    return list(reversed(out))                      # 列表展示: 最新在前
 
 
 DB_LOCK = threading.Lock()
+BACKUP_DIR = ROOT / "backups"                     # 数据库自动备份
+TRASH_DIR = ROOT / ".trash"                       # 删除的文件先移到这里(可恢复)
+for d in (BACKUP_DIR, TRASH_DIR):
+    d.mkdir(parents=True, exist_ok=True)
+
+
+def backup_db(keep=30):
+    """写库前备份旧版本, 保留最近 keep 份。"""
+    if not DB_FILE.exists():
+        return
+    try:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(DB_FILE, BACKUP_DIR / f"library_{ts}.json")
+        olds = sorted(BACKUP_DIR.glob("library_*.json"))
+        for f in olds[:-keep]:
+            f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def to_trash(path):
+    """删除文件前移到回收站(保留可恢复)。"""
+    try:
+        if path.exists():
+            dst = TRASH_DIR / f"{time.strftime('%Y%m%d_%H%M%S')}_{path.name}"
+            shutil.move(str(path), str(dst))
+    except Exception:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
 TPL_PATH = ROOT / "chapter_templates.json"
 
 
@@ -323,7 +469,8 @@ async def crop(payload: dict):
         subject = safe_name(b.get("subject") or "未分类")
         chapter = safe_name(b.get("chapter") or "")
         title = safe_name(b.get("title") or "")
-        subj_dir = ITEMS_DIR / subj_dirname(subject)
+        sd = subj_dirname(subject)                  # 英文科目目录名
+        subj_dir = ITEMS_DIR / sd
         subj_dir.mkdir(parents=True, exist_ok=True)
         crop_img = img.crop((x, y, x + w, y + h))
         item_id = f"q{int(time.time() * 1000)}{len(saved)}"
@@ -351,12 +498,12 @@ async def crop(payload: dict):
                 fimg.save(subj_dir / fname, "JPEG", quality=95)
             except Exception:
                 continue
-            figs.append({"n": len(figs) + 1, "file": f"items/{subject}/{fname}",
+            figs.append({"n": len(figs) + 1, "file": f"items/{sd}/{fname}",
                          "x": fx, "y": fy, "w": fw, "h": fh})
         item = {
             "id": item_id,
             "code": next_code(db, subject),
-            "image": f"items/{subject}/{img_name}",
+            "image": f"items/{sd}/{img_name}",
             "subject": subject,
             "chapter": chapter,
             "title": title,
@@ -578,7 +725,7 @@ def split_ai(payload: dict):
             {"type": "text", "text": prompt},
             {"type": "image_url",
              "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
-        "temperature": 0.1,
+        "temperature": 0,                    # 0 = 尽量确定, 减少随机偏差
     }
     if "deepseek" in (ai_config()["base_url"] or "").lower():
         body["reasoning_effort"] = "none"   # 识别是感知任务, 关思考可提速约 40%
@@ -588,10 +735,13 @@ def split_ai(payload: dict):
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer " + cfg["key"]})
     try:
+        _t0 = time.time()
         with urllib.request.urlopen(req, timeout=120) as rq:
             d = json.loads(rq.read())
         text = d["choices"][0]["message"]["content"]
+        log_ai("拆题", cfg["model"], True, (time.time() - _t0) * 1000, f"{len(text)} 字")
     except Exception as e:
+        log_ai("拆题", cfg["model"], False, 0, str(e))
         return JSONResponse({"ok": False, "msg": "AI 拆题失败: " + str(e)[:200]},
                             status_code=502)
     m = re.search(r"\[.*\]", text, re.S)     # 提取 JSON 数组
@@ -628,7 +778,7 @@ def delete_page(page_id: str):
     """删除已上传的整页照片(原图+缩略图)。"""
     removed = 0
     for f in PAGES_DIR.glob(f"{page_id}*"):   # 含 xxx.png / xxx_web.jpg 等全部
-        f.unlink(missing_ok=True)
+        to_trash(f)                            # 移入 .trash 而非直接删除
         removed += 1
     if removed == 0:
         return JSONResponse({"ok": False, "msg": "页面不存在"}, status_code=404)
@@ -652,20 +802,51 @@ _SUB = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 _SUP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
 
 
-def ce_to_latex(s):
-    """把 mhchem 化学式宏 \\ce{...} 转成普通 LaTeX(mitex 不支持 \\ce)。"""
-    def repl(m):
-        body = m.group(1)
-        body = re.sub(r"([A-Z][a-z]?)(\d+)", r"\1_{\2}", body)      # H2O -> H_{2}O
-        body = body.replace("->", " \\rightarrow ").replace("<-", " \\leftarrow ")
-        body = body.replace("=>", " \\Rightarrow ")
-        body = body.replace("↑", " \\uparrow ").replace("↓", " \\downarrow ")
-        return body
-    prev = None
-    while prev != s:
-        prev = s
-        s = re.sub(r"\\ce\{((?:[^{}]|\{[^{}]*\})*)\}", repl, s)   # 支持一层嵌套
+CE_ARROWS = [("<=>>", " \\rightleftharpoons "), ("<<=>", " \\leftrightharpoons "),
+             ("<=>", " \\rightleftharpoons "), ("<->", " \\leftrightarrow "),
+             ("->", " \\rightarrow "), ("<-", " \\leftarrow "),
+             ("=>", " \\Rightarrow "), ("<=", " \\Leftarrow "),
+             ("↑", " \\uparrow "), ("↓", " \\downarrow ")]
+
+
+def ce_body(body):
+    """处理 \\ce{} 内部: 元素后数字变下标 + 化学箭头。"""
+    # 元素符号后紧跟的数字 -> 下标(不碰已有的 _{} ^{} 与括号内数字)
+    body = re.sub(r"([A-Z][a-z]?)(\d+)(?![\d}])", r"\1_{\2}", body)
+    for a, b in CE_ARROWS:
+        body = body.replace(a, b)
+    return body
+
+
+def fix_mitex_compat(s):
+    """修补 mitex 不支持/有 bug 的 LaTeX 命令。"""
+    s = re.sub(r"\\xrightarrow\[([^\]]*)\]\{([^{}]*)\}", r"\\overset{\2}{\\rightarrow}", s)
+    s = re.sub(r"\\xleftarrow\[([^\]]*)\]\{([^{}]*)\}", r"\\overset{\2}{\\leftarrow}", s)
+    s = re.sub(r"\\xrightarrow\{([^{}]*)\}", r"\\overset{\1}{\\rightarrow}", s)
+    s = re.sub(r"\\xleftarrow\{([^{}]*)\}", r"\\overset{\1}{\\leftarrow}", s)
     return s
+
+
+def ce_to_latex(s):
+    """把 mhchem 化学式宏 \\ce{...} 展开为普通 LaTeX(花括号配对扫描, 支持任意嵌套)。"""
+    out, i, n = [], 0, len(s)
+    while i < n:
+        if s.startswith("\\ce{", i):
+            j, depth = i + 4, 1
+            while j < n:
+                if s[j] == "{":
+                    depth += 1
+                elif s[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            out.append(ce_body(s[i + 4:j]))
+            i = j + 1
+        else:
+            out.append(s[i])
+            i += 1
+    return fix_mitex_compat("".join(out))
 
 
 def latex_var(s):
@@ -727,31 +908,66 @@ def latex_to_typst(s):
     return s
 
 
+def ai_proofread(img_rgb, draft):
+    """对照原图校对识别结果: 修正错别字/公式/化学式/括号/LaTeX 语法。"""
+    _t0 = time.time()
+    cfg = ai_config()
+    hh, ww = img_rgb.shape[:2]
+    maxpx = cfg.get("max_px", 1600) or 1600
+    if max(hh, ww) > maxpx:
+        sc = maxpx / max(hh, ww)
+        img_rgb = cv2.resize(img_rgb, (int(ww * sc), int(hh * sc)),
+                             interpolation=cv2.INTER_AREA)
+    _, buf = cv2.imencode(".jpg", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR),
+                          [cv2.IMWRITE_JPEG_QUALITY, 90])
+    b64 = base64.b64encode(buf).decode()
+    prompt = ("下面是对这张试卷图片的识别结果。请对照图片逐项核查并修正错误：\n"
+              "1) 文字错别字、漏字、多余字；\n"
+              "2) 公式/化学式的下标、电荷、系数配平、括号是否配对；\n"
+              "3) LaTeX 语法（花括号是否配对、命令拼写）；\n"
+              "4) 选项是否缺失、题干与选项是否混杂；\n"
+              "5) 与图片不符之处。\n"
+              "保持原格式：【题干】标记、选项每行一个(A．B．C．D．)、"
+              "公式用 $...$、图形用 [图@x,y,w,h]、不要输出解释。\n"
+              "只输出修正后的完整结果。\n\n识别结果：\n" + draft)
+    body = {"model": cfg["model"] or "glm-4v-flash",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
+            "temperature": 0}
+    if "deepseek" in (cfg["base_url"] or "").lower():
+        body["reasoning_effort"] = "none"
+    req = urllib.request.Request(
+        cfg["base_url"].rstrip("/") + "/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + cfg["key"]})
+    try:
+        with urllib.request.urlopen(req, timeout=150) as r:
+            d = json.loads(r.read())
+        fixed = (d["choices"][0]["message"]["content"] or "").strip()
+        log_ai("校对", cfg["model"], bool(fixed), (time.time() - _t0) * 1000,
+               f"{len(draft)} -> {len(fixed)} 字")
+        return fixed
+    except Exception as e:
+        log_ai("校对", cfg["model"], False, (time.time() - _t0) * 1000, str(e))
+        return ""
+
+
 def call_ai_vision(img_rgb):
     """调用视觉大模型识别图片, 返回 Markdown 文本(公式为 LaTeX)。"""
+    _t0 = time.time()
     hh, ww = img_rgb.shape[:2]
-    if max(hh, ww) > 1600:
-        s = 1600 / max(hh, ww)
+    maxpx = ai_config().get("max_px", 1600) or 1600     # 识别清晰度(最长边像素)
+    if max(hh, ww) > maxpx:
+        s = maxpx / max(hh, ww)
         img_rgb = cv2.resize(img_rgb, (int(ww * s), int(hh * s)),
                              interpolation=cv2.INTER_AREA)
     _, buf = cv2.imencode(".jpg", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR),
                           [cv2.IMWRITE_JPEG_QUALITY, 90])
     b64 = base64.b64encode(buf).decode()
-    prompt = ("你是试卷题目识别工具。识别图片中的题目，注意：\n"
-              "1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n"
-              "2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n"
-              "3. 忽略与题目无关的内容：专题/章节标题、知识点标签、出题人/审题人署名、页码、页眉页脚、"
-              "水印、练习册名称等，只保留题目本身的题干和选项；\n"
-              "4. 第一行输出【题干】，后跟题干文字；\n"
-              "5. 不要识别/输出答案：题干括号中的答案如（A）（D C）、选项后的对勾√×、答案行等一律忽略，"
-              "无论括号是否闭合；\n"
-              "6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / "
-              "C．选项内容 / D．选项内容（用全角句点．）；\n"
-              "7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n"
-              "8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界"
-              "（含图形外框线），不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图"
-              "0-1000 比例，如 [图@620,280,240,180]，没有图形不要加。\n"
-              "只输出识别结果，不要解释。")
+    prompt = '你是试卷题目识别工具。识别图片中的题目，注意：\n1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n3. 忽略与题目无关的内容：专题/章节标题、知识点标签、出题人/审题人署名、页码、页眉页脚、水印、练习册名称等，只保留题目本身的题干和选项；\n4. 第一行输出【题干】，后跟题干文字；\n5. 不要识别/输出答案：题干括号中的答案如（A）（D C）、选项后的对勾√×、答案行等一律忽略，无论括号是否闭合；\n6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / D．选项内容（用全角句点．）；\n7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界（含图形外框线），不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，如 [图@620,280,240,180]，没有图形不要加。\n输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n只输出识别结果，不要解释。'
     body = {
         "model": ai_config()["model"] or "glm-4v-flash",
         "messages": [{"role": "user", "content": [
@@ -767,9 +983,22 @@ def call_ai_vision(img_rgb):
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer " + ai_config()["key"]})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        d = json.loads(r.read())
-    return clean_ai_text(d["choices"][0]["message"]["content"])
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            d = json.loads(r.read())
+        text = d["choices"][0]["message"]["content"]
+        usage = d.get("usage") or {}
+        log_ai("识别", ai_config()["model"], True, (time.time() - _t0) * 1000,
+               f"{len(text)} 字" + (f" · {usage.get('total_tokens')} tokens" if usage.get("total_tokens") else ""))
+        out = clean_ai_text(text)
+        if ai_config().get("proofread", False):       # 可选: 额外一轮对照图片校对
+            fixed = ai_proofread(img_rgb, out)
+            if fixed and len(fixed) >= 20:
+                out = clean_ai_text(fixed)
+        return out
+    except Exception as e:
+        log_ai("识别", ai_config()["model"], False, (time.time() - _t0) * 1000, str(e))
+        raise
 
 
 def clean_ai_text(text):
@@ -815,9 +1044,85 @@ def clean_ai_text(text):
     return "\n".join(out)
 
 
+def typ_esc(t):
+    """转义 Typst 文本中的特殊字符(用于标题/注意事项等自由文本)。"""
+    for ch, e2 in (("#", "\\#"), ("$", "\\$"), ("{", "\\{"), ("}", "\\}"),
+                   ("[", "\\["), ("]", "\\]"), ("_", "\\_")):
+        t = t.replace(ch, e2)
+    return t
+
+
+def render_simple(txt, it, lines):
+    """附录页简化渲染: $公式$ -> mitex, [图N] -> 图片, markdown 字体标记。"""
+    txt = (txt or "").strip()
+    if not txt:
+        return
+    figmap = {int(f.get("n", 0)): f for f in (it.get("figures") or [])}
+    align_mode = None
+
+    def esc1(t):
+        for ch, e2 in (("#", "\\#"), ("$", "\\$"), ("{", "\\{"), ("}", "\\}"),
+                       ("[", "\\["), ("]", "\\]"), ("_", "\\_")):
+            t = t.replace(ch, e2)
+        return t
+
+    def md(t):
+        out = ""
+        for seg in re.split(r"(\*\*.+?\*\*|\*[^*]+?\*)", t):
+            if not seg:
+                continue
+            if seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
+                out += "*" + esc1(seg[2:-2]) + "*"
+            elif seg.startswith("*") and seg.endswith("*") and len(seg) > 2:
+                out += "_" + esc1(seg[1:-1]) + "_"
+            else:
+                out += esc1(seg)
+        return out
+
+    for ln in txt.split("\n"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        if ln.startswith("::: "):
+            align_mode = ln[4:].strip() or None
+            continue
+        if ln == ":::":
+            align_mode = None
+            continue
+        # 图块 -> 占位
+        figs = []
+        def _fig(m):
+            n2 = int(m.group(1))
+            w = (m.group(2) or "40%")
+            if not w.endswith("%"):
+                w += "%"
+            f0 = figmap.get(n2)
+            fp = ROOT / str(f0.get("file", "")) if f0 else None
+            if fp is None or not fp.exists():
+                cand = (ROOT / f"{it['image'][:-4]}_fig{n2}.jpg") if it.get("image") else None
+                fp = cand if (cand and cand.exists()) else None
+            if fp:
+                figs.append((str(fp), w))
+                return f"@@F{len(figs) - 1}@@"
+            return f'#text(fill: rgb("#cc0000"))[图{n2}缺失]'
+        ln = re.sub(r"\[图(\d+)(?:\|([\d.]+%?))?\]", _fig, ln)
+        ln = ln.replace("（图）", "").replace("(图)", "")
+        out = ""
+        for seg in re.split(r"(\$[^$]+\$)", ln):
+            if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
+                out += '#mi("' + latex_var(seg[1:-1]) + '")'
+            else:
+                out += md(seg)
+        for i, (fp, w) in enumerate(figs):
+            out = out.replace(f"@@F{i}@@", f'#image("{fp}", width: {w})')
+        if out.strip():
+            lines.append(f"#align({align_mode})[{out}]" if align_mode else out + " \\")
+
+
 @app.get("/api/paper/pdf")
-def paper_pdf(ids: str = ""):
-    """用 Typst 渲染试卷 PDF (宋体正文/黑体大题/楷体续块)。"""
+def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = "",
+              title: str = "", subject_line: str = "", notice: str = ""):
+    """用 Typst 渲染试卷 PDF。attach: 附答案解析页; index: 1 附编号对照页; header: 页眉文字。"""
     db = load_db()
     wanted = [i for i in ids.split(",") if i]
     order = {iid: n for n, iid in enumerate(wanted)}
@@ -832,30 +1137,45 @@ def paper_pdf(ids: str = ""):
 
     subjects = sorted({it.get("subject") or "" for it in items})
     lines = [
-        '#set page(width: 185mm, height: 260mm, margin: (top: 2cm, bottom: 2cm, left: 2.2cm, right: 2.2cm), footer: context { align(center)[#counter(page).display()] })',
+        '#set page(',
+        '  width: 185mm, height: 260mm,',
+        '  margin: (top: 2cm, bottom: 2cm, left: 2.2cm, right: 2.2cm),',
+        '  footer: context {',
+        '    let total = counter(page).final().first()',
+        '    align(center)[#text(size: 9pt)[第 #counter(page).display() 页　共 #total 页]]',
+        '  },',
+        ('  header: align(center)[#text(size: 9pt, fill: rgb("#666666"))[' + header.replace("[", chr(92) + "[").replace("]", chr(92) + "]") + ']\n#v(-0.25em)#line(length: 100%, stroke: 0.4pt + rgb("#cccccc"))],'
+         if header.strip() else '  header: none,'),
+        ')',
         '#import "@preview/mitex:0.2.4": mi',                        # LaTeX 公式支持
         '#set text(font: ("Times New Roman", "SimSun"), size: 10.5pt, lang: "zh")',  # 英文 Times 新罗马 / 中文宋体
         '#set par(justify: true, leading: 0.95em, spacing: 0.95em)',  # 行距=段距=块距, 全局统一
-        '#show heading: set text(font: "SimHei")',                    # 题型/大题标题: 黑体
+        '#show heading: set text(font: "SimHei", size: 12pt)',         # 大题标题: 小四黑体
         '#show heading: set par(leading: 0.7em)',
         '#show heading: set block(spacing: 0.95em)',
         '#show emph: set text(font: "KaiTi")',                        # *斜体* -> 楷体
         '#show strong: set text(font: "SimHei")',                     # **粗体** -> 黑体
         '#set block(spacing: 0.95em)',
-        # ---- 卷头: 三号标题 / 二号黑体科目 / 五号说明 ----
-        '#align(center)[#text(size: 16pt, font: "SimHei")[错题重组试卷]]',
-        f'#align(center)[#text(size: 22pt, font: "SimHei", weight: "bold")[{subjects[0] if len(subjects) == 1 else " ".join(subjects)}]]',
-        f'#align(center)[#text(size: 10.5pt)[共 {len(items)} 题 · {time.strftime("%Y-%m-%d")}]]',
-        '#v(0.45cm)',
-        '#text(font: "SimHei")[注意事项：]',
-        '1．本试卷由错题收集工具生成，请在答题纸上作答；',
-        '2．解答应写出文字说明、证明过程或演算步骤。',
+        # ---- 卷头(可自定义): 三号标题 / 二号黑体科目 / 五号说明 ----
+        f'#align(center)[#text(size: 16pt, font: "SimHei")[{typ_esc(title.strip() or "错题重组试卷")}]]',
+        f'#align(center)[#text(size: 22pt, font: "SimHei", weight: "bold")[{typ_esc(subject_line.strip() or (subjects[0] if len(subjects) == 1 else " ".join(subjects)))}]]',
         '#v(0.45cm)',
     ]
+    # 注意事项(可自定义, 首行黑体小四, 条目五号)
+    notice_text = (notice or "").strip() or "注意事项：\n1．本试卷由错题收集工具生成，请在答题纸上作答；\n2．解答应写出文字说明、证明过程或演算步骤。"
+    for i, ln in enumerate(notice_text.split("\n")):
+        if not ln.strip():
+            continue
+        if i == 0:
+            lines.append(f'#text(font: "SimHei", size: 12pt)[{typ_esc(ln)}]')
+        else:
+            lines.append(f'#text(size: 10.5pt)[{typ_esc(ln)}]')
+    lines.append('#v(0.45cm)')
     n, prev_g = 0, None
+    ordered = {}                      # 题号 -> [该题的块(含续块)]
     for gname, gitems in groups.items():
-        if gname:
-            lines.append(f"= {gname}")          # 大题标题: 黑体
+        if gname and gname not in ("未命名", "未分类", "无"):
+            lines.append(f"= {gname}")          # 大题标题: 黑体(空/未命名不显示)
         for it in gitems:
             g = it.get("group") or ""
             if g and g == prev_g:
@@ -863,6 +1183,7 @@ def paper_pdf(ids: str = ""):
             else:
                 n += 1
                 lines.append(f"{n}．")               # 题号顶格, 题干接同一行
+            ordered.setdefault(n, []).append(it)
             prev_g = g
             txt = (it.get("note") or "").strip()
             if txt:
@@ -931,6 +1252,8 @@ def paper_pdf(ids: str = ""):
                         p0 = ROOT / str(f0.get("file", ""))
                         if p0.exists():
                             return p0
+                    if not it.get("image"):
+                        return None
                     cand = ROOT / f"{it['image'][:-4]}_fig{n2}.jpg"
                     return cand if cand.exists() else None
 
@@ -974,7 +1297,7 @@ def paper_pdf(ids: str = ""):
                         return f"@@F{len(infos) - 1}@@"
 
                     s = re.sub(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", rep_old, s)
-                    if "[图]" in s:
+                    if "[图]" in s and it.get("image"):
                         infos.append({"file": str(ROOT / it["image"]),
                                       "w": "45%", "align": "center"})
                         s = s.replace("[图]", f"@@F{len(infos) - 1}@@")
@@ -1028,8 +1351,50 @@ def paper_pdf(ids: str = ""):
                             first_ln = False
                 flush_opts()
             else:
-                # 未识别出文字: 保留原图
-                lines.append(f'#image("{ROOT / it["image"]}", width: 50%)')
+                # 未识别出文字: 保留原图(手动添加的纯文字题无图, 跳过)
+                if it.get("image"):
+                    lines.append(f'#image("{ROOT / it["image"]}", width: 50%)')
+            lines.append("#v(0.45cm)")          # 题目之间的间距
+
+    # ---- 文末: 答案 / 解析 附录页 ----
+    if attach in ("answer", "analysis", "both"):
+        lines.append("#pagebreak()")
+        title = {"answer": "参考答案", "analysis": "答案与解析", "both": "参考答案与解析"}[attach]
+        lines.append(f'#align(center)[#text(size: 14pt, font: "SimHei")[{title}]]')
+        lines.append("#v(0.4cm)")
+        has_content = [False]
+        for num in sorted(ordered):
+            blocks = ordered[num]
+            parts = []
+            if attach in ("answer", "both"):
+                for b in blocks:
+                    if (b.get("answer") or "").strip():
+                        parts.append(("答案", b["answer"], b))
+            if attach in ("analysis", "both"):
+                for b in blocks:
+                    if (b.get("analysis") or "").strip():
+                        parts.append(("解析", b["analysis"], b))
+            if not parts:
+                continue
+            has_content[0] = True
+            lines.append(f"**{num}．**")
+            for label, content, b in parts:
+                lines.append(f'#text(font: "SimHei")[{label}：]')
+                render_simple(content, b, lines)
+            lines.append("#v(0.3cm)")
+        if not has_content[0]:
+            lines.append('#text(fill: rgb("#888888"))[本卷题目尚未填写答案或解析；'
+                         '可在错题库点题号补充后重新生成。]')
+    # ---- 文末: 题号与编号对照页 ----
+    if index == "1" or index == "true":
+        lines.append("#pagebreak()")
+        lines.append('#align(center)[#text(size: 14pt, font: "SimHei")[题目编号对照]]')
+        lines.append("#v(0.4cm)")
+        for num in sorted(ordered):
+            b = ordered[num][0]
+            code = b.get("code") or b.get("id") or ""
+            chap = b.get("chapter") or "未分类"
+            lines.append(f"{num}． {code}　（{chap}）\\")
 
     typ_path = TMP_DIR / f"paper_{int(time.time() * 1000)}.typ"
     pdf_path = typ_path.with_suffix(".pdf")
@@ -1049,8 +1414,32 @@ def paper_pdf(ids: str = ""):
 AI_CONFIG_FILE = ROOT / ".ai_config.json"
 
 
+# ---------- 运行日志(AI 调用) ----------
+AI_LOG = collections.deque(maxlen=300)
+
+
+def log_ai(kind, model, ok, ms, msg=""):
+    AI_LOG.append({
+        "time": time.strftime("%m-%d %H:%M:%S"),
+        "kind": kind, "model": model or "-", "ok": bool(ok),
+        "ms": int(ms), "msg": str(msg)[:200],
+    })
+
+
+@app.get("/api/logs")
+def get_logs(limit: int = 80):
+    logs = list(AI_LOG)[-max(1, min(300, limit)):]
+    return {"ok": True, "logs": logs[::-1]}
+
+
+@app.delete("/api/logs")
+def clear_logs():
+    AI_LOG.clear()
+    return {"ok": True}
+
+
 def ai_config():
-    cfg = {"base_url": "", "key": "", "model": ""}
+    cfg = {"base_url": "", "key": "", "model": "", "proofread": False, "max_px": 1600}
     if AI_CONFIG_FILE.exists():
         try:
             cfg.update(json.loads(AI_CONFIG_FILE.read_text(encoding="utf-8")))
@@ -1064,13 +1453,8 @@ def ai_config():
 
 
 AI_PRESETS = {
-    "deepseek": {"label": "DeepSeek 多模态（deepseek-flash · 推荐）",
+    "deepseek": {"label": "DeepSeek 多模态（deepseek-flash）",
                  "base_url": "https://api.deepseek.com/v1", "model": "deepseek-flash"},
-    "zhipu": {"label": "智谱 GLM-4V-Flash（免费 · 备用）",
-              "base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4v-flash"},
-    "qwen": {"label": "通义 qwen-vl-plus（备用）",
-             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-             "model": "qwen-vl-plus"},
 }
 
 
@@ -1081,6 +1465,7 @@ def get_ai_config():
     return {"ok": True, "base_url": cfg["base_url"], "model": cfg["model"],
             "key_set": bool(key),
             "key_hint": (key[:4] + "****" + key[-4:]) if len(key) > 10 else ("****" if key else ""),
+            "max_px": cfg.get("max_px", 1600), "proofread": bool(cfg.get("proofread")),
             "presets": AI_PRESETS}
 
 
@@ -1090,6 +1475,13 @@ def set_ai_config(payload: dict):
     for k in ("base_url", "key", "model"):
         if k in payload and str(payload[k]).strip():
             cfg[k] = str(payload[k]).strip()
+    if "proofread" in payload:
+        cfg["proofread"] = bool(payload["proofread"])
+    if "max_px" in payload:
+        try:
+            cfg["max_px"] = max(800, min(3000, int(payload["max_px"])))
+        except (TypeError, ValueError):
+            pass
     AI_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
                               encoding="utf-8")
     try:
@@ -1115,11 +1507,14 @@ def test_ai_config(payload: dict = None):
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer " + cfg["key"]})
     try:
+        _t0 = time.time()
         with urllib.request.urlopen(req, timeout=30) as r:
             d = json.loads(r.read())
         reply = d["choices"][0]["message"]["content"][:30]
+        log_ai("测试连接", cfg["model"], True, (time.time() - _t0) * 1000, reply or "-")
         return {"ok": True, "msg": f"连接成功（模型回复：{reply}）"}
     except Exception as e:
+        log_ai("测试连接", cfg["model"], False, 0, str(e))
         return JSONResponse({"ok": False, "msg": "连接失败: " + str(e)[:160]},
                             status_code=502)
 
@@ -1160,6 +1555,56 @@ def ocr_ai(payload: dict):
 def list_items():
     db = load_db()
     return {"items": list(reversed(db["items"]))}
+
+
+@app.post("/api/item")
+async def create_item(subject: str = Form("未分类"), chapter: str = Form(""),
+                      note: str = Form(""), answer: str = Form(""),
+                      analysis: str = Form(""), keywords: str = Form(""),
+                      title: str = Form(""), star: int = Form(0),
+                      file: UploadFile = File(None)):
+    """手动新建题目(可不上传图片; 上传的图片作为题目图)。"""
+    db = load_db()
+    subject = (subject or "未分类").strip()
+    item_id = f"q{int(time.time() * 1000)}"
+    img_rel = ""
+    if file is not None and file.filename:
+        data = await file.read()
+        if len(data) > 100:
+            try:
+                im = Image.open(io.BytesIO(data)).convert("RGB")
+                if max(im.size) > 2400:
+                    im.thumbnail((2400, 2400))
+                sd = subj_dirname(subject)
+                d = ITEMS_DIR / sd
+                d.mkdir(parents=True, exist_ok=True)
+                name = f"{item_id}.jpg"
+                im.save(d / name, "JPEG", quality=92)
+                img_rel = f"items/{sd}/{name}"
+            except Exception as e:
+                return JSONResponse({"ok": False, "msg": "图片解析失败: " + str(e)[:80]},
+                                    status_code=400)
+    item = {
+        "id": item_id,
+        "code": next_code(db, subject),
+        "image": img_rel,
+        "subject": subject,
+        "chapter": chapter.strip(),
+        "title": title.strip(),
+        "reason": "",
+        "note": note,
+        "answer": answer,
+        "analysis": analysis,
+        "keywords": keywords,
+        "star": max(0, min(5, int(star or 0))),
+        "figures": [],
+        "group": "",
+        "source_page": "",
+        "created": time.strftime("%Y-%m-%d %H:%M"),
+    }
+    db["items"].append(item)
+    save_db(db)
+    return {"ok": True, "item": item}
 
 
 @app.put("/api/item/{item_id}")
@@ -1273,8 +1718,9 @@ def delete_item(item_id: str):
     for it in db["items"]:
         if it["id"] == item_id:
             f = ROOT / it["image"]
-            if f.exists():
-                f.unlink()
+            to_trash(f)                        # 移入回收站(可恢复)
+            for fg in it.get("figures") or []:  # 图块一并回收
+                to_trash(ROOT / str(fg.get("file", "")))
             db["items"].remove(it)
             save_db(db)
             return {"ok": True}
@@ -1349,7 +1795,7 @@ def spa_route(route: str):
     head = route.split("/")[0]
     if head in ("api", "files", "static", "docs", "openapi.json", "redoc"):
         return JSONResponse({"ok": False, "msg": "not found"}, status_code=404)
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return _index_html()
 
 
 if __name__ == "__main__":

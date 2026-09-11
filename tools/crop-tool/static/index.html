@@ -52,6 +52,14 @@ body {
   touch-action: manipulation;
 }
 
+/* ===== Apple 风格图标 ===== */
+.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+      vertical-align: -0.18em; flex: none; }
+.ic-lg { width: 1.45em; height: 1.45em; }
+.nav-ic { display: block; margin: 0 auto 2px; }
+button .ic + span, .btn .ic + span { margin-left: 6px; }
+
 /* ===== 顶栏 ===== */
 header { padding: 28px 24px 14px; }
 header h1 { font-size: clamp(22px, 4vw, 28px); font-weight: 700; letter-spacing: .02em; }
@@ -89,6 +97,7 @@ html[data-route="editor"] #tab-editor,
 html[data-route="library"] #tab-library,
 html[data-route="paper"] #tab-paper,
 html[data-route="settings"] #tab-settings { display: block; animation: fadeSlide .28s var(--motion); }
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 @keyframes fadeSlide { from { opacity: 0; transform: translateY(8px); }
                        to   { opacity: 1; transform: none; } }
 [data-reveal] { opacity: 0; transform: translateY(14px); transition:
@@ -101,7 +110,8 @@ html[data-route="settings"] #tab-settings { display: block; animation: fadeSlide
 .btn { background: var(--accent); color: #fff; border: none; padding: 0 18px; height: 44px;
        border-radius: 12px; font-size: 15px; font-weight: 500; cursor: pointer;
        transition: transform .15s var(--motion), opacity .2s; white-space: nowrap;
-       display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+       display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+       max-width: 100%; }
 label.btn { text-align: center; }
 .btn-sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
 .btn:active { transform: scale(.97); }
@@ -166,12 +176,17 @@ label.chk input { width: 18px; height: 18px; accent-color: var(--accent); }
 #drop .t { font-size: 15px; font-weight: 600; margin-top: 8px; }
 
 /* ===== 跨页拼接 ===== */
-.merge-card { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.merge-card .m-title { font-size: 14px; font-weight: 600; width: 100%; }
-.merge-card .m-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-
 /* ===== 页面缩略图 ===== */
-.pages { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.pages-bar { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.pages-bar .hint { flex: 1; }
+.pages { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.page-thumb .pck { position: absolute; top: 6px; left: 6px; width: 24px; height: 24px;
+                   border-radius: 50%; border: 2px solid rgba(255,255,255,.9);
+                   background: rgba(0,0,0,.35); color: transparent; display: flex;
+                   align-items: center; justify-content: center; font-size: 12px;
+                   font-weight: 700; cursor: pointer; z-index: 3;
+                   box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.page-thumb .pck.on { background: var(--danger); border-color: var(--danger); color: #fff; }
 .page-thumb { width: 108px; cursor: pointer; border-radius: var(--r-sm); padding: 4px;
               background: var(--card); box-shadow: var(--shadow); border: 2px solid transparent;
               position: relative; transition: transform .15s var(--motion), border-color .2s; }
@@ -179,33 +194,133 @@ label.chk input { width: 18px; height: 18px; accent-color: var(--accent); }
 .page-thumb.active { border-color: var(--accent); }
 .page-thumb img { width: 100%; height: 76px; object-fit: cover; border-radius: 7px; }
 .page-thumb .pn { font-size: 11px; color: var(--t3); text-align: center; margin-top: 3px; }
-.page-thumb .pdel { position: absolute; top: 6px; right: 6px; background: rgba(255,59,48,.92);
+.page-thumb .pn b { color: var(--accent); font-size: 12px; margin-right: 3px; }
+.page-thumb .pdel { position: absolute; top: 6px; right: 6px; z-index: 3; width: 26px; height: 26px;
+                     display: flex; align-items: center; justify-content: center;
+                     background: rgba(255,59,48,.92);
                      color: #fff; border: none; border-radius: 6px; padding: 2px 8px; cursor: pointer;
                      font-size: 11px; opacity: 0; transition: opacity .15s; }
 .page-thumb:hover .pdel { opacity: 1; }
 
 /* ===== 编辑器 ===== */
-.editor { display: flex; gap: 16px; margin-top: 14px; align-items: flex-start; }
+.editor { display: flex; gap: 16px; margin-top: 14px; align-items: stretch;
+          height: calc(100vh - 210px); min-height: 420px; }
 .canvas-wrap { flex: 1; min-width: 0; background: var(--card); border-radius: var(--r-lg);
-               box-shadow: var(--shadow); padding: 12px; }
-.crop-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 8px;
-            background: color-mix(in srgb, var(--warn) 10%, var(--card));
-            border-radius: var(--r-sm); border: 1px dashed var(--warn); }
-.crop-bar .hint { flex: 1; }
-.crop-bar .btn { height: 34px; padding: 0 14px; font-size: 13px; }
-canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-sm);
+               box-shadow: var(--shadow); padding: 12px; overflow: auto; position: relative; }
+/* 退出编辑后的只读遮罩 */
+.canvas-wrap.locked::after { content: "已退出编辑（只读）· 点此重新进入裁题模式";
+               position: absolute; inset: 0; z-index: 20; display: flex;
+               align-items: center; justify-content: center; cursor: pointer;
+               background: color-mix(in srgb, var(--bg) 62%, transparent);
+               backdrop-filter: blur(1.5px); color: var(--t2); font-size: 13px;
+               font-weight: 600; border-radius: var(--r-lg); text-align: center; padding: 0 20px; }
+.canvas-wrap.locked canvas { pointer-events: none; }
+/* iPad 记事本风格底部悬浮工具栏(fixed 真实悬浮在屏幕底部) */
+.crop-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            position: fixed; bottom: calc(16px + env(safe-area-inset-bottom));
+            left: 50%; transform: translateX(-50%); z-index: 60;
+            max-width: min(900px, calc(100vw - 24px));
+            padding: 10px 16px;
+            background: color-mix(in srgb, var(--card) 90%, transparent);
+            backdrop-filter: blur(18px) saturate(1.6);
+            -webkit-backdrop-filter: blur(18px) saturate(1.6);
+            border: 1px solid var(--sep); border-radius: 20px;
+            box-shadow: 0 10px 34px rgba(0,0,0,.22); }
+.crop-bar .ct-mid { display: flex; align-items: center; gap: 8px; }
+.crop-bar .ct-right { display: flex; gap: 8px; }
+.ct-seg { display: inline-flex; background: rgba(118,118,128,.14); border-radius: 10px; padding: 2px; }
+.ct-seg button { border: none; background: none; padding: 6px 16px; border-radius: 8px;
+                 font-size: 13px; color: var(--t2); cursor: pointer; min-height: 34px;
+                 transition: all .18s var(--motion); }
+.ct-seg button.active { background: var(--card); color: var(--t1); font-weight: 600;
+                        box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.ct-ic { width: 34px; height: 34px; border-radius: 9px; border: none; cursor: pointer;
+         background: var(--elev); color: var(--t1); font-size: 16px; line-height: 1;
+         display: inline-flex; align-items: center; justify-content: center; }
+.ct-ic.ct-fit { width: auto; padding: 0 11px; font-size: 12px; }
+.ct-ic:active { transform: scale(.95); }
+.ct-sep { width: 1px; height: 22px; background: var(--sep); margin: 0 2px; flex: none; }
+.ct-ic:disabled { opacity: .35; cursor: default; }
+.ct-val { font-size: 12px; color: var(--t2); min-width: 44px; text-align: center;
+          font-variant-numeric: tabular-nums; }
+/* 题目全屏编辑窗(编辑模式点方框弹出) */
+.box-pop { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center;
+           justify-content: center; padding: 16px; background: rgba(0,0,0,.45);
+           animation: fadeIn .16s var(--motion); }
+.bp-card { width: min(1000px, 100%); height: min(92vh, 100%); display: flex; flex-direction: column;
+           background: var(--card); border-radius: 20px; overflow: hidden;
+           box-shadow: 0 24px 70px rgba(0,0,0,.32); animation: fadeIn .14s var(--motion); }
+.box-pop .bp-head { display: flex; align-items: center; justify-content: space-between;
+                    padding: 12px 18px; border-bottom: 1px solid var(--sep); flex: none; }
+.box-pop .bp-head b { font-size: 16px; }
+.box-pop .bp-head button { border: none; background: var(--elev); color: var(--t2);
+                           width: 30px; height: 30px; border-radius: 9px; cursor: pointer;
+                           display: flex; align-items: center; justify-content: center; }
+.bp-grid { flex: 1; display: flex; min-height: 0; }
+.bp-img { flex: 1; min-width: 0; background: var(--elev); display: flex; align-items: center;
+          justify-content: center; overflow: auto; position: relative; }
+.bp-img img { min-height: 60px; }
+.bp-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.bp-img .hint { position: absolute; color: var(--t3); font-size: 13px; }
+.box-pop .bp-body { width: 400px; flex: none; border-left: 1px solid var(--sep);
+                    overflow-y: auto; padding: 14px 18px 22px;
+                    display: flex; flex-direction: column; gap: 7px; }
+.box-pop input, .box-pop select, .box-pop textarea { width: 100%; font-size: 13px;
+                                                     min-height: 36px; padding: 7px 10px; }
+.box-pop textarea { min-height: 60px; }
+@media (max-width: 760px) {
+  .bp-grid { flex-direction: column; }
+  .bp-img { height: 34vh; flex: none; }
+  .box-pop .bp-body { width: 100%; border-left: none; border-top: 1px solid var(--sep); }
+}
+canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(--r-sm);
          touch-action: none; }
+/* 桌面: 编辑区已预留空间, 工具栏不会遮挡画布, 无需额外留白 */
+@media (max-width: 639px) {
+  /* 手机: 筛选栏自适应, 避免日期输入溢出 */
+  .lib-filters { gap: 8px; }
+  .lib-filters .fl { width: 100%; min-width: 0; }
+  .lib-filters input[type=date] { flex: 1; min-width: 0; width: auto; }
+  .lib-filters select { flex: none; }
+  .lib-search { flex-wrap: wrap; }
+  .lib-search .search-wrap { min-width: 0; }
+  .paper-add { flex-wrap: wrap; }
+  .paper-add input { min-width: 0; }
+  /* 手机: 工具栏要浮在底部页签栏(tabbar)之上, 且紧凑 */
+  .crop-bar { gap: 6px; padding: 7px 10px; flex-wrap: nowrap;
+              bottom: calc(58px + env(safe-area-inset-bottom));
+              max-width: calc(100vw - 16px); overflow-x: auto; }
+  .crop-bar .ct-mid { gap: 5px; }
+  .crop-bar .ct-right { gap: 6px; }
+  .ct-seg button { padding: 6px 10px; font-size: 12px; min-height: 30px; }
+  .ct-ic { width: 30px; height: 30px; font-size: 15px; border-radius: 8px; }
+  .ct-ic.ct-fit { padding: 0 8px; font-size: 11px; }
+  .ct-val { min-width: 36px; font-size: 11px; }
+  .crop-bar .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; }
+  .canvas-wrap.cropping { padding-bottom: 110px; }
+}
 .side { width: 330px; background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow);
-        padding: 14px; max-height: 80vh; overflow-y: auto; position: sticky; top: 60px; }
+        padding: 14px; height: 100%; overflow-y: auto; }
 .side h3 { font-size: 13px; color: var(--t2); margin-bottom: 10px; font-weight: 600; }
 .box-card { border: 1px solid var(--sep); border-radius: var(--r-md); padding: 10px; margin-bottom: 10px;
             animation: fadeSlide .2s var(--motion); }
-.box-card .bhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.box-card .bno { font-weight: 700; color: var(--danger); font-size: 14px; }
+.box-card { padding: 8px 10px; }
+.box-card .bhead { display: flex; align-items: center; gap: 7px; margin-bottom: 0; }
+.box-card.open .bhead { margin-bottom: 8px; }
+.b-star { color: var(--warn); font-size: 11px; letter-spacing: .5px; flex: none; }
+.b-sum { flex: 1; min-width: 0; font-size: 12px; color: var(--t3); white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+.b-toggle { border: none; background: var(--elev); color: var(--accent); border-radius: 7px;
+            padding: 4px 10px; font-size: 12px; cursor: pointer; flex: none; }
+.box-card .del { border: none; background: none; color: var(--danger); cursor: pointer;
+                 font-size: 12px; padding: 4px 6px; flex: none; }
+.bbody { display: none; }
+.box-card.open .bbody { display: block; }
+.box-card .bno { font-weight: 700; color: var(--danger); font-size: 13px; flex: none; }
 .box-card .badge { font-size: 11px; background: color-mix(in srgb, var(--warn) 18%, transparent);
                    color: var(--warn); border-radius: 5px; padding: 2px 7px; margin-left: 6px; }
 .box-card input, .box-card select { width: 100%; margin-bottom: 6px; }
-.box-card textarea { width: 100%; margin-bottom: 6px; min-height: 56px; resize: vertical;
+.box-card textarea { width: 100%; margin-bottom: 6px; min-height: 44px; resize: vertical;
                      font-family: inherit; font-size: 13px; line-height: 1.6;
                      background: var(--elev); border: 1px solid transparent; color: var(--t1);
                      border-radius: var(--r-sm); padding: 8px 10px; }
@@ -224,7 +339,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .box-card .mini.on { color: var(--accent); font-weight: 700; outline: 1px solid var(--accent);
                       border-radius: 6px; padding: 4px 8px; }
 .box-card .brow { display: flex; gap: 14px; }
-.actions { display: flex; gap: 10px; margin-top: 6px; }
+.actions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
 .subj-line { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .subj-line select { flex: 1; }
 .pg-group { margin-bottom: 6px; }
@@ -235,6 +350,41 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* 大题预设选择 */
+.chap-wrap { position: relative; display: block; }
+.chap-wrap input { padding-right: 34px; }
+.chap-pick { position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+             width: 30px; height: calc(100% - 4px); border: none; background: transparent;
+             color: var(--accent); cursor: pointer; font-size: 13px; border-radius: 8px;
+             display: flex; align-items: center; justify-content: center; }
+.chap-pick:hover { background: var(--elev); }
+.chap-menu { position: fixed; z-index: 200; min-width: 190px; max-height: 300px; overflow-y: auto;
+             background: var(--card); border: 1px solid var(--sep); border-radius: 12px;
+             box-shadow: 0 12px 34px rgba(0,0,0,.22); padding: 5px; }
+.chap-menu .cm-item { padding: 9px 12px; font-size: 13px; border-radius: 8px; cursor: pointer;
+                      color: var(--t1); }
+.chap-menu .cm-item:hover { background: var(--elev); }
+.chap-menu .cm-clear { color: var(--danger); border-top: 1px solid var(--sep); margin-top: 4px; }
+
+/* 图片浏览 */
+.view-ops { display: flex; align-items: center; gap: 10px; }
+.view-ops > button { width: 30px; height: 30px; border-radius: 9px; border: none;
+                     background: var(--elev); color: var(--t2); cursor: pointer;
+                     display: flex; align-items: center; justify-content: center; }
+.view-body { flex: 1; min-height: 0; background: var(--elev); display: flex;
+             align-items: center; justify-content: center; overflow: auto; position: relative; }
+.view-body img { max-width: 100%; max-height: 100%; object-fit: contain;
+                 transition: transform .15s var(--motion); }
+.view-body .hint { position: absolute; color: var(--t3); font-size: 13px; }
+
+/* 手动添加题目 */
+.add-body { padding: 14px 18px 22px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.add-body textarea, .add-body input { width: 100%; }
+.add-file { display: flex; align-items: center; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
+/* 无图题目在相册视图的占位 */
+.no-img { width: 100%; height: 140px; display: flex; align-items: center; justify-content: center;
+          background: var(--elev); color: var(--t3); font-size: 12px; }
+
 /* ===== 设置页 ===== */
 .ai-status { display: flex; align-items: center; gap: 8px; font-size: 14px;
              background: color-mix(in srgb, var(--success) 10%, var(--card));
@@ -244,11 +394,26 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 #tab-settings .fld { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 #tab-settings .fld span { font-size: 12px; color: var(--t3); }
 #tab-settings input { width: 100%; }
+.log-list { max-height: 360px; overflow-y: auto; border-radius: var(--r-sm);
+            background: var(--elev); }
+.log-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+           border-bottom: 1px solid var(--sep); font-size: 12px; }
+.log-row:last-child { border-bottom: none; }
+.log-row .t { color: var(--t3); flex: none; font-variant-numeric: tabular-nums; }
+.log-row .k { flex: none; font-weight: 600; }
+.log-row.ok .k { color: var(--success); }
+.log-row.bad .k { color: var(--danger); }
+.log-row .m { flex: 1; min-width: 0; color: var(--t2); white-space: nowrap;
+              overflow: hidden; text-overflow: ellipsis; }
+.log-row .ms { color: var(--t3); flex: none; font-variant-numeric: tabular-nums; }
 
 /* ===== 错题库: 搜索/筛选/列表 ===== */
 .lib-search { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
 .lib-search input { flex: 1; font-size: 15px; }
 .seg-sm button { padding: 7px 14px; min-height: 36px; font-size: 13px; }
+.search-wrap { position: relative; flex: 1; display: flex; align-items: center; }
+.search-wrap .ic { position: absolute; left: 11px; color: var(--t3); pointer-events: none; }
+.search-wrap input { padding-left: 36px !important; width: 100%; }
 .lib-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
                margin-bottom: 10px; }
 .lib-filters .fl { display: flex; align-items: center; gap: 6px; font-size: 12px;
@@ -269,7 +434,9 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .folder-cnt { font-size: 12px; color: var(--t3); }
 .folder-arrow { color: var(--t3); font-size: 20px; }
 .lib-back { display: inline-flex; align-items: center; gap: 6px; color: var(--accent);
-            font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 10px; }
+            font-size: 14px; font-weight: 600; cursor: pointer; }
+.list-top { display: flex; align-items: center; justify-content: space-between;
+            gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 /* 题目列表行(默认折叠) */
 .q-row { background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow);
          margin-bottom: 8px; overflow: hidden; }
@@ -279,16 +446,13 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
           padding: 3px 7px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .q-code:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .q-stars { color: var(--warn); font-size: 13px; letter-spacing: 1px; flex: none; }
-.q-meta { font-size: 12px; color: var(--t3); flex: 1; min-width: 0; white-space: nowrap;
-          overflow: hidden; text-overflow: ellipsis; }
+.q-meta { font-size: 12px; color: var(--t3); flex: none; white-space: nowrap; }
+.q-title { flex: 1; min-width: 0; font-size: 13px; color: var(--t1);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q-toggle { border: none; background: var(--elev); color: var(--t2); border-radius: 7px;
             padding: 5px 11px; font-size: 12px; cursor: pointer; flex: none; }
-.q-sum { padding: 0 14px 12px; font-size: 13px; color: var(--t2); line-height: 1.6;
-         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-         overflow: hidden; }
 .q-full { display: none; padding: 0 14px 14px; border-top: 1px solid var(--sep); margin-top: 2px; }
 .q-row.open .q-full { display: block; }
-.q-row.open .q-sum { display: none; }
 .q-sec { margin-top: 10px; }
 .q-sec-t { font-size: 12px; color: var(--t3); margin-bottom: 4px; }
 .q-pre { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.75;
@@ -358,7 +522,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .card .meta b { color: var(--t1); display: block; margin-bottom: 4px; }
 .card .badge { display: inline-block; background: var(--elev); border-radius: 5px; padding: 2px 7px;
                margin: 1px 4px 0 0; font-size: 11px; }
-.card .rm { position: absolute; bottom: 8px; right: 8px; width: 26px; height: 26px;
+.card .rm { position: absolute; bottom: 8px; right: 8px; width: 26px; height: 26px; padding: 0;
             border-radius: 50%; background: rgba(255,59,48,.92); color: #fff; border: none;
             display: flex; align-items: center; justify-content: center; font-size: 15px;
             line-height: 1; cursor: pointer; padding: 0; opacity: 0; transition: opacity .15s;
@@ -382,7 +546,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .empty { color: var(--t3); text-align: center; padding: 48px 0; }
 
 /* ===== 题目全屏编辑窗口 ===== */
-.modal-mask.full { align-items: stretch; justify-content: stretch; padding: 0; }
+.modal-mask.full { align-items: center; justify-content: center; padding: 16px; }
 .pv-full { width: 100%; height: 100%; background: var(--card); display: flex;
            flex-direction: column; animation: fadeSlide .2s var(--motion); }
 .pv-top { display: flex; align-items: center; justify-content: space-between;
@@ -460,7 +624,8 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .paper-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px;
              border-radius: var(--r-sm); animation: fadeSlide .2s var(--motion); }
 .paper-row:nth-child(odd) { background: var(--elev); }
-.paper-row img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; background: #fff; }
+.paper-row img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; background: var(--elev); }
+.pr-thumb { cursor: zoom-in; }
 .pr-info { flex: 1; min-width: 0; }
 .pr-info b { display: block; font-size: 14px; margin-bottom: 3px; white-space: nowrap;
             overflow: hidden; text-overflow: ellipsis; }
@@ -471,6 +636,15 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
                  cursor: pointer; font-size: 13px; color: var(--accent);
                  box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .pr-ops .pr-del { color: var(--danger); }
+.paper-add { display: flex; gap: 8px; }
+.paper-head-set { background: var(--elev); border-radius: var(--r-sm); padding: 10px 12px; }
+.paper-head-set summary { font-size: 13px; font-weight: 600; cursor: pointer; color: var(--t2); }
+.paper-head-set .fld { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.paper-head-set .fld span { font-size: 12px; color: var(--t3); }
+.paper-head-set input, .paper-head-set textarea { width: 100%; }
+.paper-attach { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.paper-attach .fl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t3); }
+.pr-chapter { width: 100%; margin-top: 4px; font-size: 12px; min-height: 30px; padding: 4px 8px; }
 /* 大题模板管理 */
 .tpl-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
 .tpl-row input { flex: 1; }
@@ -487,7 +661,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
   nav { display: none; }
   .tabbar { display: flex; }
   main { padding: 6px 16px 96px; }
-  .editor { flex-direction: column; }
+  .editor { flex-direction: column; height: auto; min-height: 0; }
   .side { width: 100%; max-height: none; position: static; }
   .card .rm { opacity: 1; }
   .card .cln { opacity: 1; }
@@ -503,17 +677,44 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 </style>
 </head>
 <body>
+<!-- Apple 风格图标库 (SF Symbols 风格, 内联无外链) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="ic-crop" viewBox="0 0 24 24"><path d="M6 2v16h16"/><path d="M2 6h16v16"/></symbol>
+    <symbol id="ic-books" viewBox="0 0 24 24"><path d="M4 3h5v18H4z"/><path d="M10 3h5v18h-5z"/><path d="M16.5 5l4 1.4-4 14.2-4-1.4z"/></symbol>
+    <symbol id="ic-doc" viewBox="0 0 24 24"><path d="M7 3h8l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v6h6"/><path d="M9 13h6M9 17h4"/></symbol>
+    <symbol id="ic-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9"/></symbol>
+    <symbol id="ic-upload" viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></symbol>
+    <symbol id="ic-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.5 7V5.2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7"/><path d="M6.5 7l.9 12.1a1 1 0 0 0 1 .9h7.2a1 1 0 0 0 1-.9L17.5 7"/></symbol>
+    <symbol id="ic-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5L16 16"/></symbol>
+    <symbol id="ic-pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.1 2.1 0 0 0 0-3l-1-1a2.1 2.1 0 0 0-3 0L4 16z"/><path d="M14.5 6.5l3 3"/></symbol>
+    <symbol id="ic-check" viewBox="0 0 24 24"><path d="M4.5 12.8l4.7 4.7L20 7"/></symbol>
+    <symbol id="ic-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3.5V9h-5.5"/></symbol>
+    <symbol id="ic-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="ic-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="ic-undo" viewBox="0 0 24 24"><path d="M9.5 14.5L4 9l5.5-5.5"/><path d="M4 9h10a6 6 0 0 1 0 12h-4"/></symbol>
+    <symbol id="ic-redo" viewBox="0 0 24 24"><path d="M14.5 14.5L20 9l-5.5-5.5"/><path d="M20 9H10a6 6 0 0 0 0 12h4"/></symbol>
+    <symbol id="ic-fit" viewBox="0 0 24 24"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></symbol>
+    <symbol id="ic-star" viewBox="0 0 24 24"><path d="M12 3.5l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 18l-5.6 2.7 1.1-6.2L3 10.1l6.2-.9z"/></symbol>
+    <symbol id="ic-filter" viewBox="0 0 24 24"><path d="M3.5 6.5h17M6.5 12h11M10 17.5h4"/></symbol>
+    <symbol id="ic-list" viewBox="0 0 24 24"><path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12"/><path d="M4 6.5h.01M4 12h.01M4 17.5h.01"/></symbol>
+    <symbol id="ic-image" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M3.5 16.5l4.5-4 3.5 3 3-2.5 6 5"/></symbol>
+    <symbol id="ic-cfig" viewBox="0 0 24 24"><path d="M6 2v16h16"/><path d="M2 6h16v16"/><path d="M11 11h5v5h-5z"/></symbol>
+  </defs>
+</svg>
+
+
 <header>
   <h1>错题收集</h1>
-  <p>拍一整页，框选题目，重新组卷</p>
 </header>
 
 <nav>
   <div class="seg">
-    <button data-tab="editor">① 整页框选</button>
-    <button data-tab="library">② 错题库</button>
-    <button data-tab="paper">③ 组卷打印</button>
-    <button data-tab="settings">④ 设置</button>
+    <button data-tab="editor"><svg class="ic"><use href="#ic-crop"/></svg><span>整页框选</span></button>
+    <button data-tab="library"><svg class="ic"><use href="#ic-books"/></svg><span>错题库</span></button>
+    <button data-tab="paper"><svg class="ic"><use href="#ic-doc"/></svg><span>组卷打印</span></button>
+    <button data-tab="settings"><svg class="ic"><use href="#ic-gear"/></svg><span>设置</span></button>
   </div>
 </nav>
 
@@ -522,31 +723,75 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
   <section id="tab-editor">
     <div id="drop">
       <input type="file" id="file" accept="image/*" multiple>
-      <div class="big"></div>
+      <svg class="ic" style="width:44px;height:44px;color:var(--accent)"><use href="#ic-upload"/></svg>
       <div class="t">点击或拖入整页照片</div>
       <div class="hint" style="margin-top:6px">支持 jpg / png / webp，可多选；手机拍照直接上传</div>
     </div>
 
-    <div class="card merge-card" data-reveal>
-      <div class="m-title">跨页拼接 <span class="hint">—— 一道题跨正反两页时：两张照片拼成一张，再正常框选</span></div>
-      <div class="m-row">
-        <select id="m1"></select><span class="hint">＋</span><select id="m2"></select>
-        <label class="chk"><input type="checkbox" id="flip2"> 第二页已翻转 180°</label>
-        <button class="btn" id="mergeBtn">拼接</button>
+    <div class="pages-bar">
+      <span class="hint">整页照片 <b id="pgCount">0</b> 张</span>
+      <button class="btn ghost btn-sm" id="pgSelAll"><svg class="ic"><use href="#ic-check"/></svg><span>全选</span></button>
+      <button class="btn ghost btn-sm" id="pgSelNone"><svg class="ic"><use href="#ic-x"/></svg><span>清空</span></button>
+      <button class="btn danger btn-sm" id="pgDelSel" style="display:none">删除选中</button>
+    </div>
+    <div class="pages" id="pages"></div>
+    <!-- 题目悬浮编辑窗(点选方框后弹出) -->
+    <div class="box-pop" id="boxPop" style="display:none">
+      <div class="bp-card">
+      <div class="bp-head">
+        <b id="bpTitle">编辑题目</b>
+        <button id="bpClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
+      </div>
+      <div class="bp-grid">
+      <div class="bp-img"><img id="bpImg" alt=""><div class="hint" id="bpImgHint">加载中…</div>
+        <button class="btn ghost btn-sm" id="bpViewPage" style="position:absolute;bottom:10px;right:10px"
+                title="浏览原图"><svg class="ic"><use href="#ic-doc"/></svg><span>原图</span></button></div>
+      <div class="bp-body">
+        <span class="chap-wrap">
+          <input type="text" data-pf="chapter" placeholder="大题归类">
+          <button type="button" class="chap-pick" id="bpChapterPick" title="选择预设大题">▾</button>
+        </span>
+        <input type="text" data-pf="keywords" placeholder="关键字（搜索用，逗号分隔）">
+        <div class="star-row" id="bpStarRow">
+          <span class="hint">难度</span>
+          <span class="stars"><span class="st" data-n="1">★</span><span class="st" data-n="2">★</span><span class="st" data-n="3">★</span><span class="st" data-n="4">★</span><span class="st" data-n="5">★</span></span>
+          <button class="mini" id="bpStarClear">清零</button>
+        </div>
+        <textarea data-pf="note" rows="4" placeholder="题干与选项（[图1] 表示图块）"></textarea>
+        <textarea data-pf="answer" rows="2" placeholder="答案（可选）"></textarea>
+        <textarea data-pf="analysis" rows="3" placeholder="解析（可选，支持 *楷体* **黑体** [图1]）"></textarea>
+      </div>
+      </div>
       </div>
     </div>
 
-    <div class="pages" id="pages"></div>
+    <div class="hint" id="editorHint" style="display:none;margin:12px 2px 0">拖拽框选题目 · 在框内按住可微调 · 点「续块」把同一题的接续部分连在一起 · 保存后 AI 自动识别文字并裁剪题内图形</div>
 
     <div class="editor" id="editorArea" style="display:none">
       <div class="canvas-wrap" id="canvasWrap">
         <div class="crop-bar" id="cropBar" style="display:none">
-          <span class="hint">裁图模式：在红色题框内拖拽框选图形区域</span>
-          <button class="btn" id="cropOk">确认</button>
-          <button class="btn ghost" id="cropCancel">取消</button>
+          <div class="ct-mid">
+            <div class="ct-seg">
+              <button data-cmode="frame"><svg class="ic"><use href="#ic-crop"/></svg>框题</button>
+              <button data-cmode="zoom" class="active"><svg class="ic"><use href="#ic-fit"/></svg>缩放</button>
+              <button data-cmode="edit"><svg class="ic"><use href="#ic-pencil"/></svg>编辑</button>
+            </div>
+            <button class="ct-ic" id="ctZoomOut" title="缩小"><svg class="ic"><use href="#ic-minus"/></svg></button>
+            <span class="ct-val" id="ctZoomVal">100%</span>
+            <button class="ct-ic" id="ctZoomIn" title="放大"><svg class="ic"><use href="#ic-plus"/></svg></button>
+            <button class="ct-ic ct-fit" id="ctZoomFit" title="适应屏幕"><svg class="ic"><use href="#ic-fit"/></svg></button>
+            <span class="ct-sep"></span>
+            <button class="ct-ic" id="ctUndo" title="撤销上一步 (Ctrl+Z)" disabled><svg class="ic"><use href="#ic-undo"/></svg></button>
+            <button class="ct-ic" id="ctRedo" title="重做 (Ctrl+Shift+Z)" disabled><svg class="ic"><use href="#ic-redo"/></svg></button>
+          </div>
+          <div class="ct-right">
+            <button class="btn ghost btn-sm" id="ctCropFig" title="对当前选中的题目框裁图"><svg class="ic"><use href="#ic-cfig"/></svg><span>裁图</span></button>
+            <button class="btn btn-sm" id="cropOk" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>确认</span></button>
+            <button class="btn ghost btn-sm" id="cropCancel" style="display:none"><svg class="ic"><use href="#ic-x"/></svg><span>取消</span></button>
+            <button class="btn ghost btn-sm" id="pageEditDone"><svg class="ic"><use href="#ic-check"/></svg><span>完成</span></button>
+          </div>
         </div>
         <canvas id="cv"></canvas>
-        <div class="hint" style="margin-top:8px"> 拖拽框选题目 · 在框内按住可微调 · 点「 续块」把同一题的接续部分连在一起 · 保存后 AI 自动识别文字并裁剪题内图形</div>
       </div>
       <div class="side">
         <h3>框选列表（<span id="boxCount">0</span> 题）</h3>
@@ -556,7 +801,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
         </div>
         <div id="boxList"></div>
         <div class="actions">
-          <button class="btn" id="saveBtn"> 保存到错题库</button>
+          <button class="btn" id="saveBtn"><svg class="ic"><use href="#ic-check"/></svg><span>保存到错题库</span></button>
           <button class="btn ghost" id="clearBtn">清空全部</button>
         </div>
         <div class="hint" style="margin-top:8px">列表汇总所有整页的框选 · 保存后自动 AI 识别文字并裁剪题内图形</div>
@@ -567,7 +812,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
   <!-- ========== ② 错题库 ========== -->
   <section id="tab-library">
     <div class="lib-search">
-      <input type="search" id="libQ" placeholder="搜索题目：关键字优先，可搜题干/选项/解析/编号（如 MA0003）">
+      <span class="search-wrap"><svg class="ic"><use href="#ic-search"/></svg><input type="search" id="libQ" placeholder="搜索题目：关键字优先，可搜题干/选项/解析/编号（如 MA0003）"></span>
       <div class="seg seg-sm">
         <button data-view="list" class="active">列表</button>
         <button data-view="grid">相册</button>
@@ -582,13 +827,13 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
           <option value="3">≥3 星</option><option value="4">≥4 星</option>
           <option value="5">5 星</option>
         </select></label>
-      <button class="btn ghost btn-sm" id="fClear">清除筛选</button>
+      <button class="btn ghost btn-sm" id="fClear"><svg class="ic"><use href="#ic-x"/></svg><span>清除筛选</span></button>
       <span class="hint" id="fCount"></span>
     </div>
     <div class="toolbar">
       <span class="count" id="libCount">共 0 题</span>
-      <button class="btn ghost" id="selAll">全选</button>
-      <button class="btn ghost" id="selNone">清空选择</button>
+      <button class="btn ghost" id="selAll"><svg class="ic"><use href="#ic-check"/></svg><span>全选</span></button>
+      <button class="btn ghost" id="selNone"><svg class="ic"><use href="#ic-x"/></svg><span>清空选择</span></button>
       <button class="btn danger" id="selDel" style="display:none">删除选中</button>
       <span class="count" id="selCount">已选 0 题</span>
     </div>
@@ -604,11 +849,36 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
         自动编号、按勾选顺序排列，可直接打印或另存为 PDF。
         同一题的「续块」会合并编号，显示为 (续)。
       </p>
-      <div class="actions" style="margin-top:12px">
-        <button class="btn" id="paperBtn"> 生成试卷（网页打印）</button>
-        <button class="btn" id="pdfBtn"> 生成 PDF（Typst）</button>
+      <div class="paper-add" style="margin-top:12px">
+        <input type="text" id="paperCode" placeholder="输入编号添加，如 MA0003 / CH0001；多个用逗号分隔" style="flex:1">
+        <button class="btn ghost btn-sm" id="paperCodeAdd"><svg class="ic"><use href="#ic-plus"/></svg><span>添加</span></button>
       </div>
-      <div class="hint" style="margin-top:8px">打印对话框选「另存为 PDF」即导出电子版</div>
+      <details class="paper-head-set" style="margin-top:12px">
+        <summary>卷头与页眉设置</summary>
+        <label class="fld"><span>卷头标题（默认：错题重组试卷）</span>
+          <input type="text" id="phTitle" placeholder="错题重组试卷"></label>
+        <label class="fld"><span>科目名（留空则自动取题目科目）</span>
+          <input type="text" id="phSubject" placeholder="如：数　学"></label>
+        <label class="fld"><span>注意事项（第一行为黑体标题，其余每行一条）</span>
+          <textarea id="phNotice" rows="4" placeholder="注意事项：&#10;1．本试卷由错题收集工具生成，请在答题纸上作答；&#10;2．解答应写出文字说明、证明过程或演算步骤。"></textarea></label>
+        <label class="fld"><span>页眉文字（可留空；显示在每页顶部）</span>
+          <input type="text" id="paperHeader" placeholder="如：错题重组试卷 · 内部资料"></label>
+      </details>
+      <div class="paper-attach" style="margin-top:12px">
+        <label class="fl"><span>文末附加</span>
+          <select id="paperAttach">
+            <option value="">不附加</option>
+            <option value="answer">参考答案</option>
+            <option value="analysis">解析</option>
+            <option value="both">参考答案 + 解析</option>
+          </select></label>
+        <label class="chk"><input type="checkbox" id="paperIndex"> 附编号对照页</label>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" id="paperBtn"><svg class="ic"><use href="#ic-doc"/></svg><span>生成试卷（网页打印）</span></button>
+        <button class="btn" id="pdfBtn"><svg class="ic"><use href="#ic-doc"/></svg><span>生成 PDF（Typst）</span></button>
+      </div>
+      <div class="hint" style="margin-top:8px">打印对话框选「另存为 PDF」即导出电子版；答案/解析会自动分页排在文末</div>
     </div>
     <div class="card paper-card" style="max-width:660px;margin-top:14px">
       <h3 style="margin-bottom:6px">已选题目（按顺序编号）</h3>
@@ -624,8 +894,8 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
       <div class="hint" style="line-height:1.7;margin-bottom:10px">按科目预设大题归类，框选题目和预览里可直接选择</div>
       <div class="actions" style="margin-bottom:10px">
         <select id="tplSubject" style="flex:0 0 120px"></select>
-        <button class="btn ghost" id="tplAdd">添加大题</button>
-        <button class="btn" id="tplSave">保存模板</button>
+        <button class="btn ghost" id="tplAdd"><svg class="ic"><use href="#ic-plus"/></svg><span>添加大题</span></button>
+        <button class="btn" id="tplSave"><svg class="ic"><use href="#ic-check"/></svg><span>保存模板</span></button>
       </div>
       <div id="tplList"></div>
       <div class="hint" id="tplEmpty" style="display:none">该科目还没有大题，点「添加大题」开始设置</div>
@@ -636,11 +906,6 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
   <section id="tab-settings">
     <div class="card" style="max-width:680px">
       <h3 style="margin-bottom:6px">AI 识别服务</h3>
-      <p class="hint" style="line-height:1.8;margin-bottom:12px">
-        错题识别需要<b>支持图片输入</b>的视觉模型。
-        <b>DeepSeek 官方接口为纯文本，无法识别图片</b>（可选作其他文本用途）；
-        需要图片识别时，请用智谱 GLM-4V-Flash（免费）、通义 qwen-vl 等。
-      </p>
 
       <!-- 已配置状态 -->
       <div id="aiConfigured" style="display:none">
@@ -664,6 +929,15 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
           <input type="text" id="aiModel" placeholder="glm-4v-flash"></label>
         <label class="fld"><span>API Key</span>
           <input type="password" id="aiKey" placeholder="粘贴 API Key（仅保存在本机）"></label>
+        <label class="fld"><span>识别清晰度（图片最长边像素，越大越准但越慢）</span>
+          <select id="aiMaxPx">
+            <option value="1200">标准 1200px（快）</option>
+            <option value="1600">推荐 1600px</option>
+            <option value="2200">高清 2200px（小字更准）</option>
+            <option value="2800">超清 2800px（最准，最慢）</option>
+          </select></label>
+        <label class="chk" style="margin:4px 0 0"><input type="checkbox" id="aiProofread">
+          额外一轮 AI 校对（对照原图再核查一遍，耗时约翻倍）</label>
         <div class="actions" style="margin-top:14px">
           <button class="btn" id="aiSave">保存</button>
           <button class="btn ghost" id="aiTest">测试连接</button>
@@ -671,15 +945,41 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
         </div>
       </div>
     </div>
+
+    <div class="card" style="max-width:680px;margin-top:14px">
+      <h3 style="margin-bottom:6px">数据导入导出</h3>
+      <p class="hint" style="line-height:1.8;margin-bottom:12px">
+        导出为 <b>ZIP 完整包</b>（含全部错题、图片、模板与编号设置），可直接用于备份或换电脑迁移。<br>
+        导入时<b>全部重新编号</b>，不会覆盖或打乱现有数据；同名图片自动改名保留。
+      </p>
+      <div class="actions">
+        <button class="btn" id="expBtn"><svg class="ic"><use href="#ic-doc"/></svg><span>导出全部数据（ZIP）</span></button>
+        <label class="btn ghost">导入数据包
+          <input type="file" id="impFile" accept=".zip,application/zip" style="display:none"></label>
+      </div>
+      <div class="hint" id="impResult" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="max-width:680px;margin-top:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <h3>运行日志</h3>
+        <div class="actions" style="margin:0">
+          <button class="btn ghost btn-sm" id="logRefresh"><svg class="ic"><use href="#ic-refresh"/></svg><span>刷新</span></button>
+          <button class="btn ghost btn-sm" id="logClear"><svg class="ic"><use href="#ic-trash"/></svg><span>清空</span></button>
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:10px">记录每次 AI 识别 / 拆题 / 测试连接的调用情况（时间、模型、耗时、结果）</div>
+      <div id="logList" class="log-list"></div>
+    </div>
   </section>
 </main>
 
 <!-- 移动端底部 tab 栏 -->
 <div class="tabbar">
-  <button data-tab="editor">整页框选</button>
-  <button data-tab="library">错题库</button>
-  <button data-tab="paper">组卷</button>
-  <button data-tab="settings">设置</button>
+  <button data-tab="editor"><svg class="ic ic-lg nav-ic"><use href="#ic-crop"/></svg>整页框选</button>
+  <button data-tab="library"><svg class="ic ic-lg nav-ic"><use href="#ic-books"/></svg>错题库</button>
+  <button data-tab="paper"><svg class="ic ic-lg nav-ic"><use href="#ic-doc"/></svg>组卷</button>
+  <button data-tab="settings"><svg class="ic ic-lg nav-ic"><use href="#ic-gear"/></svg>设置</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -704,11 +1004,63 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
   </div>
 </div>
 
-<!-- 大题归类模板建议 -->
-<datalist id="chapterTpl">
-  <option value="一、选择题"><option value="二、填空题"><option value="三、解答题">
-  <option value="四、计算题"><option value="五、实验题"><option value="六、证明题">
-</datalist>
+<!-- 预设大题选择浮层 -->
+<div id="chapMenu" class="chap-menu" style="display:none"></div>
+
+<!-- 图片浏览(裁剪图 / 原图) -->
+<div class="modal-mask full" id="viewMask">
+  <div class="bp-card" style="width:min(1200px,100%)">
+    <div class="bp-head">
+      <b id="viewTitle">图片浏览</b>
+      <div class="view-ops">
+        <div class="seg seg-sm" id="viewSeg">
+          <button data-vm="crop" class="active"><svg class="ic"><use href="#ic-image"/></svg><span>裁剪图</span></button>
+          <button data-vm="page"><svg class="ic"><use href="#ic-doc"/></svg><span>原图</span></button>
+        </div>
+        <button id="viewClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
+      </div>
+    </div>
+    <div class="view-body" id="viewBody">
+      <img id="viewImg" alt="">
+      <div class="hint" id="viewHint" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 手动添加题目 -->
+<div class="modal-mask full" id="addMask">
+  <div class="bp-card">
+    <div class="bp-head">
+      <b>手动添加题目</b>
+      <button id="addClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
+    </div>
+    <div class="add-body">
+      <div class="hint">科目：<b id="addSubject"></b>　<span class="hint">（保存后编号自动分配）</span></div>
+      <span class="chap-wrap">
+        <input type="text" id="addChapter" placeholder="大题归类（如 三、解答题）">
+        <button type="button" class="chap-pick" id="addChapterPick" title="选择预设大题">▾</button>
+      </span>
+      <input type="text" id="addKeywords" placeholder="关键字（搜索用，逗号分隔）">
+      <div class="star-row" id="addStarRow">
+        <span class="hint">难度</span>
+        <span class="stars"><span class="st" data-n="1">★</span><span class="st" data-n="2">★</span><span class="st" data-n="3">★</span><span class="st" data-n="4">★</span><span class="st" data-n="5">★</span></span>
+        <button class="mini" id="addStarClear">清零</button>
+      </div>
+      <textarea id="addNote" rows="6" placeholder="题干与选项（公式用 $...$；[图1] 引用图片）"></textarea>
+      <textarea id="addAnswer" rows="2" placeholder="答案（可选）"></textarea>
+      <textarea id="addAnalysis" rows="3" placeholder="解析（可选，支持 *楷体* **黑体** [图1]）"></textarea>
+      <div class="add-file">
+        <label class="btn ghost btn-sm">上传题目图片（可选）
+          <input type="file" id="addFile" accept="image/*" style="display:none"></label>
+        <span class="hint" id="addFileName">不传图片也可以（纯文字题）</span>
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn" id="addSave"><svg class="ic"><use href="#ic-check"/></svg><span>保存</span></button>
+        <button class="btn ghost" id="addCancel">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- 题目全屏编辑窗口 -->
 <div class="modal-mask full" id="prevMask">
@@ -728,7 +1080,11 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
         <div class="hint" id="pvMeta"></div>
         <label class="fld"><span>标题</span><input type="text" id="pvTitle" placeholder="未命名"></label>
         <label class="fld"><span>科目</span><select id="pvSubject"></select></label>
-        <label class="fld"><span>大题归类</span><input type="text" id="pvChapter" list="chapterTpl" placeholder="如：三、解答题"></label>
+        <label class="fld"><span>大题归类</span>
+          <span class="chap-wrap">
+            <input type="text" id="pvChapter" placeholder="如：三、解答题">
+            <button type="button" class="chap-pick" id="pvChapterPick" title="选择预设大题">▾</button>
+          </span></label>
         <div class="star-row" id="pvStarRow">
           <span class="hint">难度</span>
           <span class="stars"><span class="st" data-n="1">★</span><span class="st" data-n="2">★</span><span class="st" data-n="3">★</span><span class="st" data-n="4">★</span><span class="st" data-n="5">★</span></span>
@@ -751,6 +1107,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
         </div>
         <div class="prev-ops">
           <button class="btn ghost" id="pvCropBtn">裁图</button>
+          <button class="btn ghost" id="pvViewImg"><svg class="ic"><use href="#ic-image"/></svg><span>浏览图片</span></button>
           <button class="btn ghost" id="pvCropOk" style="display:none">确认裁剪</button>
           <button class="btn ghost" id="pvCropCancel" style="display:none">取消</button>
           <button class="btn" id="pvSave">保存</button>
@@ -764,7 +1121,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 <script>
 const $ = id => document.getElementById(id);
 const SUBJECTS = ["数学", "物理", "化学", "生物", "英语", "语文", "其他"];
-const REASONS = ["概念不清", "计算失误", "审题错误", "方法不当", "记忆不牢", "其他"];
+const REASONS = ["概念不清", "计算失误", "审题错误", "方法不当", "记忆不牢", "其他"];  // 预留(界面已移除错因)
 
 let pages = [], curPage = null, img = null, imgW = 0, imgH = 0, scale = 1;
 let boxes = [], drag = null, selected = new Set(), library = [];
@@ -811,8 +1168,17 @@ function switchTab(name) {
     b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach(s =>
     s.classList.toggle("active", s.id === "tab-" + name));
-  if (name === "library" && !library.length) loadLibrary();   // 已有数据不重复加载
-  if (name === "paper") { updateSelCount(); renderPaperList(); }
+  if (name === "library") {
+    if (!library.length) loadLibrary();      // 首次: 拉数据并渲染
+    else renderLibrary();                    // 已有数据: 直接渲染(否则切过来是空的)
+  }
+  if (name === "paper") { updateSelCount(); renderPaperList(); renderTplList(); }
+  if (name === "settings") loadLogs();
+  if (name === "editor" && img) {                      // 切回框选页: 恢复裁题模式 + 重算尺寸
+    if (!pageEdit && !cropMode) enterPageEdit();
+    requestAnimationFrame(() => renderCanvas());
+    setTimeout(() => { if (img) renderCanvas(); }, 120);
+  }
 }
 
 /* ---------- URL 路由: /library, /library/数学, /paper, /item/MA0003 ---------- */
@@ -908,19 +1274,71 @@ async function loadPages() {
   const box = $("pages");
   box.innerHTML = pages.map(p => `
     <div class="page-thumb ${p.page === curPage ? "active" : ""}" data-page="${p.page}">
-      <button class="pdel" data-page="${p.page}">删</button>
-      <img src="${p.web_url}"><div class="pn">${timeLabel(p.page)}</div>
+      <span class="pck ${selPages.has(p.page) ? "on" : ""}" data-page="${p.page}">${selPages.has(p.page) ? [...selPages].indexOf(p.page) + 1 : ""}</span>
+      <button class="pdel" data-page="${p.page}" title="删除这张照片"><svg class="ic"><use href="#ic-trash"/></svg></button>
+      <img src="${p.web_url}"><div class="pn"><b>P${p.no || ""}</b> ${timeLabel(p.page)}</div>
     </div>`).join("") || '<div class="hint">还没有上传整页照片</div>';
   box.querySelectorAll(".page-thumb").forEach(el => el.onclick = () => openEditor(el.dataset.page));
   box.querySelectorAll(".pdel").forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
     if (!confirm("删除这张整页照片？已裁剪的错题不受影响。")) return;
     await api("/api/page/" + btn.dataset.page, { method: "DELETE" });
-    if (curPage === btn.dataset.page) { curPage = null; $("editorArea").style.display = "none"; }
+    if (curPage === btn.dataset.page) {
+      curPage = null;
+      $("editorArea").style.display = "none";
+      $("editorHint").style.display = "none";
+    }
     loadPages(); toast("已删除", "ok");
   });
-  fillMergeSelects();
+  // 勾选照片(点右上角圆圈, 不打开页面)
+  box.querySelectorAll(".pck").forEach(ck => ck.onclick = e => {
+    e.stopPropagation();
+    const pid = ck.dataset.page;
+    selPages.has(pid) ? selPages.delete(pid) : selPages.add(pid);
+    paintPageSel();
+  });
+  $("pgCount").textContent = pages.length;
+  paintPageSel();
   if (pages.length && !curPage) openEditor(pages[0].page);
+  paintPageSel();
+}
+
+let selPages = new Set();      // 批量删除: 选中的整页照片
+
+function paintPageSel() {
+  const n = selPages.size;
+  $("pgDelSel").style.display = n ? "" : "none";
+  $("pgDelSel").textContent = n ? `删除选中（${n}）` : "删除选中";
+  document.querySelectorAll(".page-thumb .pck").forEach(ck => {
+    const on = selPages.has(ck.dataset.page);
+    ck.classList.toggle("on", on);
+    ck.textContent = on ? [...selPages].indexOf(ck.dataset.page) + 1 : "";
+  });
+}
+
+$("pgSelAll").onclick = () => { pages.forEach(p => selPages.add(p.page)); paintPageSel(); };
+$("pgSelNone").onclick = () => { selPages.clear(); paintPageSel(); };
+$("pgDelSel").onclick = async () => {
+  const n = selPages.size;
+  if (!n) return;
+  if (!confirm(`删除选中的 ${n} 张整页照片？已裁剪的错题不受影响。`)) return;
+  const btn = $("pgDelSel"); btn.disabled = true; btn.textContent = "删除中…";
+  for (const pid of [...selPages]) {
+    try { await api("/api/page/" + pid, { method: "DELETE" }); } catch (e) { }
+    if (curPage === pid) {
+      curPage = null;
+      $("editorArea").style.display = "none";
+      $("editorHint").style.display = "none";
+    }
+  }
+  selPages.clear();
+  btn.disabled = false;
+  toast(`已删除 ${n} 张照片`, "ok");
+  loadPages();
+};
+function pageNo(pid) {
+  const p = (pages || []).find(x => x.page === pid);
+  return p && p.no ? "P" + p.no : timeLabel(pid);
 }
 function timeLabel(pid) {
   const ms = parseInt(pid.replace("p", ""), 10);
@@ -930,37 +1348,19 @@ function timeLabel(pid) {
 }
 
 /* ---------- 跨页拼接 ---------- */
-function fillMergeSelects() {
-  const opts = pages.map(p =>
-    `<option value="${p.page}">${timeLabel(p.page)} 上传的整页</option>`).join("");
-  $("m1").innerHTML = opts; $("m2").innerHTML = opts;
-  if (pages.length > 1) $("m2").selectedIndex = 1;
-}
-$("mergeBtn").onclick = async () => {
-  const p1 = $("m1").value, p2 = $("m2").value;
-  if (!p1 || !p2 || p1 === p2) return toast("请选择两页不同的照片", "err");
-  const btn = $("mergeBtn"); btn.disabled = true; btn.textContent = "拼接中…";
-  try {
-    const d = await api("/api/merge", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pages: [p1, p2], flip2: $("flip2").checked }) });
-    toast(" 拼接完成，已在下方打开", "ok");
-    await loadPages();
-    openEditor(d.page);
-  } catch (err) { toast("拼接失败: " + err.message, "err"); }
-  btn.disabled = false; btn.textContent = "拼接";
-};
-
 /* ---------- 编辑器 ---------- */
 async function openEditor(pageId) {
   curPage = pageId;
   $("editorArea").style.display = "flex";
+  $("editorHint").style.display = "";
   document.querySelectorAll(".page-thumb").forEach(el =>
     el.classList.toggle("active", el.dataset.page === pageId));
   const page = pages.find(p => p.page === pageId);
   img = new Image();
   img.onload = () => { imgW = img.naturalWidth; imgH = img.naturalHeight;
-                       boxes = loadBoxes(pageId); renderCanvas(); renderBoxList(); };
+                       boxes = loadBoxes(pageId);
+                       if (!cropMode) enterPageEdit();      // 打开页面即进入裁题模式
+                       renderCanvas(); renderBoxList(); };
   img.src = page.web_url;
 }
 function loadBoxes(pid) { try { return JSON.parse(localStorage.getItem("boxes_" + pid)) || []; } catch { return []; } }
@@ -972,8 +1372,23 @@ function uid() { return Date.now() + "_" + Math.random().toString(36).slice(2, 7
 const cv = $("cv"), ctx = cv.getContext("2d");
 function renderCanvas() {
   const dpr = window.devicePixelRatio || 1;
-  // 桌面双栏(canvas+侧栏)减侧栏宽, 手机单栏直接用画布容器宽
-  const wrapW = Math.min($("canvasWrap").clientWidth - 24, 1200);
+  // 桌面双栏(canvas+侧栏)减侧栏宽, 手机单栏直接用画布容器宽; 裁图模式可放大
+  const wrap = $("canvasWrap");
+  const availW = wrap.clientWidth - 24;
+  let baseW;
+  if (window.innerWidth >= 640) {
+    // 桌面: 竖直铺满画布容器(与右侧列表等高), 宽度按比例且不超容器
+    const cs = getComputedStyle(wrap);
+    const padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
+    let availH = wrap.clientHeight - padT - padB;
+    if (availH < 200) {          // 刚从别的页签切回来时容器还没布局完, 用视口估算兜底
+      availH = Math.max(240, window.innerHeight - wrap.getBoundingClientRect().top - 56);
+    }
+    baseW = Math.min(availH * (imgW / imgH), availW, 1400);
+  } else {
+    baseW = Math.min(availW, 1200);              // 手机: 水平铺满
+  }
+  const wrapW = Math.max(120, baseW * ((cropMode || pageEdit) ? cropZoom : 1));
   if (wrapW < 100) { cv.style.width = "100%"; return; }
   scale = imgW / wrapW;
   const dispW = wrapW, dispH = imgH / scale;
@@ -991,6 +1406,11 @@ function renderCanvas() {
     ctx.lineWidth = 2; ctx.setLineDash(isCont ? [7, 5] : []);
     ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
     ctx.setLineDash([]);
+    if (pageEdit && !cropMode && activeBoxId === b.id) {   // 选中框: 只加粗变色, 不外扩(避免视觉跳动)
+      ctx.strokeStyle = "#FF9500"; ctx.lineWidth = 4;
+      ctx.strokeRect(x, y, w, h);
+      ctx.lineWidth = 2;
+    }
     ctx.fillStyle = isCont ? "#FF9500" : "#007AFF";
     ctx.font = "bold 14px sans-serif";
     const label = (isCont ? "续 " : "") + (i + 1) + (b.title ? "·" + b.title : "");
@@ -998,12 +1418,13 @@ function renderCanvas() {
     ctx.fillRect(x, y - 20, tw, 20);
     ctx.fillStyle = "#fff"; ctx.fillText(label, x + 5, y - 6);
     // 四角手柄(可拖动微调)
-    const hs = 5;
+    const hs = isTouch() ? 8 : 5;                       // 触摸端手柄更大
     ctx.fillStyle = "#fff"; ctx.strokeStyle = isCont ? "#FF9500" : "#007AFF";
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = isTouch() ? 2.5 : 1.5;
     [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([hx, hy]) => {
-      ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
-      ctx.strokeRect(hx - hs, hy - hs, hs * 2, hs * 2);
+      ctx.beginPath();
+      ctx.arc(hx, hy, hs, 0, Math.PI * 2);              // 圆形手柄(SF 风格)
+      ctx.fill(); ctx.stroke();
     });
   });
   if (cropMode) {                        // 裁图模式: 红色题框 + 蓝色图形框
@@ -1038,7 +1459,7 @@ function mousePos(e) {
 }
 function cropHit(p) {                 // 裁图模式下图形框的命中检测(拖动/调整)
   if (!cropRect) return null;
-  const T = 22 / scale, r = cropRect;
+  const T = 22 * scale, r = cropRect;   // 图形框命中容差(屏幕像素)
   const inX = p.x >= r.x - T && p.x <= r.x + r.w + T;
   const inY = p.y >= r.y - T && p.y <= r.y + r.h + T;
   if (!inX || !inY) return null;
@@ -1052,41 +1473,90 @@ function cropHit(p) {                 // 裁图模式下图形框的命中检测
   if (nearT || nearB) return { mode: "resize", edge: nearT ? "n" : "s" };
   return { mode: "move", offX: p.x - r.x, offY: p.y - r.y };
 }
+function isTouch() { return window.matchMedia("(pointer: coarse)").matches; }
+
 function hitTest(p) {
-  const T = 22 / scale;                    // 角/边命中容差(约22px, 触摸友好)
+  const T = (isTouch() ? 26 : 18) * scale;    // 边缘命中容差(屏幕像素 -> 画布单位)
+  const TC = (isTouch() ? 34 : 22) * scale;   // 角点容差更大(手指容易点偏)
+  let best = null, bestTier = 9, bestScore = Infinity;
   for (const b of boxes) {
-    const inX = p.x >= b.x - T && p.x <= b.x + b.w + T;
-    const inY = p.y >= b.y - T && p.y <= b.y + b.h + T;
-    if (inX && inY) {
-      const nearL = Math.abs(p.x - b.x) <= T, nearR = Math.abs(p.x - (b.x + b.w)) <= T;
-      const nearT = Math.abs(p.y - b.y) <= T, nearB = Math.abs(p.y - (b.y + b.h)) <= T;
-      if (nearL && nearT) return { mode: "resize", b, edge: "nw" };
-      if (nearR && nearT) return { mode: "resize", b, edge: "ne" };
-      if (nearL && nearB) return { mode: "resize", b, edge: "sw" };
-      if (nearR && nearB) return { mode: "resize", b, edge: "se" };
-      if (nearL || nearR) return { mode: "resize", b, edge: nearL ? "w" : "e" };
-      if (nearT || nearB) return { mode: "resize", b, edge: nearT ? "n" : "s" };
-      return { mode: "move", b, offX: p.x - b.x, offY: p.y - b.y };
+    // 候选框必须离点击点足够近, 否则跳过(避免远处框抢先)
+    const outside = Math.hypot(Math.max(b.x - p.x, 0, p.x - (b.x + b.w)),
+                               Math.max(b.y - p.y, 0, p.y - (b.y + b.h)));
+    if (outside > TC) continue;
+    const corners = [["nw", b.x, b.y], ["ne", b.x + b.w, b.y],
+                     ["sw", b.x, b.y + b.h], ["se", b.x + b.w, b.y + b.h]];
+    let hit = null, tier = 9, score = Infinity;
+    // 1) 角点(优先级最高, 取最近角点)
+    for (const [edge, cx, cy] of corners) {
+      const d = Math.hypot(p.x - cx, p.y - cy);
+      if (d <= TC && d < score) { hit = { mode: "resize", b, edge }; tier = 0; score = d; }
+    }
+    // 2) 边缘
+    if (!hit) {
+      const nearL = Math.abs(p.x - b.x), nearR = Math.abs(p.x - (b.x + b.w));
+      const nearT = Math.abs(p.y - b.y), nearB = Math.abs(p.y - (b.y + b.h));
+      const inX = p.x >= b.x - T && p.x <= b.x + b.w + T;
+      const inY = p.y >= b.y - T && p.y <= b.y + b.h + T;
+      if (inX && inY) {
+        const dEdge = Math.min(nearL, nearR, nearT, nearB);
+        if (dEdge <= T) {
+          const edge = dEdge === nearL ? "w" : dEdge === nearR ? "e" : dEdge === nearT ? "n" : "s";
+          hit = { mode: "resize", b, edge }; tier = 1; score = dEdge;
+        } else {
+          // 3) 框内移动: 用"到该框中心的归一化距离"比较, 更近的框优先
+          hit = { mode: "move", b, offX: p.x - b.x, offY: p.y - b.y };
+          tier = 2;
+          score = Math.hypot(p.x - (b.x + b.w / 2), p.y - (b.y + b.h / 2)) /
+                  Math.max(40, Math.min(b.w, b.h));
+        }
+      }
+    }
+    if (hit && (tier < bestTier || (tier === bestTier && score < bestScore))) {
+      best = hit; bestTier = tier; bestScore = score;
     }
   }
-  return null;
+  return best;
 }
 
 function cvDown(e) {
+  if (!pageEdit && !cropMode) return;      // 已退出编辑(只读): 不响应拖动/新建
+  preOpSnap = snap();                      // 记录操作前状态(供撤销)
   const p = mousePos(e);
-  if (cropMode) {                       // 裁图模式: 新建/拖动/调整图形框
+  try { cv.setPointerCapture(e.pointerId); } catch (err) { }   // 拖出画布也能收到 move/up
+  if ((cropMode || pageEdit) && cropTool === "zoom") {   // 缩放模式: 拖动平移(裁题/裁图都生效)
+    const wrap = $("canvasWrap");
+    panDrag = { x: e.clientX, y: e.clientY, sl: wrap.scrollLeft, st: wrap.scrollTop };
+    cv.style.cursor = "grabbing";
+    return;
+  }
+  if (cropMode) {
     const hit = cropHit(p);
     if (hit) cropDrag = hit;
     else { cropDrag = { mode: "new", startX: p.x, startY: p.y }; cropRect = null; }
     return;
   }
+  if (pageEdit && cropTool === "edit") {          // 编辑模式: 点框弹悬浮编辑窗
+    const hit = hitTest(p);
+    if (hit) { activeBoxId = hit.b.id; openBoxPop(hit.b); renderCanvas(); }
+    else closeBoxPop();
+    return;
+  }
   const hit = hitTest(p);
   if (hit) drag = hit.mode === "resize"
-    ? { mode: "resize", b: hit.b, edge: hit.edge }
-    : { mode: "move", boxId: hit.b.id, offX: hit.offX, offY: hit.offY };
+    ? { mode: "resize", b: hit.b, edge: hit.edge, startX: p.x, startY: p.y, moved: false }
+    : { mode: "move", boxId: hit.b.id, offX: hit.offX, offY: hit.offY,
+        startX: p.x, startY: p.y, moved: false };
   else drag = { mode: "new", startX: p.x, startY: p.y };
 };
 function cvMove(e) {
+  if ((cropMode || pageEdit) && cropTool === "zoom") {   // 缩放模式: 平移
+    if (!panDrag) return;
+    const wrap = $("canvasWrap");
+    wrap.scrollLeft = panDrag.sl - (e.clientX - panDrag.x);
+    wrap.scrollTop = panDrag.st - (e.clientY - panDrag.y);
+    return;
+  }
   if (cropMode) {                       // 裁图模式: 新建/拖动/调整图形框
     if (!cropDrag) return;
     const p = mousePos(e);
@@ -1115,22 +1585,44 @@ function cvMove(e) {
     if (b) { b.x = Math.min(drag.startX, p.x); b.y = Math.min(drag.startY, p.y);
              b.w = Math.abs(p.x - drag.startX); b.h = Math.abs(p.y - drag.startY); }
     else boxes.push({ id: "new", x: drag.startX, y: drag.startY, w: 0, h: 0,
-                      title: "", subject: "数学", chapter: "", reason: "", note: "", group: "" });
-  } else if (drag.mode === "resize") {
-    const b = drag.b, MIN = 30;
-    if (drag.edge.includes("e")) b.w = Math.max(MIN, Math.min(imgW - b.x, p.x - b.x));
-    if (drag.edge.includes("s")) b.h = Math.max(MIN, Math.min(imgH - b.y, p.y - b.y));
-    if (drag.edge.includes("w")) { const nx = Math.min(p.x, b.x + b.w - MIN); b.w += b.x - nx; b.x = Math.max(0, nx); }
-    if (drag.edge.includes("n")) { const ny = Math.min(p.y, b.y + b.h - MIN); b.h += b.y - ny; b.y = Math.max(0, ny); }
-  } else {
-    const b = boxes.find(x => x.id === drag.boxId);
-    if (b) { b.x = Math.max(0, Math.min(imgW - b.w, p.x - drag.offX));
-             b.y = Math.max(0, Math.min(imgH - b.h, p.y - drag.offY)); }
+                      title: "", subject: "数学", chapter: "", note: "", group: "" });
+  } else if (drag.mode === "resize" || drag.mode === "move") {
+    if (!drag.moved) {                                  // 防抖: 超出阈值才真正拖动
+      const d = Math.hypot(p.x - drag.startX, p.y - drag.startY) / scale;   // 屏幕像素
+      if (d < 8) return;
+      drag.moved = true;
+    }
+    if (drag.mode === "resize") {
+      const b = drag.b, MIN = 30;
+      if (drag.edge.includes("e")) b.w = Math.max(MIN, Math.min(imgW - b.x, p.x - b.x));
+      if (drag.edge.includes("s")) b.h = Math.max(MIN, Math.min(imgH - b.y, p.y - b.y));
+      if (drag.edge.includes("w")) { const nx = Math.min(p.x, b.x + b.w - MIN); b.w += b.x - nx; b.x = Math.max(0, nx); }
+      if (drag.edge.includes("n")) { const ny = Math.min(p.y, b.y + b.h - MIN); b.h += b.y - ny; b.y = Math.max(0, ny); }
+    } else {
+      const b = boxes.find(x => x.id === drag.boxId);
+      if (b) { b.x = Math.max(0, Math.min(imgW - b.w, p.x - drag.offX));
+               b.y = Math.max(0, Math.min(imgH - b.h, p.y - drag.offY)); }
+    }
   }
   renderCanvas();
 };
-function cvUp() {
-  if (cropMode) { cropDrag = null; return; }   // 裁图模式: 结束图形框拖拽
+function cvUp(e) {
+  try { if (e && e.pointerId !== undefined) cv.releasePointerCapture(e.pointerId); } catch (err) { }
+  if ((cropMode || pageEdit) && cropTool === "zoom") {   // 缩放模式: 只结束平移
+    panDrag = null;
+    cv.style.cursor = "grab";
+    return;
+  }
+  if (cropMode) {                                        // 裁图模式: 结束图形框拖拽
+    cropDrag = null;
+    return;
+  }
+  if (pageEdit && cropTool === "frame" && drag && drag.mode !== "new") {
+    // 单击(未拖动)已有框 -> 标记为选中, 供工具栏「裁图」使用
+    const moved = Math.abs((drag.offX || 0)) !== 0 || true;
+    activeBoxId = drag.boxId || activeBoxId;
+    renderCanvas();
+  }
   if (!drag) return;
   let needList = false;
   if (drag.mode === "new") {
@@ -1140,24 +1632,31 @@ function cvUp() {
   }
   drag = null; saveBoxes();
   if (needList) renderBoxList();      // 先持久化再刷新列表
+  pushHistory(preOpSnap);             // 框的新建/移动/调整 -> 可撤销
+  preOpSnap = null;
 };
 /* 统一 Pointer Events: 鼠标+触摸都走这里, 单一事件源 */
 cv.addEventListener("pointerdown", cvDown);
 cv.addEventListener("pointermove", cvMove);
 cv.addEventListener("pointerup", cvUp);
 cv.addEventListener("pointercancel", cvUp);
-/* 阻止触摸滚动/缩放, 避免坐标漂移 */
-cv.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
+/* 阻止触摸滚动/缩放(编辑模式), 缩放模式允许滚动 */
+cv.addEventListener("touchstart", e => {
+  if ((cropMode || pageEdit) && cropTool === "zoom") return;   // 缩放模式: 允许单指滚动
+  if ((cropMode || pageEdit) && e.touches.length === 2) return; // 双指缩放交给 pinch
+  e.preventDefault();
+}, { passive: false });
 
 /* ---------- 框选列表(多页统一) + 续块分组 ---------- */
 let curSubject = localStorage.getItem("curSubject") || "数学";
 let pendingGroup = null;    // 跨页续块: 点某框「续块」后, 新框选自动并入该组
+let openBoxes = new Set();  // 展开编辑的框 id
 $("curSubj").innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("") + "<option>未分类</option>";
 $("curSubj").value = curSubject;
 $("curSubj").onchange = () => {
   curSubject = $("curSubj").value;
   localStorage.setItem("curSubject", curSubject);
-  renderBoxList(); updateChapterDatalist(curSubject);
+  renderBoxList();
 };
 
 function allPageBoxes() {
@@ -1172,52 +1671,98 @@ function allPageBoxes() {
 function boxCardHTML(b, i, pid) {
   const other = pid !== curPage;
   const star = b.star || 0;
+  const open = openBoxes.has(b.id);
+  const summary = (b.note || "").replace(/\[图\d+\]/g, "[图]").replace(/\s+/g, " ").slice(0, 26);
   return `
-    <div class="box-card ${other ? "dim" : ""}" data-id="${b.id}" data-pid="${pid}">
+    <div class="box-card ${other ? "dim" : ""} ${open ? "open" : ""}" data-id="${b.id}" data-pid="${pid}">
       <div class="bhead">
-        <span class="bno">#${i + 1}${other ? ` <span class="badge">${timeLabel(pid)}</span>` : ""}${b.group ? '<span class="badge">续块组</span>' : ""}</span>
-        <button class="del" data-id="${b.id}"> 删除</button>
+        <span class="bno">#${i + 1}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
+        <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
+        <span class="b-sum">${esc(b.chapter || "未分类")}${summary ? " · " + esc(summary) : ""}</span>
+        <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
+        <button class="del" data-id="${b.id}">删</button>
       </div>
-      <div class="row2">
-        <span class="subj-note">${esc(curSubject)}</span>
-        <input type="text" data-f="chapter" list="chapterTpl" value="${esc(b.chapter)}" placeholder="大题归类">
-      </div>
-      <input type="text" data-f="keywords" value="${esc(b.keywords)}" placeholder="关键字（搜索用，逗号分隔）">
-      <div class="star-row" data-id="${b.id}">
-        <span class="hint">难度</span>
-        <span class="stars">${[1, 2, 3, 4, 5].map(n =>
-          `<span class="st ${star >= n ? "on" : ""}" data-n="${n}">★</span>`).join("")}</span>
-        <button class="mini starclear" data-id="${b.id}">清零</button>
-      </div>
-      <select data-f="reason">${REASONS.map(r => `<option ${r === b.reason ? "selected" : ""}>${r}</option>`).join("")}</select>
-      <textarea data-f="note" placeholder="题干与选项（AI 自动识别可编辑，[图1] 表示图块）">${esc(b.note)}</textarea>
-      <textarea data-f="answer" placeholder="答案（可选）">${esc(b.answer)}</textarea>
-      <textarea data-f="analysis" placeholder="解析（可选，支持 *楷体* **黑体** 与 [图1]）">${esc(b.analysis)}</textarea>
-      <div class="brow">
-        <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
-        <button class="mini cfig" data-id="${b.id}">裁图</button>
+      <div class="bbody">
+        <span class="chap-wrap">
+          <input type="text" data-f="chapter" value="${esc(b.chapter)}" placeholder="大题归类">
+          <button type="button" class="chap-pick chap-pick-card" data-id="${b.id}" title="选择预设大题">▾</button>
+        </span>
+        <input type="text" data-f="keywords" value="${esc(b.keywords)}" placeholder="关键字（搜索用，逗号分隔）">
+        <div class="star-row" data-id="${b.id}">
+          <span class="hint">难度</span>
+          <span class="stars">${[1, 2, 3, 4, 5].map(n =>
+            `<span class="st ${star >= n ? "on" : ""}" data-n="${n}">★</span>`).join("")}</span>
+          <button class="mini starclear" data-id="${b.id}">清零</button>
+        </div>
+        <textarea data-f="note" rows="4" placeholder="题干与选项（AI 自动识别，可编辑；[图1] 表示图块）">${esc(b.note)}</textarea>
+        <textarea data-f="answer" rows="2" placeholder="答案（可选）">${esc(b.answer)}</textarea>
+        <textarea data-f="analysis" rows="2" placeholder="解析（可选，支持 *楷体* **黑体** 与 [图1]）">${esc(b.analysis)}</textarea>
+        <div class="brow">
+          <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
+        </div>
       </div>
     </div>`;
 }
 
+// 列表内获得焦点时不自动滚动页面(避免点击时整页跳动)
+$("boxList").addEventListener("focusin", e => {
+  const y = window.scrollY, x = window.scrollX;
+  requestAnimationFrame(() => {
+    if (window.scrollY !== y || window.scrollX !== x) window.scrollTo(x, y);
+  });
+}, true);
+
 function renderBoxList() {
   const el = $("boxList");
+  const keepScrollTop = el.scrollTop;                 // 记住滚动位置(重建后恢复)
   const groups = allPageBoxes();
   let total = 0;
   el.innerHTML = groups.map(g => {
     total += g.boxes.length;
     return `<div class="pg-group">
-      <div class="pg-head">${timeLabel(g.pid)} <span class="cnt">${g.boxes.length} 题</span></div>
+      <div class="pg-head">${pageNo(g.pid)} <span class="cnt">${g.boxes.length} 题</span></div>
       ${g.boxes.map((b, i) => boxCardHTML(b, i, g.pid)).join("")}
     </div>`;
   }).join("") || '<div class="hint">在下方整页图上拖拽框选题目</div>';
   $("boxCount").textContent = total;
+  el.scrollTop = keepScrollTop;                       // 重建后恢复列表滚动位置
+  el.querySelectorAll(".starclear").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (!b) return;
+    b.star = 0;
+    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    if (popBox && popBox.id === bid) { popBox.star = 0; renderPopStars(0); }
+    renderBoxList();
+  });
+  el.querySelectorAll(".b-toggle").forEach(btn => btn.onclick = () => {
+    const id = btn.dataset.id;
+    openBoxes.has(id) ? openBoxes.delete(id) : openBoxes.add(id);
+    renderBoxList();
+  });
   el.querySelectorAll(".del").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const before = (pid === curPage) ? snap() : null;   // 删除前快照(供撤销)
+    if (before) setTimeout(() => pushHistory(before), 0);
     const bs = loadBoxes(pid).filter(x => x.id !== bid);
     localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
     if (pid === curPage) { boxes = bs; renderCanvas(); }
     renderBoxList();
+  });
+  el.querySelectorAll(".chap-pick-card").forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    openChapMenu(btn, v => {
+      const bs = loadBoxes(pid);
+      const b = bs.find(x => x.id === bid);
+      if (b) {
+        b.chapter = v;
+        localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+        if (pid === curPage) { boxes = bs; }
+        renderBoxList();
+      }
+    });
   });
   el.querySelectorAll(".cfig").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
@@ -1271,10 +1816,281 @@ function renderBoxList() {
       renderBoxList();
     });
   });
-  updateChapterDatalist(curSubject);
 }
 /* ---------- 裁图模式: 在原图画布上直接框选, 换算坐标 ---------- */
 let cropMode = null, cropRect = null, cropDrag = null;
+let cropTool = "zoom";        // frame(框题) | zoom | edit(点框弹编辑窗)
+let activeBoxId = null;       // 当前选中的题目框(裁图用)
+let cropPrevTool = null;      // 进入裁图前的工具栏模式
+let cropZoom = 1;             // 1 ~ 6
+let panDrag = null;           // 缩放模式拖动平移
+
+function updateCropZoomUI() {
+  $("ctZoomVal").textContent = Math.round(cropZoom * 100) + "%";
+  $("ctZoomOut").disabled = cropZoom <= 1.001;
+  $("ctZoomIn").disabled = cropZoom >= 5.999;
+}
+
+function setCropTool(tool) {
+  cropTool = tool;
+  document.querySelectorAll(".ct-seg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.cmode === tool));
+  cv.style.touchAction = (tool === "zoom") ? "pan-x pan-y" : "none";
+  cv.style.cursor = (tool === "zoom") ? "grab" : (tool === "edit" ? "pointer" : "crosshair");
+  if (tool !== "edit") closeBoxPop();     // 退出编辑模式时关掉悬浮窗
+}
+
+document.querySelectorAll(".ct-seg button").forEach(b =>
+  b.onclick = () => setCropTool(b.dataset.cmode));
+
+function zoomTo(z, focus) {
+  cropZoom = Math.max(1, Math.min(6, z));
+  renderCanvas();
+  updateCropZoomUI();
+  if (focus && cropRect) {           // 缩放后把图形框滚入视野
+    const cx = (cropRect.x + cropRect.w / 2) / scale;
+    const cy = (cropRect.y + cropRect.h / 2) / scale;
+    const wrap = $("canvasWrap");
+    wrap.scrollLeft = Math.max(0, cx - wrap.clientWidth / 2);
+    wrap.scrollTop = Math.max(0, cy - wrap.clientHeight / 2);
+  }
+}
+$("ctZoomIn").onclick = () => zoomTo(cropZoom * 1.25, true);
+$("ctZoomOut").onclick = () => zoomTo(cropZoom / 1.25, true);
+$("ctZoomFit").onclick = () => { zoomTo(1); $("canvasWrap").scrollTo(0, 0); };
+
+function zoomAt(z1, clientX, clientY) {
+  const wrap = $("canvasWrap");
+  const z0 = cropZoom;
+  z1 = Math.max(1, Math.min(6, z1));
+  if (Math.abs(z1 - z0) < 0.001) return;
+  const wr = wrap.getBoundingClientRect();
+  const px = clientX - wr.left + wrap.scrollLeft;    // 缩放前鼠标对应的内容坐标
+  const py = clientY - wr.top + wrap.scrollTop;
+  cropZoom = z1;
+  renderCanvas();
+  updateCropZoomUI();
+  wrap.scrollLeft = px * (z1 / z0) - (clientX - wr.left);   // 保持鼠标位置
+  wrap.scrollTop = py * (z1 / z0) - (clientY - wr.top);
+}
+
+cv.addEventListener("wheel", e => {
+  if (!cropMode && !pageEdit) return;
+  e.preventDefault();
+  zoomAt(cropZoom * (e.deltaY < 0 ? 1.15 : 0.87), e.clientX, e.clientY);
+}, { passive: false });
+$("canvasWrap").addEventListener("wheel", e => {
+  if (!cropMode && !pageEdit) return;                 // 裁题/裁图模式: 容器内滚动也缩放
+  e.preventDefault();
+  zoomAt(cropZoom * (e.deltaY < 0 ? 1.15 : 0.87), e.clientX, e.clientY);
+}, { passive: false });
+
+/* 双指缩放 */
+let pinch = null;
+(function () {
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  cv.addEventListener("touchstart", e => {
+    if ((cropMode || pageEdit) && e.touches.length === 2) pinch = { d: dist(e.touches), z: cropZoom };
+  }, { passive: true });
+  cv.addEventListener("touchmove", e => {
+    if (pinch && e.touches.length === 2) {
+      e.preventDefault();
+      zoomTo(pinch.z * dist(e.touches) / pinch.d);
+    }
+  }, { passive: false });
+  cv.addEventListener("touchend", () => { pinch = null; });
+})();
+
+/* ---------- 撤销 / 重做 (操作历史) ---------- */
+let undoStack = [], redoStack = [], preOpSnap = null;
+const MAX_HISTORY = 60;
+
+function snap() { return JSON.stringify({ b: boxes, f: pendingGroup }); }
+
+function pushHistory(snapshotBefore) {
+  const cur = snap();
+  if (snapshotBefore === undefined || snapshotBefore === null) return;
+  if (snapshotBefore === cur) return;                   // 无变化不记录
+  undoStack.push(snapshotBefore);
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack = [];
+  updateUndoUI();
+}
+
+function applySnap(str) {
+  const d = JSON.parse(str);
+  boxes = d.b || [];
+  pendingGroup = d.f || null;
+  saveBoxes(); renderBoxList(); renderCanvas();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snap());
+  applySnap(undoStack.pop());
+  updateUndoUI();
+  toast("已撤销", "");
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snap());
+  applySnap(redoStack.pop());
+  updateUndoUI();
+  toast("已重做", "");
+}
+function updateUndoUI() {
+  const u = $("ctUndo"), r = $("ctRedo");
+  if (!u || !r) return;
+  u.disabled = !undoStack.length;
+  r.disabled = !redoStack.length;
+}
+$("ctUndo").onclick = undo;
+$("ctRedo").onclick = redo;
+window.addEventListener("keydown", e => {
+  if (!pageEdit) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;   // 输入框内不拦截
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    e.shiftKey ? redo() : undo();
+  }
+});
+
+/* ---------- 题目悬浮编辑窗 ---------- */
+let popBox = null, popFieldSnap = null;
+
+function openBoxPop(b) {
+  popBox = b;
+  const p = $("boxPop");
+  $("bpTitle").textContent = `编辑题目 #${(boxes.findIndex(x => x.id === b.id) + 1) || ""}`;
+  // 左侧: 该题在当前页面上的区域预览
+  $("bpImg").style.display = "none";
+  $("bpImgHint").style.display = "";
+  $("bpImgHint").textContent = "加载中…";
+  api("/api/crop/preview", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: curPage, box: { x: Math.round(b.x), y: Math.round(b.y),
+                                                 w: Math.round(b.w), h: Math.round(b.h) } }) })
+    .then(d => {
+      const im = $("bpImg");
+      im.onload = () => { $("bpImgHint").style.display = "none"; im.style.display = ""; };
+      im.onerror = () => { $("bpImgHint").textContent = "预览图片加载失败"; };
+      im.src = d.url;
+    })
+    .catch(err => { $("bpImgHint").textContent = err.message || "预览加载失败"; });
+  p.querySelector('[data-pf="chapter"]').value = b.chapter || "";
+  p.querySelector('[data-pf="keywords"]').value = b.keywords || "";
+  p.querySelector('[data-pf="note"]').value = b.note || "";
+  p.querySelector('[data-pf="answer"]').value = b.answer || "";
+  p.querySelector('[data-pf="analysis"]').value = b.analysis || "";
+  renderPopStars(b.star || 0);
+  p.style.display = "";
+  const y = window.scrollY;
+  requestAnimationFrame(() => window.scrollTo(0, y));   // 打开时保持页面位置
+}
+
+function closeBoxPop() {
+  $("boxPop").style.display = "none";
+  popBox = null;
+}
+
+function renderPopStars(n) {
+  $("bpStarRow").querySelectorAll(".st").forEach(s =>
+    s.classList.toggle("on", (n || 0) >= +s.dataset.n));
+}
+$("bpStarRow").querySelectorAll(".st").forEach(s => s.onclick = () => {
+  if (!popBox) return;
+  const n = +s.dataset.n;
+  popBox.star = (popBox.star || 0) === n ? 0 : n;    // 再点同一星归零
+  renderPopStars(popBox.star);
+  syncPop();
+});
+$("bpStarClear").onclick = () => { if (popBox) { popBox.star = 0; renderPopStars(0); syncPop(); } };
+$("bpClose").onclick = closeBoxPop;
+$("boxPop").onclick = e => { if (e.target === $("boxPop")) closeBoxPop(); };   // 点遮罩关闭
+
+$("boxPop").querySelectorAll("[data-pf]").forEach(inp => {
+  inp.onfocus = () => { if (popBox) popFieldSnap = snap(); };
+  inp.oninput = () => {
+    if (!popBox) return;
+    popBox[inp.dataset.pf] = inp.value;
+    syncPop();                                   // 实时同步(不重建列表)
+  };
+  inp.onchange = () => { if (popBox) renderBoxList(); };   // 提交(失焦)时才刷新列表
+  inp.onblur = () => { pushHistory(popFieldSnap); popFieldSnap = null;
+                       if (popBox) renderBoxList(); };
+});
+
+function syncPop() {          // 同步: 存数据 + 只更新该行摘要(不重建列表, 避免跳动)
+  saveBoxes();
+  if (popBox) {
+    const card = document.querySelector(`.box-card[data-id="${popBox.id}"]`);
+    if (card) {
+      const sum = card.querySelector(".b-sum");
+      if (sum) {
+        const t = (popBox.note || "").replace(/\[图\d+\]/g, "[图]").replace(/\s+/g, " ").slice(0, 26);
+        sum.textContent = (popBox.chapter || "未分类") + (t ? " · " + t : "");
+      }
+      const bstar = card.querySelector(".b-star");
+      if (bstar) {
+        const st = popBox.star || 0;
+        bstar.textContent = "★".repeat(st) + "☆".repeat(5 - st);
+      }
+    }
+  }
+  renderCanvas();
+}
+
+/* ---------- 裁题模式(打开页面即进入, 带底部工具栏) ---------- */
+let pageEdit = false;
+
+function updateBarUI() {
+  const inCrop = !!cropMode;
+  $("cropOk").style.display = inCrop ? "" : "none";
+  $("cropCancel").style.display = inCrop ? "" : "none";
+  $("pageEditDone").style.display = inCrop ? "none" : "";
+}
+
+function enterPageEdit(resetTool = false) {
+  const first = !pageEdit;
+  pageEdit = true;
+  if (first || resetTool) {          // 已在裁题模式时保留当前的编辑/缩放选择
+    cropZoom = 1;
+    setCropTool("zoom");             // 默认缩放模式(浏览/平移); 要框选切「编辑」
+  }
+  $("cropBar").style.display = "flex";
+  $("canvasWrap").classList.add("cropping");
+  $("canvasWrap").classList.remove("locked");
+  updateCropZoomUI();
+  updateBarUI();
+  renderCanvas();
+}
+
+function exitPageEdit() {
+  pageEdit = false;
+  cropZoom = 1;
+  closeBoxPop();
+  $("cropBar").style.display = "none";
+  $("canvasWrap").classList.add("locked");     // 画布只读提示
+  $("canvasWrap").classList.remove("cropping");
+  cv.style.touchAction = "none";
+  cv.style.cursor = "crosshair";
+  $("canvasWrap").scrollTo(0, 0);
+  renderCanvas();
+}
+$("pageEditDone").onclick = () => exitPageEdit();
+$("canvasWrap").addEventListener("click", e => {          // 点击锁定遮罩重新进入编辑
+  if ($("canvasWrap").classList.contains("locked") && !pageEdit && img) {
+    e.stopPropagation();
+    enterPageEdit();
+  }
+}, true);
+$("ctCropFig").onclick = () => {
+  if (cropMode) return toast("已在裁图模式", "err");
+  if (!activeBoxId) return toast("请先在「框题」模式点选一个题目框", "err");
+  if (!curPage) return;
+  enterCropMode(curPage, activeBoxId);
+};
 
 function enterCropMode(pid, bid) {
   if (pid !== curPage) {                 // 框在别的页: 先切过去
@@ -1288,18 +2104,28 @@ function enterCropMode(pid, bid) {
   if (!b) return toast("未找到该框选", "err");
   cropMode = { pid, bid, x: b.x, y: b.y, w: b.w, h: b.h };
   cropRect = null; cropDrag = null;
+  cropZoom = 1;
+  cropPrevTool = cropTool;                      // 记住裁图前的模式
+  pageEdit = true;
   $("cropBar").style.display = "flex";
-  toast("在该题框内拖拽框选图形区域", "ok");
+  $("canvasWrap").classList.add("cropping");
+  setCropTool("frame");
+  updateCropZoomUI();
+  updateBarUI();
+  toast("裁图模式：在红色题框内拖拽框选图形", "ok");
   renderCanvas();
 }
 function exitCropMode() {
-  cropMode = null; cropRect = null; cropDrag = null;
-  $("cropBar").style.display = "none";
+  cropMode = null; cropRect = null; cropDrag = null; cropZoom = 1; panDrag = null;
+  updateBarUI();                            // 回到裁题模式(工具栏保留)
+  setCropTool(cropPrevTool || "frame");     // 恢复进入裁图前的模式
+  cropPrevTool = null;
   renderCanvas();
 }
 $("cropCancel").onclick = exitCropMode;
 $("cropOk").onclick = () => {
   if (!cropRect || cropRect.w < 10 || cropRect.h < 10) return toast("先拖拽框选图形区域", "err");
+  const beforeCrop = snap();
   const b = cropMode;
   clampCropRect();
   // 画布(缩略图)坐标 -> 相对题图的 0-1000 坐标
@@ -1323,6 +2149,7 @@ $("cropOk").onclick = () => {
   }
   exitCropMode();
   renderBoxList();
+  pushHistory(beforeCrop);            // 裁图 -> 可撤销
 };
 
 function clampCropRect() {
@@ -1348,12 +2175,23 @@ $("saveBtn").onclick = async () => {
   const groups = allPageBoxes();
   const total = groups.reduce((n, g) => n + g.boxes.length, 0);
   if (!total) return toast("还没有框选任何题目", "err");
-  const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "保存中…";
+  // 保存前确认科目(避免科目选错入库)
+  const subj = curSubject || "未分类";
+  const pagesInfo = groups.map(g => `  ${pageNo(g.pid)}：${g.boxes.length} 题`).join("\n");
+  const warn = (subj === "未分类")
+    ? "\n\n注意：当前科目是「未分类」，建议先在左侧顶部选择科目。"
+    : "";
+  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${total} 道题：\n${pagesInfo}${warn}`)) {
+    toast("已取消保存，可在左侧顶部修改科目", "");
+    return;
+  }
+  const btn = $("saveBtn"); btn.disabled = true;
+  btn.querySelector("span").textContent = "保存中…";
   let saved = 0, failed = null;
   for (const g of groups) {
     const payload = g.boxes.map(b => ({
       subject: curSubject, chapter: b.chapter, title: b.title,
-      reason: b.reason, note: b.note, group: b.group || "",
+      note: b.note, group: b.group || "",
       answer: b.answer || "", analysis: b.analysis || "",
       keywords: b.keywords || "", star: b.star || 0,
       figures: b.figures || [],
@@ -1376,7 +2214,7 @@ $("saveBtn").onclick = async () => {
   else toast(`已保存 ${saved} 道，AI 自动识别文字并裁剪题内图形…`, "ok");
   loadLibrary();
   setTimeout(loadLibrary, 8000);   // 后台 AI 识别完成后刷新显示文字
-  btn.disabled = false; btn.textContent = " 保存到错题库";
+  btn.disabled = false; btn.querySelector("span").textContent = "保存到错题库";
 };
 
 /* ---------- 错题库 ---------- */
@@ -1387,11 +2225,11 @@ function cardHTML(it, compact = false) {
       <div class="sel-badge" data-id="${it.id}">${selected.has(it.id) ? [...selected].indexOf(it.id) + 1 : ""}</div>
       <button class="cln" data-id="${it.id}"> 清理</button>
       <button class="aif" data-id="${it.id}">AI识别</button>
-      <button class="rm" data-id="${it.id}" title="删除">×</button>
-      <img src="/files/${it.image}" loading="lazy" alt="错题图片">
+      <button class="rm" data-id="${it.id}" title="删除"><svg class="ic"><use href="#ic-x"/></svg></button>
+      ${it.image ? `<img src="/files/${it.image}" loading="lazy" alt="错题图片">` : '<div class="no-img">无图片（手动添加）</div>'}
       ${compact ? "" : `<div class="meta">
         <b>${esc(it.title || "未命名")}${it.group ? ' <span class="badge">多块</span>' : ""}</b>
-        <span class="badge">${esc(it.subject)}</span>${it.chapter ? `<span class="badge">${esc(it.chapter)}</span>` : ""}${it.reason ? `<span class="badge">${esc(it.reason)}</span>` : ""}
+        <span class="badge">${esc(it.subject)}</span>${it.chapter ? `<span class="badge">${esc(it.chapter)}</span>` : ""}
         <div style="color:var(--t3);margin-top:4px">${esc(it.created)}</div>
       </div>`}
     </div>`;
@@ -1454,11 +2292,23 @@ function renderSubjects() {
   });
 }
 
+function summaryOf(it) {
+  const t = (it.note || "（未识别）")
+    .replace(/\[图\d+\]/g, "[图]")
+    .replace(/【题干】/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t.length > 60 ? t.slice(0, 60) + "…" : t;
+}
+
 function renderList(subj) {
   let items = filteredItems();
   if (subj) items = items.filter(it => (it.subject || "未分类") === subj);
   items = items.slice().sort((a, b) => (b.created || "").localeCompare(a.created || ""));
-  let html = subj ? `<div class="lib-back" id="backBtn">‹ 科目</div>` : "";
+  let html = subj ? `<div class="list-top">
+    <div class="lib-back" id="backBtn">‹ 科目</div>
+    <button class="btn ghost btn-sm" id="addItemBtn"><svg class="ic"><use href="#ic-plus"/></svg><span>手动添加题目</span></button>
+  </div>` : "";
   html += items.length ? `<div class="q-list">` + items.map(it => {
     const star = it.star || 0;
     return `
@@ -1467,16 +2317,17 @@ function renderList(subj) {
         <span class="q-sel ${selected.has(it.id) ? "on" : ""}" data-id="${it.id}">${selected.has(it.id) ? [...selected].indexOf(it.id) + 1 : ""}</span>
         <span class="q-code" data-code="${it.id}" title="点题号打开编辑窗口">${esc(it.code || "")}</span>
         <span class="q-stars">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
-        <span class="q-meta">${esc(it.chapter || "未分类")} · ${esc((it.created || "").slice(0, 10))}${it.fig_issue ? ' · <b style="color:var(--danger)">图未裁</b>' : ""}</span>
+        <span class="q-title" title="${esc((it.note || "").slice(0, 300))}">${esc(summaryOf(it))}</span>
+        <span class="q-meta">${esc(it.chapter || "未分类")}${it.fig_issue ? ' · <b style="color:var(--danger)">图未裁</b>' : ""}</span>
         <button class="q-toggle">展开</button>
       </div>
-      <div class="q-sum">${esc((it.note || "（未识别）").replace(/\[图\d+\]/g, "[图]"))}</div>
       <div class="q-full">
         <div class="q-sec"><div class="q-sec-t">题干与选项</div>
           <div class="q-pre">${esc(it.note || "（未识别，点题号可编辑或重新识别）")}</div></div>
         ${(it.figures || []).length ? `<div class="q-sec"><div class="q-sec-t">图片附件（${(it.figures || []).length}）</div>
           <div class="fig-strip">${(it.figures || []).map(f => `<img src="/files/${f.file}" title="[图${f.n}]">`).join("")}</div></div>` : ""}
         <div class="q-ops">
+          <button data-viewimg="${it.id}">浏览图片</button>
           <button data-sheet="${it.id}">${selected.has(it.id) ? "移出组卷" : "加入组卷"}</button>
           <button class="danger" data-del="${it.id}">删除</button>
         </div>
@@ -1487,6 +2338,8 @@ function renderList(subj) {
 
   const back = $("backBtn");
   if (back) back.onclick = () => { libView = { mode: "subjects", subject: null }; navigate("/library"); renderLibrary(); };
+  const addBtn = $("addItemBtn");
+  if (addBtn) addBtn.onclick = () => openAddItem(subj);
   // 展开/收起(点题号不触发展开)
   $("libGrid").querySelectorAll(".q-head").forEach(h => h.onclick = e => {
     if (e.target.classList.contains("q-sel") || e.target.classList.contains("q-code")) return;
@@ -1510,6 +2363,10 @@ function renderList(subj) {
     updateSelCount();
   });
   // 操作
+  $("libGrid").querySelectorAll("[data-viewimg]").forEach(b => b.onclick = () => {
+    const it = library.find(x => x.id === b.dataset.viewimg);
+    if (it) openImageViewer(it, it.image ? "crop" : "page");
+  });
   $("libGrid").querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => {
     const id = b.dataset.sheet;
     selected.has(id) ? selected.delete(id) : selected.add(id);
@@ -1835,7 +2692,6 @@ function openPreview(it) {
   $("pvMeta").textContent += it.fig_issue ? " · 图形未裁剪，请点「裁图」手动框选" : "";
   $("pvTitleBar").textContent = `${it.code || it.id} · ${it.subject || ""} 题目详情`;
   renderPvFigs(it);
-  updateChapterDatalist($("pvSubject").value);
   updatePvToggle();
   $("prevMask").classList.add("show");
 }
@@ -1874,7 +2730,7 @@ $("pvSave").onclick = async () => {
   btn.disabled = false; btn.textContent = "保存";
 };
 $("pvClose2").onclick = () => $("prevMask").classList.remove("show");
-$("pvSubject").onchange = () => updateChapterDatalist($("pvSubject").value);
+
 
 /* ---------- 图片附件(上传/删除/插入引用) ---------- */
 function renderPvFigs(it) {
@@ -1971,6 +2827,7 @@ pvcv.addEventListener("pointermove", e => {
 });
 pvcv.addEventListener("pointerup", () => { pvDrag = null; });
 
+$("pvViewImg").onclick = () => { if (pvItem) openImageViewer(pvItem, pvItem.image ? "crop" : "page"); };
 $("pvCropBtn").onclick = () => {
   pvCropOn = !pvCropOn;
   pvcv.classList.toggle("on", pvCropOn);
@@ -2010,9 +2867,13 @@ function renderPaperList() {
     const it = library.find(x => x.id === id);
     if (!it) return "";
     return `<div class="paper-row" data-i="${i}">
-      <img src="/files/${it.image}" loading="lazy">
-      <div class="pr-info"><b>${i + 1}. ${esc(it.title || "未命名")}</b>
-        <span class="badge">${esc(it.subject)}</span>${it.chapter ? `<span class="badge">${esc(it.chapter)}</span>` : ""}
+      <img class="pr-thumb" data-view="${it.id}" src="${it.image ? "/files/" + it.image : ""}"
+           loading="lazy" title="点击浏览图片">
+      <div class="pr-info"><b>${i + 1}. ${esc((it.note || it.title || "未命名").replace(/\[图\d+\]/g, "[图]").slice(0, 28))}</b>
+        <span class="chap-wrap">
+          <input class="pr-chapter" data-id="${it.id}" value="${esc(it.chapter || "")}" placeholder="大题（如 三、解答题）">
+          <button type="button" class="chap-pick chap-pick-paper" data-id="${it.id}" title="选择预设大题">▾</button>
+        </span>
       </div>
       <div class="pr-ops">
         <button class="pr-up">↑</button>
@@ -2027,7 +2888,53 @@ function renderPaperList() {
     b.onclick = () => movePaper(+b.closest(".paper-row").dataset.i, 1));
   $("paperList").querySelectorAll(".pr-del").forEach(b =>
     b.onclick = () => removePaper(+b.closest(".paper-row").dataset.i));
+  bindPaperChapters();
+  $("paperList").querySelectorAll(".chap-pick-paper").forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    openChapMenu(btn, v => {
+      const inp = btn.closest(".chap-wrap").querySelector(".pr-chapter");
+      inp.value = v;
+      inp.dispatchEvent(new Event("change"));
+    });
+  });
+  $("paperList").querySelectorAll(".pr-thumb").forEach(img => img.onclick = () => {
+    const it = library.find(x => x.id === img.dataset.view);
+    if (it) openImageViewer(it, it.image ? "crop" : "page");
+  });
 }
+$("paperCodeAdd").onclick = () => {
+  const raw = $("paperCode").value.trim();
+  if (!raw) return;
+  const keys = raw.split(/[,，、\s]+/).filter(Boolean);
+  let added = 0, missing = [];
+  keys.forEach(k => {
+    const it = library.find(x => (x.code || "").toLowerCase() === k.toLowerCase())
+            || library.find(x => x.id === k);
+    if (it) { if (!selected.has(it.id)) { selected.add(it.id); added++; } }
+    else missing.push(k);
+  });
+  $("paperCode").value = "";
+  renderPaperList(); updateSelCount();
+  toast(added ? `已添加 ${added} 题` + (missing.length ? `；未找到：${missing.join(" ")}` : "")
+              : `未找到：${missing.join(" ")}`, added ? "ok" : "err");
+};
+
+function bindPaperChapters() {
+  $("paperList").querySelectorAll(".pr-chapter").forEach(inp => {
+    inp.onchange = async () => {
+      const it = library.find(x => x.id === inp.dataset.id);
+      if (!it) return;
+      it.chapter = inp.value.trim();
+      try {
+        await api("/api/item/" + it.id, { method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chapter: it.chapter }) });
+        toast("大题已更新", "ok");
+      } catch (err) { toast("保存失败: " + err.message, "err"); }
+    };
+  });
+}
+
 function movePaper(i, d) {
   const arr = [...selected];
   const j = i + d;
@@ -2045,23 +2952,54 @@ function removePaper(i) {
 /* ---------- 组卷 ---------- */
 $("pdfBtn").onclick = async () => {
   if (!selected.size) return toast("先在错题库里勾选题目", "err");
-  const btn = $("pdfBtn"); btn.disabled = true; btn.textContent = "排版中…";
+  const btn = $("pdfBtn"); btn.disabled = true;
+  btn.querySelector("span").textContent = "排版中…";
   try {
-    const d = await api("/api/paper/pdf?ids=" + [...selected].join(","));
+    savePaperHead();
+    const q = new URLSearchParams({ ids: [...selected].join(","),
+      attach: $("paperAttach").value || "",
+      index: $("paperIndex").checked ? "1" : "",
+      header: $("paperHeader").value || "",
+      title: $("phTitle").value || "",
+      subject_line: $("phSubject").value || "",
+      notice: $("phNotice").value || "" });
+    const d = await api("/api/paper/pdf?" + q.toString());
     window.open(d.url, "_blank");
     toast(`已生成 ${d.count} 题的 PDF`, "ok");
   } catch (err) { toast("生成失败: " + err.message, "err"); }
-  btn.disabled = false; btn.textContent = "生成 PDF（Typst）";
+  btn.disabled = false; btn.querySelector("span").textContent = "生成 PDF（Typst）";
 };
 
 /* ---------- 大题模板(按科目) ---------- */
 let TPLS = {};
+/* 卷头设置本地记忆 */
+function savePaperHead() {
+  try {
+    localStorage.setItem("paperHead", JSON.stringify({
+      title: $("phTitle").value, subject: $("phSubject").value,
+      notice: $("phNotice").value, header: $("paperHeader").value }));
+  } catch (e) { }
+}
+function loadPaperHead() {
+  try {
+    const d = JSON.parse(localStorage.getItem("paperHead") || "{}");
+    $("phTitle").value = d.title || "";
+    $("phSubject").value = d.subject || "";
+    $("phNotice").value = d.notice ||
+      "注意事项：\n1．本试卷由错题收集工具生成，请在答题纸上作答；\n2．解答应写出文字说明、证明过程或演算步骤。";
+    $("paperHeader").value = d.header || "";
+  } catch (e) { }
+}
+
 async function loadTpl() {
   try { TPLS = (await api("/api/chapter-tpl")).templates || {}; } catch { TPLS = {}; }
-}
-function updateChapterDatalist(subj) {
-  const dl = $("chapterTpl");
-  if (dl) dl.innerHTML = (TPLS[subj] || []).map(t => `<option value="${esc(t)}">`).join("");
+  // 默认选中当前科目, 并立即渲染(之前只有切换科目才刷新)
+  const sel = $("tplSubject");
+  if (sel) {
+    const want = (typeof curSubject !== "undefined" && curSubject) ? curSubject : "";
+    if (want && [...sel.options].some(o => o.value === want)) sel.value = want;
+    renderTplList();
+  }
 }
 function renderTplList() {
   const subj = $("tplSubject").value;
@@ -2090,7 +3028,8 @@ $("tplAdd").onclick = () => {
   renderTplList();
 };
 $("tplSave").onclick = async () => {
-  const btn = $("tplSave"); btn.disabled = true; btn.textContent = "保存中…";
+  const btn = $("tplSave"); btn.disabled = true;
+  btn.querySelector("span").textContent = "保存中…";
   try {
     const d = await api("/api/chapter-tpl", { method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -2098,7 +3037,7 @@ $("tplSave").onclick = async () => {
     TPLS = d.templates;
     toast("大题模板已保存", "ok");
   } catch (err) { toast("保存失败: " + err.message, "err"); }
-  btn.disabled = false; btn.textContent = "保存模板";
+  btn.disabled = false; btn.querySelector("span").textContent = "保存模板";
 };
 
 /* ---------- 设置页: AI 服务配置 ---------- */
@@ -2112,6 +3051,8 @@ function renderAiCfg() {
   $("aiKeyHint").textContent = AICFG.key_hint ? `· Key ${AICFG.key_hint}` : "";
   $("aiBaseUrl").value = AICFG.base_url || "";
   $("aiModel").value = AICFG.model || "";
+  $("aiMaxPx").value = String(AICFG.max_px || 1600);
+  $("aiProofread").checked = !!AICFG.proofread;
 }
 
 async function loadAiCfg() {
@@ -2144,7 +3085,9 @@ $("aiSave").onclick = async () => {
   try {
     await api("/api/ai/config", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base_url: url, model, key }) });
+      body: JSON.stringify({ base_url: url, model, key,
+                             max_px: +$("aiMaxPx").value,
+                             proofread: $("aiProofread").checked }) });
     toast("已保存", "ok");
     await loadAiCfg();
   } catch (err) { toast("保存失败: " + err.message, "err"); }
@@ -2159,14 +3102,236 @@ async function testAi(btn) {
     toast(d.msg, "ok");
   } catch (err) { toast(err.message, "err"); }
   btn.disabled = false; btn.textContent = old;
+  loadLogs();
 }
 $("aiTest").onclick = () => testAi($("aiTest"));
 $("aiTest2").onclick = () => testAi($("aiTest2"));
+
+/* ---------- 关闭浏览器自动完成(避免弹出历史输入/乱码候选) ---------- */
+function killAutocomplete(root) {
+  (root || document).querySelectorAll("input, textarea").forEach(el => {
+    if (el.dataset.nac) return;
+    el.dataset.nac = "1";
+    el.setAttribute("autocomplete", "off");
+    el.setAttribute("autocorrect", "off");
+    el.setAttribute("autocapitalize", "off");
+    el.setAttribute("spellcheck", "false");
+    if (el.tagName === "INPUT") {
+      // 部分浏览器对 off 不生效, 用随机 name + off 双保险
+      el.setAttribute("autocomplete", "off");
+      el.removeAttribute("name");
+    }
+  });
+}
+killAutocomplete();
+// DOM 变化时自动处理新生成的输入框
+new MutationObserver(() => killAutocomplete()).observe(document.body,
+  { childList: true, subtree: true });
+
+/* ---------- 预设大题一键选择(列出全部, 不受已输入文字影响) ---------- */
+let chapPickCb = null;
+
+function openChapMenu(anchor, onPick) {
+  const list = (typeof TPLS !== "undefined" && TPLS[curSubject]) || [];
+  const menu = $("chapMenu");
+  if (!list.length) {
+    return toast(`${curSubject} 还没有预设大题，可在「组卷打印」页添加`, "err");
+  }
+  chapPickCb = onPick;
+  menu.innerHTML = list.map((t, i) =>
+    `<div class="cm-item" data-i="${i}">${esc(t)}</div>`).join("") +
+    `<div class="cm-item cm-clear" data-i="-1">清空</div>`;
+  menu.style.display = "";
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.max(6, Math.min(r.right - w, innerWidth - w - 6)) + "px";
+  menu.style.top = (r.bottom + h + 8 > innerHeight ? r.top - h - 4 : r.bottom + 4) + "px";
+  menu.querySelectorAll(".cm-item").forEach(el => el.onclick = () => {
+    const i = +el.dataset.i;
+    if (chapPickCb) chapPickCb(i < 0 ? "" : list[i]);
+    menu.style.display = "none";
+  });
+}
+document.addEventListener("click", e => {
+  if (!e.target.closest("#chapMenu") && !e.target.closest(".chap-pick")) {
+    $("chapMenu").style.display = "none";
+  }
+}, true);
+
+/* ---------- 数据导入导出 ---------- */
+$("expBtn").onclick = () => {
+  toast("正在打包数据…", "");
+  window.location.href = "/api/export";
+};
+$("impFile").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (!confirm(`导入数据包「${f.name}」？\n\n题目会全部重新编号，不会覆盖现有数据。`)) {
+    e.target.value = ""; return;
+  }
+  const box = $("impResult");
+  box.textContent = "导入中…";
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const d = await api("/api/import", { method: "POST", body: fd });
+    box.textContent = `导入完成：新增 ${d.added} 题、${d.images} 张图片（错题库 ${d.total_before} → ${d.total_after} 题）`;
+    toast("导入完成", "ok");
+    await loadLibrary();
+  } catch (err) {
+    box.textContent = "导入失败：" + err.message;
+    toast("导入失败", "err");
+  }
+  e.target.value = "";
+};
+
+/* ---------- 图片浏览(裁剪图 / 原图) ---------- */
+let viewItem = null, viewMode = "crop", viewZoom = 1;
+
+function viewUrls(it) {
+  return {
+    crop: it.image ? "/files/" + it.image : "",
+    page: it.source_page ? "/files/" + it.source_page : "",
+  };
+}
+function setViewMode(mode) {
+  viewMode = mode;
+  const urls = viewUrls(viewItem || {});
+  const url = urls[mode];
+  document.querySelectorAll("#viewSeg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.vm === mode));
+  const im = $("viewImg"), hint = $("viewHint");
+  viewZoom = 1; im.style.transform = "";
+  if (!url) {
+    im.style.display = "none"; hint.style.display = "";
+    hint.textContent = mode === "page"
+      ? "这道题没有关联原图（手动添加的题，或来源页已删除）"
+      : "这道题没有裁剪图";
+    return;
+  }
+  hint.style.display = "none"; im.style.display = "";
+  im.src = url;
+}
+function openImageViewer(it, mode = "crop") {
+  viewItem = it;
+  $("viewTitle").textContent = `图片浏览 · ${it.code || it.id}`;
+  const urls = viewUrls(it);
+  document.querySelectorAll('#viewSeg button[data-vm="page"]').forEach(b => {
+    b.disabled = !urls.page;
+    b.style.opacity = urls.page ? "" : ".4";
+  });
+  setViewMode(urls[mode] ? mode : (urls.crop ? "crop" : "page"));
+  $("viewMask").classList.add("show");
+}
+$("viewClose").onclick = () => $("viewMask").classList.remove("show");
+$("viewMask").onclick = e => { if (e.target === $("viewMask")) $("viewMask").classList.remove("show"); };
+document.querySelectorAll("#viewSeg button").forEach(b => b.onclick = () => setViewMode(b.dataset.vm));
+$("viewBody").addEventListener("wheel", e => {          // Ctrl+滚轮 缩放
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  viewZoom = Math.max(0.3, Math.min(6, viewZoom * (e.deltaY < 0 ? 1.12 : 0.89)));
+  $("viewImg").style.transform = `scale(${viewZoom})`;
+}, { passive: false });
+$("bpViewPage").onclick = () => {                        // 画布编辑窗 -> 原图
+  const it = library.find(x => x.id === (popBox || {}).id) || {};
+  openImageViewer({ id: it.id || (popBox || {}).id, code: it.code || "",
+                    image: it.image || "", source_page: it.source_page || `pages/${curPage}.jpg` }, "page");
+};
+
+/* ---------- 手动添加题目 ---------- */
+let addStar = 0, addSubject = "未分类";
+
+function renderAddStars(n) {
+  addStar = n || 0;
+  $("addStarRow").querySelectorAll(".st").forEach(s =>
+    s.classList.toggle("on", addStar >= +s.dataset.n));
+}
+$("addStarRow").querySelectorAll(".st").forEach(s => s.onclick = () => {
+  const n = +s.dataset.n;
+  renderAddStars(addStar === n ? 0 : n);
+});
+$("addStarClear").onclick = () => renderAddStars(0);
+
+function openAddItem(subject) {
+  addSubject = subject || "未分类";
+  $("addSubject").textContent = addSubject;
+  $("addChapter").value = "";
+  $("addKeywords").value = "";
+  $("addNote").value = "";
+  $("addAnswer").value = "";
+  $("addAnalysis").value = "";
+  $("addFile").value = "";
+  $("addFileName").textContent = "不传图片也可以（纯文字题）";
+  renderAddStars(0);
+  $("addMask").classList.add("show");
+}
+function closeAddItem() { $("addMask").classList.remove("show"); }
+
+$("addClose").onclick = closeAddItem;
+$("addCancel").onclick = closeAddItem;
+$("addMask").onclick = e => { if (e.target === $("addMask")) closeAddItem(); };
+$("addChapterPick").onclick = () => openChapMenu($("addChapterPick"),
+  v => { $("addChapter").value = v; });
+$("bpChapterPick").onclick = () => openChapMenu($("bpChapterPick"),
+  v => { if (popBox) { popBox.chapter = v; $("boxPop").querySelector('[data-pf="chapter"]').value = v; syncPop(); } });
+$("pvChapterPick").onclick = () => openChapMenu($("pvChapterPick"),
+  v => { $("pvChapter").value = v; });
+$("addFile").onchange = e => {
+  const f = e.target.files[0];
+  $("addFileName").textContent = f ? `已选择：${f.name}` : "不传图片也可以（纯文字题）";
+};
+$("addSave").onclick = async () => {
+  const note = $("addNote").value.trim();
+  if (!note) return toast("请填写题干内容", "err");
+  const btn = $("addSave");
+  btn.disabled = true;
+  btn.querySelector("span").textContent = "保存中…";
+  const fd = new FormData();
+  fd.append("subject", addSubject);
+  fd.append("chapter", $("addChapter").value);
+  fd.append("keywords", $("addKeywords").value);
+  fd.append("note", note);
+  fd.append("answer", $("addAnswer").value);
+  fd.append("analysis", $("addAnalysis").value);
+  fd.append("star", addStar);
+  const f = $("addFile").files[0];
+  if (f) fd.append("file", f);
+  try {
+    const d = await api("/api/item", { method: "POST", body: fd });
+    toast(`已添加：${d.item.code}`, "ok");
+    closeAddItem();
+    await loadLibrary();
+  } catch (err) { toast("添加失败: " + err.message, "err"); }
+  btn.disabled = false;
+  btn.querySelector("span").textContent = "保存";
+};
+
+/* ---------- 运行日志 ---------- */
+async function loadLogs() {
+  try {
+    const d = await api("/api/logs");
+    const logs = d.logs || [];
+    $("logList").innerHTML = logs.length ? logs.map(l => `
+      <div class="log-row ${l.ok ? "ok" : "bad"}">
+        <span class="t">${esc(l.time)}</span>
+        <span class="k">${l.ok ? "成功" : "失败"}</span>
+        <span class="m">${esc(l.kind)} · ${esc(l.model)}${l.msg ? " · " + esc(l.msg) : ""}</span>
+        <span class="ms">${l.ms}ms</span>
+      </div>`).join("") : '<div class="hint" style="padding:14px">暂无日志（进行 AI 识别或点「测试连接」后会出现在这里）</div>';
+  } catch (e) { $("logList").innerHTML = '<div class="hint" style="padding:14px">日志加载失败</div>'; }
+}
+$("logRefresh").onclick = loadLogs;
+$("logClear").onclick = async () => {
+  if (!confirm("清空全部运行日志？")) return;
+  await api("/api/logs", { method: "DELETE" });
+  loadLogs(); toast("日志已清空", "ok");
+};
 
 /* ---------- 启动 ---------- */
 loadPages();
 loadTpl();
 loadAiCfg();
+loadPaperHead();
 // 数据就绪后才定位到具体科目/题目, 避免中间态闪烁
 loadLibrary(false).then(() => applyRoute(location.pathname));
 window.addEventListener("resize", () => { if (img) renderCanvas(); });

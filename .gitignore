@@ -8,6 +8,10 @@ code_prefix.json
 pages/
 items/
 
+# 数据备份与回收站
+backups/
+.trash/
+
 # 运行/构建产物
 .tmp/
 __pycache__/
