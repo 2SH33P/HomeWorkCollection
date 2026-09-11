@@ -7,6 +7,15 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <title>错题收集工具</title>
+<script>
+/* 在首次绘制前确定当前页面(避免刷新时先看到首页再跳转) */
+(function () {
+  var h = location.pathname.split("/").filter(Boolean)[0] || "editor";
+  var t = (h === "item" || h === "library") ? "library"
+        : (h === "paper" ? "paper" : "editor");
+  document.documentElement.setAttribute("data-route", t);
+})();
+</script>
 <style>
 /* ===== Cupertino 设计令牌 (apple-design-skill) ===== */
 :root {
@@ -52,7 +61,11 @@ nav { display: flex; gap: 8px; padding: 4px 24px 14px; position: sticky; top: 0;
 .seg { display: inline-flex; background: rgba(118,118,128,.14); border-radius: 10px; padding: 2px; }
 .seg button { border: none; background: none; padding: 8px 18px; min-height: 40px; border-radius: 8px;
               font-size: 14px; color: var(--t2); cursor: pointer; transition: all .2s var(--motion); }
-.seg button.active { background: var(--card); color: var(--t1); font-weight: 600;
+.seg button.active,
+html[data-route="editor"] .seg button[data-tab="editor"],
+html[data-route="library"] .seg button[data-tab="library"],
+html[data-route="paper"] .seg button[data-tab="paper"],
+html[data-route="settings"] .seg button[data-tab="settings"] { background: var(--card); color: var(--t1); font-weight: 600;
                      box-shadow: 0 1px 3px rgba(0,0,0,.14); }
 
 /* ===== 移动端底部 tab 栏 (silk 附录: 桌面侧边栏 -> 移动端底栏) ===== */
@@ -63,11 +76,19 @@ nav { display: flex; gap: 8px; padding: 4px 24px 14px; position: sticky; top: 0;
                  padding: 9px 4px 7px; display: flex; flex-direction: column; align-items: center;
                  gap: 2px; cursor: pointer; min-height: 52px; transition: color .2s var(--motion); }
 .tabbar button .ic { font-size: 21px; line-height: 1; }
-.tabbar button.active { color: var(--accent); font-weight: 600; }
+.tabbar button.active,
+html[data-route="editor"] .tabbar button[data-tab="editor"],
+html[data-route="library"] .tabbar button[data-tab="library"],
+html[data-route="paper"] .tabbar button[data-tab="paper"],
+html[data-route="settings"] .tabbar button[data-tab="settings"] { color: var(--accent); font-weight: 600; }
 
 main { max-width: 1280px; margin: 0 auto; padding: 8px 24px 90px; }
 section { display: none; }
-section.active { display: block; animation: fadeSlide .28s var(--motion); }
+section.active,
+html[data-route="editor"] #tab-editor,
+html[data-route="library"] #tab-library,
+html[data-route="paper"] #tab-paper,
+html[data-route="settings"] #tab-settings { display: block; animation: fadeSlide .28s var(--motion); }
 @keyframes fadeSlide { from { opacity: 0; transform: translateY(8px); }
                        to   { opacity: 1; transform: none; } }
 [data-reveal] { opacity: 0; transform: translateY(14px); transition:
@@ -79,17 +100,24 @@ section.active { display: block; animation: fadeSlide .28s var(--motion); }
         padding: 16px; transition: transform .2s var(--motion), box-shadow .2s var(--motion); }
 .btn { background: var(--accent); color: #fff; border: none; padding: 0 18px; height: 44px;
        border-radius: 12px; font-size: 15px; font-weight: 500; cursor: pointer;
-       transition: transform .15s var(--motion), opacity .2s; white-space: nowrap; }
+       transition: transform .15s var(--motion), opacity .2s; white-space: nowrap;
+       display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+label.btn { text-align: center; }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .5; pointer-events: none; }
 .btn.ghost { background: var(--elev); color: var(--accent); }
 .btn.danger { background: var(--danger); }
-select, input[type=text], input:not([type]) {
+select, textarea,
+input:not([type=file]):not([type=checkbox]):not([type=radio]):not([type=range]) {
   background: var(--elev); border: 1px solid transparent; color: var(--t1);
   border-radius: var(--r-sm); padding: 9px 12px; font-size: 14px; font-family: inherit;
   min-height: 40px; transition: box-shadow .2s var(--motion), border-color .2s;
+  max-width: 100%; box-sizing: border-box; min-width: 0;
 }
-select:focus, input:focus { outline: none; border-color: var(--accent);
+input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; }
+textarea { min-height: 64px; line-height: 1.65; resize: vertical; padding: 9px 12px; }
+select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 label.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--t2);
             cursor: pointer; min-height: 40px; }
@@ -207,6 +235,77 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* ===== 设置页 ===== */
+.ai-status { display: flex; align-items: center; gap: 8px; font-size: 14px;
+             background: color-mix(in srgb, var(--success) 10%, var(--card));
+             border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+             border-radius: var(--r-md); padding: 12px 14px; }
+.ai-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--success); flex: none; }
+#tab-settings .fld { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+#tab-settings .fld span { font-size: 12px; color: var(--t3); }
+#tab-settings input { width: 100%; }
+
+/* ===== 错题库: 搜索/筛选/列表 ===== */
+.lib-search { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.lib-search input { flex: 1; font-size: 15px; }
+.seg-sm button { padding: 7px 14px; min-height: 36px; font-size: 13px; }
+.lib-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+               margin-bottom: 10px; }
+.lib-filters .fl { display: flex; align-items: center; gap: 6px; font-size: 12px;
+                   color: var(--t3); }
+.lib-filters input[type=date] { padding: 6px 9px; font-size: 13px; min-height: 36px;
+                                width: 140px; }
+.lib-filters select { padding: 6px 9px; font-size: 13px; min-height: 36px; }
+/* 科目文件夹行 */
+.folder-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+              background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow);
+              margin-bottom: 10px; cursor: pointer; transition: transform .15s var(--motion); }
+.folder-row:hover { transform: translateY(-2px); }
+.folder-ic { width: 34px; height: 34px; border-radius: 9px; flex: none;
+             background: color-mix(in srgb, var(--accent) 12%, transparent);
+             color: var(--accent); display: flex; align-items: center; justify-content: center;
+             font-size: 12px; font-weight: 700; }
+.folder-name { font-size: 17px; font-weight: 800; flex: 1; }
+.folder-cnt { font-size: 12px; color: var(--t3); }
+.folder-arrow { color: var(--t3); font-size: 20px; }
+.lib-back { display: inline-flex; align-items: center; gap: 6px; color: var(--accent);
+            font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 10px; }
+/* 题目列表行(默认折叠) */
+.q-row { background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow);
+         margin-bottom: 8px; overflow: hidden; }
+.q-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; }
+.q-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+          color: var(--accent); font-weight: 700; flex: none; cursor: pointer;
+          padding: 3px 7px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.q-code:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.q-stars { color: var(--warn); font-size: 13px; letter-spacing: 1px; flex: none; }
+.q-meta { font-size: 12px; color: var(--t3); flex: 1; min-width: 0; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; }
+.q-toggle { border: none; background: var(--elev); color: var(--t2); border-radius: 7px;
+            padding: 5px 11px; font-size: 12px; cursor: pointer; flex: none; }
+.q-sum { padding: 0 14px 12px; font-size: 13px; color: var(--t2); line-height: 1.6;
+         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+         overflow: hidden; }
+.q-full { display: none; padding: 0 14px 14px; border-top: 1px solid var(--sep); margin-top: 2px; }
+.q-row.open .q-full { display: block; }
+.q-row.open .q-sum { display: none; }
+.q-sec { margin-top: 10px; }
+.q-sec-t { font-size: 12px; color: var(--t3); margin-bottom: 4px; }
+.q-pre { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.75;
+         color: var(--t1); background: var(--elev); border-radius: var(--r-sm);
+         padding: 10px 12px; font-family: inherit; }
+.q-ops { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.q-ops button { border: none; background: var(--elev); border-radius: 8px; padding: 7px 13px;
+                font-size: 13px; cursor: pointer; color: var(--accent); }
+.q-ops button.danger { color: var(--danger); }
+.q-sel { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid var(--sep);
+         background: transparent; display: flex; align-items: center; justify-content: center;
+         font-size: 12px; font-weight: 700; color: transparent; cursor: pointer; flex: none; }
+.q-sel.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fig-strip { display: flex; gap: 6px; flex-wrap: wrap; }
+.fig-strip img { width: 68px; height: 68px; object-fit: contain; background: #fff;
+                 border-radius: 8px; box-shadow: var(--shadow); }
+
 /* ===== 错题库 ===== */
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .toolbar .count { color: var(--t3); font-size: 13px; }
@@ -282,11 +381,63 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .sel-badge:hover { transform: scale(1.12); }
 .empty { color: var(--t3); text-align: center; padding: 48px 0; }
 
+/* ===== 题目全屏编辑窗口 ===== */
+.modal-mask.full { align-items: stretch; justify-content: stretch; padding: 0; }
+.pv-full { width: 100%; height: 100%; background: var(--card); display: flex;
+           flex-direction: column; animation: fadeSlide .2s var(--motion); }
+.pv-top { display: flex; align-items: center; justify-content: space-between;
+          padding: 10px 18px; border-bottom: 1px solid var(--sep); flex: none; }
+.pv-title { font-size: 16px; font-weight: 700; }
+.pv-body { flex: 1; display: flex; min-height: 0; }
+.pv-left { flex: 1; min-width: 0; overflow: auto; background: var(--elev);
+           display: flex; align-items: center; justify-content: center; position: relative; }
+.pv-left img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pv-hint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+           background: rgba(0,0,0,.65); color: #fff; padding: 4px 12px; border-radius: 6px;
+           font-size: 12px; z-index: 5; white-space: nowrap; }
+.pv-right { width: 430px; flex: none; border-left: 1px solid var(--sep);
+            overflow-y: auto; overflow-x: hidden; padding: 16px 18px 24px;
+            display: flex; flex-direction: column; gap: 10px;
+            max-width: 100vw; box-sizing: border-box;
+            overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.pv-right .fld input, .pv-right .fld select, .pv-right .fld textarea { width: 100%; }
+/* 可拖拽分隔条(像 Windows 窗口分界) */
+.pv-split { width: 8px; flex: none; cursor: col-resize; position: relative;
+            background: transparent; touch-action: none; }
+.pv-split::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0;
+                   width: 2px; background: var(--sep); transition: background .15s; }
+.pv-split:hover::after, .pv-split.dragging::after { background: var(--accent); width: 3px; left: 2px; }
+.pv-right .fld { display: flex; flex-direction: column; gap: 4px; }
+.pv-right .fld span { font-size: 12px; color: var(--t3); }
+.pv-right textarea { min-height: 90px; }
+.pv-figs { border-top: 1px solid var(--sep); padding-top: 12px; }
+.pv-figs-head { display: flex; align-items: center; justify-content: space-between;
+                font-size: 12px; color: var(--t3); margin-bottom: 8px; gap: 8px; }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
+.fig-item { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--r-sm);
+            background: var(--elev); margin-bottom: 6px; }
+.fig-item img { width: 54px; height: 54px; object-fit: contain; background: #fff;
+                border-radius: 7px; flex: none; }
+.fig-info { flex: 1; min-width: 0; font-size: 12px; }
+.fig-info b { color: var(--accent); }
+.fig-ops { display: flex; gap: 6px; flex: none; }
+.fig-ops button { border: none; background: var(--card); border-radius: 7px; padding: 5px 9px;
+                  font-size: 12px; cursor: pointer; color: var(--accent); }
+.fig-ops button.danger { color: var(--danger); }
+@media (max-width: 860px) {
+  .pv-body { flex-direction: column; }
+  .pv-left { height: 42vh; flex: none; touch-action: pan-x pan-y; }
+  .pv-split { display: none; }
+  .pv-right { width: 100%; max-width: 100%; flex: 1; min-height: 0; border-left: none;
+              border-top: 1px solid var(--sep); overflow-x: hidden; }
+}
+
 /* ===== 题目预览/编辑弹层 ===== */
 .prev-sheet { max-width: 1020px; }
 .prev-grid { display: flex; gap: 16px; }
-.prev-img { flex: 1; min-width: 0; background: #fff; border-radius: var(--r-sm);
-            position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.prev-img { flex: 1; min-width: 0; background: var(--elev); border-radius: var(--r-sm);
+            position: relative; align-self: flex-start;
+            display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .prev-img img { max-width: 100%; max-height: 68vh; object-fit: contain; }
 #pvCv { position: absolute; display: none; background: transparent;
         cursor: crosshair; touch-action: none; }
@@ -300,7 +451,7 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 .prev-side { width: 360px; display: flex; flex-direction: column; gap: 9px; }
 .prev-side .fld { display: flex; flex-direction: column; gap: 4px; }
 .prev-side .fld span { font-size: 12px; color: var(--t3); }
-.prev-side textarea { resize: vertical; min-height: 170px; font-family: inherit; line-height: 1.6; }
+.prev-side textarea { min-height: 120px; }
 .prev-ops { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 #pvToggle.on { background: var(--elev); color: var(--accent); outline: 2px solid var(--accent); }
 .fig-warn { color: var(--danger) !important; font-weight: 600; }
@@ -359,15 +510,16 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 
 <nav>
   <div class="seg">
-    <button data-tab="editor" class="active">① 整页框选</button>
+    <button data-tab="editor">① 整页框选</button>
     <button data-tab="library">② 错题库</button>
     <button data-tab="paper">③ 组卷打印</button>
+    <button data-tab="settings">④ 设置</button>
   </div>
 </nav>
 
 <main>
   <!-- ========== ① 整页框选 ========== -->
-  <section id="tab-editor" class="active">
+  <section id="tab-editor">
     <div id="drop">
       <input type="file" id="file" accept="image/*" multiple>
       <div class="big"></div>
@@ -414,6 +566,25 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
 
   <!-- ========== ② 错题库 ========== -->
   <section id="tab-library">
+    <div class="lib-search">
+      <input type="search" id="libQ" placeholder="搜索题目：关键字优先，可搜题干/选项/解析/编号（如 MA0003）">
+      <div class="seg seg-sm">
+        <button data-view="list" class="active">列表</button>
+        <button data-view="grid">相册</button>
+      </div>
+    </div>
+    <div class="lib-filters">
+      <label class="fl"><span>日期</span><input type="date" id="fFrom"><span class="hint">~</span><input type="date" id="fTo"></label>
+      <label class="fl"><span>星级</span>
+        <select id="fStar">
+          <option value="0">不限</option>
+          <option value="1">≥1 星</option><option value="2">≥2 星</option>
+          <option value="3">≥3 星</option><option value="4">≥4 星</option>
+          <option value="5">5 星</option>
+        </select></label>
+      <button class="btn ghost btn-sm" id="fClear">清除筛选</button>
+      <span class="hint" id="fCount"></span>
+    </div>
     <div class="toolbar">
       <span class="count" id="libCount">共 0 题</span>
       <button class="btn ghost" id="selAll">全选</button>
@@ -460,13 +631,55 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
       <div class="hint" id="tplEmpty" style="display:none">该科目还没有大题，点「添加大题」开始设置</div>
     </div>
   </section>
+
+  <!-- ========== ④ 设置 ========== -->
+  <section id="tab-settings">
+    <div class="card" style="max-width:680px">
+      <h3 style="margin-bottom:6px">AI 识别服务</h3>
+      <p class="hint" style="line-height:1.8;margin-bottom:12px">
+        错题识别需要<b>支持图片输入</b>的视觉模型。
+        <b>DeepSeek 官方接口为纯文本，无法识别图片</b>（可选作其他文本用途）；
+        需要图片识别时，请用智谱 GLM-4V-Flash（免费）、通义 qwen-vl 等。
+      </p>
+
+      <!-- 已配置状态 -->
+      <div id="aiConfigured" style="display:none">
+        <div class="ai-status">
+          <span class="ai-dot"></span>已配置：<b id="aiModelName"></b>
+          <span class="hint" id="aiKeyHint"></span>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn ghost" id="aiEdit">修改配置</button>
+          <button class="btn ghost" id="aiTest2">测试连接</button>
+        </div>
+      </div>
+
+      <!-- 配置表单 -->
+      <div id="aiForm">
+        <label class="fld"><span>服务预设（选了会自动填地址和模型）</span>
+          <select id="aiPreset"><option value="">— 选择预设 —</option></select></label>
+        <label class="fld"><span>API 地址（OpenAI 兼容）</span>
+          <input type="text" id="aiBaseUrl" placeholder="https://open.bigmodel.cn/api/paas/v4"></label>
+        <label class="fld"><span>模型名</span>
+          <input type="text" id="aiModel" placeholder="glm-4v-flash"></label>
+        <label class="fld"><span>API Key</span>
+          <input type="password" id="aiKey" placeholder="粘贴 API Key（仅保存在本机）"></label>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn" id="aiSave">保存</button>
+          <button class="btn ghost" id="aiTest">测试连接</button>
+          <button class="btn ghost" id="aiCancel" style="display:none">取消</button>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <!-- 移动端底部 tab 栏 -->
 <div class="tabbar">
-  <button data-tab="editor" class="active">整页框选</button>
+  <button data-tab="editor">整页框选</button>
   <button data-tab="library">错题库</button>
   <button data-tab="paper">组卷</button>
+  <button data-tab="settings">设置</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -491,42 +704,57 @@ canvas { width: 100%; display: block; cursor: crosshair; border-radius: var(--r-
   </div>
 </div>
 
-<!-- 题目预览/编辑弹层 -->
-<div class="modal-mask" id="prevMask">
-  <div class="sheet prev-sheet">
-    <div class="prev-grid">
-      <div class="prev-img" id="pvImgWrap"><img id="pvImg" alt="">
+<!-- 大题归类模板建议 -->
+<datalist id="chapterTpl">
+  <option value="一、选择题"><option value="二、填空题"><option value="三、解答题">
+  <option value="四、计算题"><option value="五、实验题"><option value="六、证明题">
+</datalist>
+
+<!-- 题目全屏编辑窗口 -->
+<div class="modal-mask full" id="prevMask">
+  <div class="pv-full">
+    <div class="pv-top">
+      <span class="pv-title" id="pvTitleBar">题目详情</span>
+      <button class="btn ghost" id="pvClose2">关闭</button>
+    </div>
+    <div class="pv-body">
+      <div class="pv-left" id="pvLeft">
+        <img id="pvImg" alt="">
         <canvas id="pvCv"></canvas>
-        <div class="hint" id="pvCropHint" style="display:none">拖拽框选图形区域</div>
+        <div class="hint pv-hint" id="pvCropHint" style="display:none">拖拽框选图形区域</div>
       </div>
-      <div class="prev-side">
-        <h3>题目详情</h3>
+      <div class="pv-split" id="pvSplit" title="拖动调整宽度"></div>
+      <div class="pv-right" id="pvRight">
         <div class="hint" id="pvMeta"></div>
         <label class="fld"><span>标题</span><input type="text" id="pvTitle" placeholder="未命名"></label>
         <label class="fld"><span>科目</span><select id="pvSubject"></select></label>
-        <label class="fld"><span>大题归属</span><input type="text" id="pvChapter" list="chapterTpl" placeholder="如：三、解答题（同大题的题会归到一起，大题标题用黑体）">
-          <datalist id="chapterTpl">
-            <option value="一、选择题"><option value="二、填空题"><option value="三、解答题">
-            <option value="四、计算题"><option value="五、实验题"><option value="六、证明题">
-          </datalist></label>
+        <label class="fld"><span>大题归类</span><input type="text" id="pvChapter" list="chapterTpl" placeholder="如：三、解答题"></label>
         <div class="star-row" id="pvStarRow">
           <span class="hint">难度</span>
           <span class="stars"><span class="st" data-n="1">★</span><span class="st" data-n="2">★</span><span class="st" data-n="3">★</span><span class="st" data-n="4">★</span><span class="st" data-n="5">★</span></span>
+          <button class="btn ghost btn-sm" id="pvStarClear">清零</button>
         </div>
         <label class="fld"><span>关键字（搜索用，逗号分隔）</span><input type="text" id="pvKeywords" placeholder="如：三角函数,图像"></label>
-        <label class="fld"><span>识别内容（题干与选项，*楷体* **黑体** [图1]）</span>
-          <textarea id="pvNote" rows="9"></textarea></label>
+        <label class="fld"><span>识别内容（*楷体* **黑体** [图1]）</span>
+          <textarea id="pvNote" rows="8"></textarea></label>
         <label class="fld"><span>答案（可选，支持 [图1]）</span>
           <textarea id="pvAnswer" rows="3"></textarea></label>
         <label class="fld"><span>解析（可选，支持 *楷体* **黑体** [图1]）</span>
           <textarea id="pvAnalysis" rows="5"></textarea></label>
+        <div class="pv-figs">
+          <div class="pv-figs-head">
+            <span>图片附件（在题干/答案/解析中用 [图N] 引用）</span>
+            <label class="btn ghost btn-sm">上传图片
+              <input type="file" id="pvUpload" accept="image/*" style="display:none"></label>
+          </div>
+          <div id="pvFigList"></div>
+        </div>
         <div class="prev-ops">
           <button class="btn ghost" id="pvCropBtn">裁图</button>
-          <button class="btn" id="pvCropOk" style="display:none">确认裁剪</button>
+          <button class="btn ghost" id="pvCropOk" style="display:none">确认裁剪</button>
           <button class="btn ghost" id="pvCropCancel" style="display:none">取消</button>
           <button class="btn" id="pvSave">保存</button>
           <button class="btn ghost" id="pvToggle">加入组卷</button>
-          <button class="btn ghost" id="pvClose">关闭</button>
         </div>
       </div>
     </div>
@@ -559,17 +787,95 @@ async function api(url, opts) {
   return d;
 }
 
+/* ---------- 初始路由: 尽早执行, 避免刷新时闪回首页 ---------- */
+function tabForPath(path) {
+  const head = path.split("/").filter(Boolean)[0] || "editor";
+  if (head === "item" || head === "library") return "library";
+  if (head === "paper") return "paper";
+  if (head === "settings") return "settings";
+  return "editor";
+}
+(() => {
+  const t = tabForPath(location.pathname);
+  document.documentElement.setAttribute("data-route", t);
+  document.querySelectorAll("nav .seg button, .tabbar button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === t));
+  document.querySelectorAll("main section").forEach(s =>
+    s.classList.toggle("active", s.id === "tab-" + t));
+})();
+
 /* ---------- 标签切换 (silk: fadeSlide 过渡) ---------- */
 function switchTab(name) {
+  document.documentElement.setAttribute("data-route", name);   // 驱动 CSS 显示
   document.querySelectorAll("nav .seg button, .tabbar button").forEach(b =>
     b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach(s =>
     s.classList.toggle("active", s.id === "tab-" + name));
-  if (name === "library") loadLibrary();
+  if (name === "library" && !library.length) loadLibrary();   // 已有数据不重复加载
   if (name === "paper") { updateSelCount(); renderPaperList(); }
 }
+
+/* ---------- URL 路由: /library, /library/数学, /paper, /item/MA0003 ---------- */
+function navigate(path, replace) {
+  if (location.pathname === path) return;
+  if (replace) history.replaceState(null, "", path);
+  else history.pushState(null, "", path);
+}
+
+function itemByKey(key) {
+  return library.find(x => x.id === key)
+      || library.find(x => (x.code || "").toLowerCase() === String(key).toLowerCase());
+}
+
+function applyRoute(path) {
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  const head = parts[0] || "editor";
+  const openItem = (key) => {
+    const locate = () => {
+      const it = itemByKey(key);
+      if (it) openPreview(it);
+      else toast("未找到题号 " + key, "err");
+    };
+    if (library.length) locate();
+    else setTimeout(locate, 800);
+  };
+  if (head === "item" && parts[1]) {          // /item/MA0003
+    switchTab("library");
+    openItem(parts[1]);
+    return;
+  }
+  if (head === "library") {
+    switchTab("library");
+    if (parts[1] === "item" && parts[2]) {     // /library/item/MA0003
+      openItem(parts[2]);
+      return;
+    }
+    const locate = () => {
+      if (parts[1]) {
+        libView = { mode: libViewMode, subject: parts[1] };
+      } else {
+        libView = { mode: "subjects", subject: null };
+      }
+      renderLibrary();
+    };
+    if (library.length || parts.length === 1) locate();
+    else setTimeout(locate, 500);
+  } else if (head === "paper") {
+    switchTab("paper");
+  } else if (head === "settings") {
+    switchTab("settings");
+  } else {
+    switchTab("editor");
+  }
+}
+
+window.addEventListener("popstate", () => applyRoute(location.pathname));
 document.querySelectorAll("nav .seg button, .tabbar button").forEach(b =>
-  b.onclick = () => switchTab(b.dataset.tab));
+  b.onclick = () => {
+    const t = b.dataset.tab;
+    switchTab(t);
+    navigate("/" + (t === "editor" ? "" : t));
+  });
 
 /* ---------- silk: 进场揭示 ---------- */
 const io = new IntersectionObserver(es => es.forEach(e => {
@@ -881,7 +1187,7 @@ function boxCardHTML(b, i, pid) {
         <span class="hint">难度</span>
         <span class="stars">${[1, 2, 3, 4, 5].map(n =>
           `<span class="st ${star >= n ? "on" : ""}" data-n="${n}">★</span>`).join("")}</span>
-        <span class="hint">${star ? star + " 星（再点同一星取消）" : "未评"}</span>
+        <button class="mini starclear" data-id="${b.id}">清零</button>
       </div>
       <select data-f="reason">${REASONS.map(r => `<option ${r === b.reason ? "selected" : ""}>${r}</option>`).join("")}</select>
       <textarea data-f="note" placeholder="题干与选项（AI 自动识别可编辑，[图1] 表示图块）">${esc(b.note)}</textarea>
@@ -932,6 +1238,15 @@ function renderBoxList() {
     }
     localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
     if (pid === curPage) { boxes = bs; renderCanvas(); }
+    renderBoxList();
+  });
+  el.querySelectorAll(".starclear").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (!b) return;
+    b.star = 0;
+    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
     renderBoxList();
   });
   el.querySelectorAll("input[data-f], select[data-f], textarea[data-f]").forEach(inp => {
@@ -1082,42 +1397,135 @@ function cardHTML(it, compact = false) {
     </div>`;
 }
 
-/* ===== iPhone 相册式: 科目=相册, 点进去按日期分组 ===== */
-let libView = { mode: "subjects" };        // subjects | album
+/* ===== 错题库: 列表(默认) / 相册 两种视图, 科目->大题->日期分层 ===== */
+let libView = { mode: "subjects", subject: null };   // subjects | list | grid
+let libViewMode = localStorage.getItem("libViewMode") || "list";
+let libFilters = { q: "", star: 0, from: "", to: "" };
 
 function fmtDate(d) {
-  const p = d.split("-");
-  return `${parseInt(p[1])}月${parseInt(p[2])}日`;
+  const p = (d || "").split("-");
+  return p.length >= 3 ? `${parseInt(p[1])}月${parseInt(p[2])}日` : d;
+}
+
+function filteredItems() {
+  let arr = library.slice();
+  const q = libFilters.q.trim().toLowerCase();
+  if (q) {
+    arr = arr.filter(it => [it.code, it.title, it.chapter, it.keywords, it.note,
+                            it.answer, it.analysis, it.subject]
+      .join(" ").toLowerCase().includes(q));
+    // 关键字命中优先
+    arr.sort((a, b) => {
+      const ak = (a.keywords || "").toLowerCase().includes(q) ? 1 : 0;
+      const bk = (b.keywords || "").toLowerCase().includes(q) ? 1 : 0;
+      return bk - ak;
+    });
+  }
+  if (libFilters.star > 0) arr = arr.filter(it => (it.star || 0) >= libFilters.star);
+  if (libFilters.from) arr = arr.filter(it => (it.created || "").slice(0, 10) >= libFilters.from);
+  if (libFilters.to) arr = arr.filter(it => (it.created || "").slice(0, 10) <= libFilters.to);
+  return arr;
+}
+
+function updateFilterUI() {
+  $("fCount").textContent = (libFilters.q || libFilters.star || libFilters.from || libFilters.to)
+    ? `筛选出 ${filteredItems().length} 题` : "";
 }
 
 function renderSubjects() {
+  const items = filteredItems();
   const bySubj = {};
-  library.forEach(it => {
+  items.forEach(it => {
     const s = it.subject || "未分类";
     (bySubj[s] = bySubj[s] || []).push(it);
   });
   const subs = Object.keys(bySubj).sort();
-  const cards = subs.map(s => {
-    const items = bySubj[s];
-    const thumbs = items.slice(0, 4).map(it =>
-      `<img src="/files/${it.image}" loading="lazy">`).join("");
-    return `<div class="album-card" data-subj="${esc(s)}">
-      <div class="album-thumbs">${thumbs}</div>
-      <div class="album-name">${esc(s)}<span>${items.length} 题</span></div>
-    </div>`;
-  }).join("");
-  $("libGrid").innerHTML = cards
-    ? `<div class="album-list">${cards}</div>`
-    : '<div class="empty">还没有错题，去「① 整页框选」裁剪几道吧</div>';
-  $("libGrid").querySelectorAll(".album-card").forEach(c => c.onclick = () => {
-    libView = { mode: "album", subject: c.dataset.subj };
+  $("libGrid").innerHTML = subs.length ? subs.map(s => `
+    <div class="folder-row" data-subj="${esc(s)}">
+      <span class="folder-ic">科</span>
+      <span class="folder-name">${esc(s)}</span>
+      <span class="folder-cnt">${bySubj[s].length} 题</span>
+      <span class="folder-arrow">›</span>
+    </div>`).join("") : '<div class="empty">没有匹配的题目</div>';
+  $("libGrid").querySelectorAll(".folder-row").forEach(r => r.onclick = () => {
+    libView = { mode: libViewMode, subject: r.dataset.subj };
+    navigate("/library/" + encodeURIComponent(r.dataset.subj));
     renderLibrary();
+  });
+}
+
+function renderList(subj) {
+  let items = filteredItems();
+  if (subj) items = items.filter(it => (it.subject || "未分类") === subj);
+  items = items.slice().sort((a, b) => (b.created || "").localeCompare(a.created || ""));
+  let html = subj ? `<div class="lib-back" id="backBtn">‹ 科目</div>` : "";
+  html += items.length ? `<div class="q-list">` + items.map(it => {
+    const star = it.star || 0;
+    return `
+    <div class="q-row" data-id="${it.id}">
+      <div class="q-head">
+        <span class="q-sel ${selected.has(it.id) ? "on" : ""}" data-id="${it.id}">${selected.has(it.id) ? [...selected].indexOf(it.id) + 1 : ""}</span>
+        <span class="q-code" data-code="${it.id}" title="点题号打开编辑窗口">${esc(it.code || "")}</span>
+        <span class="q-stars">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
+        <span class="q-meta">${esc(it.chapter || "未分类")} · ${esc((it.created || "").slice(0, 10))}${it.fig_issue ? ' · <b style="color:var(--danger)">图未裁</b>' : ""}</span>
+        <button class="q-toggle">展开</button>
+      </div>
+      <div class="q-sum">${esc((it.note || "（未识别）").replace(/\[图\d+\]/g, "[图]"))}</div>
+      <div class="q-full">
+        <div class="q-sec"><div class="q-sec-t">题干与选项</div>
+          <div class="q-pre">${esc(it.note || "（未识别，点题号可编辑或重新识别）")}</div></div>
+        ${(it.figures || []).length ? `<div class="q-sec"><div class="q-sec-t">图片附件（${(it.figures || []).length}）</div>
+          <div class="fig-strip">${(it.figures || []).map(f => `<img src="/files/${f.file}" title="[图${f.n}]">`).join("")}</div></div>` : ""}
+        <div class="q-ops">
+          <button data-sheet="${it.id}">${selected.has(it.id) ? "移出组卷" : "加入组卷"}</button>
+          <button class="danger" data-del="${it.id}">删除</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("") + `</div>` : '<div class="empty">没有匹配的题目</div>';
+  $("libGrid").innerHTML = html;
+
+  const back = $("backBtn");
+  if (back) back.onclick = () => { libView = { mode: "subjects", subject: null }; navigate("/library"); renderLibrary(); };
+  // 展开/收起(点题号不触发展开)
+  $("libGrid").querySelectorAll(".q-head").forEach(h => h.onclick = e => {
+    if (e.target.classList.contains("q-sel") || e.target.classList.contains("q-code")) return;
+    const row = h.closest(".q-row");
+    row.classList.toggle("open");
+    h.querySelector(".q-toggle").textContent = row.classList.contains("open") ? "收起" : "展开";
+  });
+  // 点题号 -> 打开全屏编辑窗口
+  $("libGrid").querySelectorAll(".q-code").forEach(c => c.onclick = e => {
+    e.stopPropagation();
+    const it = library.find(x => x.id === c.dataset.code);
+    if (it) { navigate("/item/" + encodeURIComponent(it.code || it.id)); openPreview(it); }
+  });
+  // 勾选
+  $("libGrid").querySelectorAll(".q-sel").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const id = b.dataset.id;
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+    b.classList.toggle("on", selected.has(id));
+    b.textContent = selected.has(id) ? [...selected].indexOf(id) + 1 : "";
+    updateSelCount();
+  });
+  // 操作
+  $("libGrid").querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => {
+    const id = b.dataset.sheet;
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+    toast(selected.has(id) ? "已加入组卷" : "已移出组卷", "ok");
+    renderLibrary();
+  });
+  $("libGrid").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    if (!confirm("删除这道错题？")) return;
+    await api("/api/item/" + b.dataset.del, { method: "DELETE" });
+    selected.delete(b.dataset.del);
+    loadLibrary(); toast("已删除", "ok");
   });
 }
 
 function renderAlbum(subj) {
   const items = library.filter(it => (it.subject || "未分类") === subj);
-  // 第二级: 大题归属
   const byChapter = {};
   items.forEach(it => {
     const c = (it.chapter || "").trim() || "未分类";
@@ -1126,7 +1534,6 @@ function renderAlbum(subj) {
   let html = `<div class="album-head"><button id="backBtn">‹ 科目</button>`
            + `<span>${esc(subj)}</span></div>`;
   for (const c of Object.keys(byChapter)) {
-    // 第三级: 日期(新到旧)
     const byDate = {};
     byChapter[c].forEach(it => {
       const d = (it.created || "").slice(0, 10);
@@ -1141,15 +1548,46 @@ function renderAlbum(subj) {
   }
   $("libGrid").innerHTML = html;
   const back = $("backBtn");
-  if (back) back.onclick = () => { libView = { mode: "subjects" }; renderLibrary(); };
+  if (back) back.onclick = () => { libView = { mode: "subjects", subject: null }; renderLibrary(); };
 }
 
 function renderLibrary() {
-  if (libView.mode === "subjects") renderSubjects();
-  else renderAlbum(libView.subject);
-  bindCards();
+  updateFilterUI();
+  if (libView.mode === "subjects") {
+    renderSubjects();
+  } else if (libView.mode === "grid") {
+    renderAlbum(libView.subject);
+    bindCards();
+  } else {
+    renderList(libView.subject);
+  }
   updateSelCount();
 }
+
+/* 搜索/筛选/视图切换事件 */
+$("libQ").oninput = () => {
+  libFilters.q = $("libQ").value;
+  if (libFilters.q && libView.mode === "subjects") libView = { mode: "list", subject: null };
+  renderLibrary();
+};
+$("fFrom").onchange = () => { libFilters.from = $("fFrom").value; renderLibrary(); };
+$("fTo").onchange = () => { libFilters.to = $("fTo").value; renderLibrary(); };
+$("fStar").onchange = () => { libFilters.star = +$("fStar").value || 0; renderLibrary(); };
+$("fClear").onclick = () => {
+  libFilters = { q: "", star: 0, from: "", to: "" };
+  $("libQ").value = ""; $("fFrom").value = ""; $("fTo").value = ""; $("fStar").value = "0";
+  renderLibrary();
+};
+document.querySelectorAll(".lib-search .seg button").forEach(b => b.onclick = () => {
+  libViewMode = b.dataset.view;
+  localStorage.setItem("libViewMode", libViewMode);
+  document.querySelectorAll(".lib-search .seg button").forEach(x =>
+    x.classList.toggle("active", x.dataset.view === libViewMode));
+  if (libView.mode !== "subjects") libView.mode = libViewMode;
+  renderLibrary();
+});
+document.querySelectorAll(".lib-search .seg button").forEach(b =>
+  b.classList.toggle("active", b.dataset.view === libViewMode));
 
 function bindCards() {
   $("libGrid").querySelectorAll(".card").forEach(c => c.onclick = e => {
@@ -1196,11 +1634,11 @@ function bindCards() {
   });
 }
 
-async function loadLibrary() {
+async function loadLibrary(render = true) {
   const d = await api("/api/items");
   library = d.items;
   $("libCount").textContent = `共 ${library.length} 题`;
-  renderLibrary();
+  if (render) renderLibrary();
 }
 
 /* ---------- 去手写 / 清理 ---------- */
@@ -1334,6 +1772,11 @@ function renderSelected() {
       badge.textContent = on ? [...selected].indexOf(id) + 1 : "";
     }
   });
+  document.querySelectorAll("#libGrid .q-sel").forEach(b => {
+    const on = selected.has(b.dataset.id);
+    b.classList.toggle("on", on);
+    b.textContent = on ? [...selected].indexOf(b.dataset.id) + 1 : "";
+  });
   updateSelCount();
 }
 
@@ -1348,6 +1791,29 @@ function renderPvStars(n) {
 $("pvStarRow").querySelectorAll(".st").forEach(s => s.onclick = () => {
   const n = +s.dataset.n;
   renderPvStars(pvStar === n ? 0 : n);      // 再点同一星 -> 归零
+});
+$("pvStarClear").onclick = () => { renderPvStars(0); toast("难度已清零", "ok"); };
+
+/* ---------- 左右分隔条拖拽(有限度) ---------- */
+let splitDrag = null;
+$("pvSplit").addEventListener("pointerdown", e => {
+  splitDrag = { startX: e.clientX, startW: $("pvRight").offsetWidth };
+  $("pvSplit").classList.add("dragging");
+  $("pvSplit").setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+$("pvSplit").addEventListener("pointermove", e => {
+  if (!splitDrag) return;
+  const total = document.querySelector(".pv-body").clientWidth;
+  let w = splitDrag.startW - (e.clientX - splitDrag.startX);
+  const minW = 300, maxW = Math.max(minW, total - 300);   // 左侧至少留 300px
+  w = Math.max(minW, Math.min(maxW, w));
+  $("pvRight").style.width = w + "px";
+  pvResizeCv();
+});
+$("pvSplit").addEventListener("pointerup", () => {
+  splitDrag = null;
+  $("pvSplit").classList.remove("dragging");
 });
 function openPreview(it) {
   pvItem = it;
@@ -1367,6 +1833,8 @@ function openPreview(it) {
   $("pvMeta").textContent = (it.created || "") + (it.group ? " · 多块续接" : "");
   $("pvMeta").classList.toggle("fig-warn", !!it.fig_issue);
   $("pvMeta").textContent += it.fig_issue ? " · 图形未裁剪，请点「裁图」手动框选" : "";
+  $("pvTitleBar").textContent = `${it.code || it.id} · ${it.subject || ""} 题目详情`;
+  renderPvFigs(it);
   updateChapterDatalist($("pvSubject").value);
   updatePvToggle();
   $("prevMask").classList.add("show");
@@ -1405,8 +1873,53 @@ $("pvSave").onclick = async () => {
   } catch (err) { toast("保存失败: " + err.message, "err"); }
   btn.disabled = false; btn.textContent = "保存";
 };
-$("pvClose").onclick = () => $("prevMask").classList.remove("show");
+$("pvClose2").onclick = () => $("prevMask").classList.remove("show");
 $("pvSubject").onchange = () => updateChapterDatalist($("pvSubject").value);
+
+/* ---------- 图片附件(上传/删除/插入引用) ---------- */
+function renderPvFigs(it) {
+  const figs = it.figures || [];
+  $("pvFigList").innerHTML = figs.length ? figs.map(f => `
+    <div class="fig-item">
+      <img src="/files/${f.file}" loading="lazy">
+      <div class="fig-info"><b>[图${f.n}]</b> ${f.upload ? "上传" : "裁剪"}</div>
+      <div class="fig-ops">
+        <button data-ins="${f.n}">插入</button>
+        <button class="danger" data-del="${f.n}">删除</button>
+      </div>
+    </div>`).join("") : '<div class="hint">还没有图片，可用「裁图」或「上传图片」</div>';
+  $("pvFigList").querySelectorAll("[data-ins]").forEach(b => b.onclick = () => {
+    const tag = `[图${b.dataset.ins}]`;
+    const ta = $("pvNote");
+    const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+    ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(pos);
+    ta.focus();
+    toast(`已在识别内容插入 ${tag}`, "ok");
+  });
+  $("pvFigList").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    const n = b.dataset.del;
+    if (!confirm(`删除 [图${n}]？题干中若还引用它，渲染时会显示缺失提示`)) return;
+    try {
+      const d = await api(`/api/item/${it.id}/figure/${n}`, { method: "DELETE" });
+      it.figures = d.figures;
+      renderPvFigs(it);
+      toast(`已删除 [图${n}]`, "ok");
+    } catch (err) { toast("删除失败: " + err.message, "err"); }
+  });
+}
+$("pvUpload").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f || !pvItem) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const d = await api(`/api/item/${pvItem.id}/upload`, { method: "POST", body: fd });
+    pvItem.figures = d.figures;
+    renderPvFigs(pvItem);
+    toast(`已上传为 [图${d.n}]，可点「插入」引用`, "ok");
+  } catch (err) { toast("上传失败: " + err.message, "err"); }
+  e.target.value = "";
+};
 $("prevMask").onclick = e => { if (e.target === $("prevMask")) $("prevMask").classList.remove("show"); };
 
 /* ---------- 手动裁图: 在预览大图上框选图形区域 -> [图@x,y,w,h] ---------- */
@@ -1414,12 +1927,12 @@ let pvCropOn = false, pvDrag = null, pvRect = null, pvScale = 1;
 const pvcv = $("pvCv"), pvctx = pvcv.getContext("2d");
 
 function pvResizeCv() {
-  const im = $("pvImg"), wrap = $("pvImgWrap");
+  const im = $("pvImg"), wrap = $("pvLeft");
   const ir = im.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  // canvas 精确覆盖图片显示区域(含居中偏移), 保证坐标空间与图片一致
-  pvcv.style.left = (ir.left - wr.left) + "px";
-  pvcv.style.top = (ir.top - wr.top) + "px";
+  // canvas 精确覆盖图片显示区域(含居中偏移)
+  pvcv.style.left = (ir.left - wr.left + wrap.scrollLeft) + "px";
+  pvcv.style.top = (ir.top - wr.top + wrap.scrollTop) + "px";
   pvcv.style.width = ir.width + "px";
   pvcv.style.height = ir.height + "px";
   pvcv.width = Math.round(ir.width * dpr);
@@ -1588,10 +2101,74 @@ $("tplSave").onclick = async () => {
   btn.disabled = false; btn.textContent = "保存模板";
 };
 
+/* ---------- 设置页: AI 服务配置 ---------- */
+let AICFG = { key_set: false };
+
+function renderAiCfg() {
+  const ok = AICFG.key_set && AICFG.base_url;
+  $("aiConfigured").style.display = ok ? "" : "none";
+  $("aiForm").style.display = ok ? "none" : "";
+  $("aiModelName").textContent = AICFG.model || "（未填模型）";
+  $("aiKeyHint").textContent = AICFG.key_hint ? `· Key ${AICFG.key_hint}` : "";
+  $("aiBaseUrl").value = AICFG.base_url || "";
+  $("aiModel").value = AICFG.model || "";
+}
+
+async function loadAiCfg() {
+  try {
+    AICFG = await api("/api/ai/config");
+    const presets = AICFG.presets || {};
+    $("aiPreset").innerHTML = '<option value="">— 选择预设 —</option>' +
+      Object.entries(presets).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+    renderAiCfg();
+  } catch { /* 忽略 */ }
+}
+
+$("aiPreset").onchange = () => {
+  const p = ($("aiPreset").value && AICFG.presets) ? AICFG.presets[$("aiPreset").value] : null;
+  if (p) { $("aiBaseUrl").value = p.base_url; $("aiModel").value = p.model; }
+};
+$("aiEdit").onclick = () => {
+  $("aiConfigured").style.display = "none";
+  $("aiForm").style.display = "";
+  $("aiCancel").style.display = "";
+  $("aiKey").value = "";
+  $("aiKey").placeholder = "留空则保留原 Key";
+};
+$("aiCancel").onclick = () => { $("aiCancel").style.display = "none"; renderAiCfg(); };
+$("aiSave").onclick = async () => {
+  const url = $("aiBaseUrl").value.trim(), model = $("aiModel").value.trim(), key = $("aiKey").value.trim();
+  if (!url || !model) return toast("请填 API 地址和模型名", "err");
+  if (!key && !AICFG.key_set) return toast("请填 API Key", "err");
+  const btn = $("aiSave"); btn.disabled = true; btn.textContent = "保存中…";
+  try {
+    await api("/api/ai/config", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: url, model, key }) });
+    toast("已保存", "ok");
+    await loadAiCfg();
+  } catch (err) { toast("保存失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "保存";
+};
+async function testAi(btn) {
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "测试中…";
+  try {
+    const d = await api("/api/ai/test", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: "{}" });
+    toast(d.msg, "ok");
+  } catch (err) { toast(err.message, "err"); }
+  btn.disabled = false; btn.textContent = old;
+}
+$("aiTest").onclick = () => testAi($("aiTest"));
+$("aiTest2").onclick = () => testAi($("aiTest2"));
+
 /* ---------- 启动 ---------- */
 loadPages();
-loadLibrary();
 loadTpl();
+loadAiCfg();
+// 数据就绪后才定位到具体科目/题目, 避免中间态闪烁
+loadLibrary(false).then(() => applyRoute(location.pathname));
 window.addEventListener("resize", () => { if (img) renderCanvas(); });
 </script>
 </body>

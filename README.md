@@ -20,8 +20,8 @@
 |---|---|
 | 后端 | Python · FastAPI · Uvicorn |
 | 图像处理 | OpenCV · NumPy · Pillow（裁剪/坐标换算/去红笔/收边） |
-| PDF 排版 | Typst（0.15，PyPI 包）+ 本地字体（SimSun/SimHei/KaiTi/Times New Roman） |
-| AI 识别 | 智谱 GLM-4V-Flash（OpenAI 兼容接口，免费） |
+| PDF 排版 | Typst（0.15，PyPI 包）+ **mitex**（LaTeX 公式支持）+ 本地字体 |
+| AI 识别 | 智谱 GLM-4V-Flash / DeepSeek `deepseek-flash`（均支持图片，OpenAI 兼容接口，可在设置页切换） |
 | 前端 | 原生 HTML/CSS/JavaScript · Canvas 2D · Pointer Events（鼠标+触摸） |
 | 存储 | JSON 文件（无数据库）：错题库.json、页/、错题/ |
 
@@ -50,20 +50,29 @@ python tools/crop-tool/app.py
 
 ### 配置 AI（可选但强烈建议）
 
-> **维护提示**：AI 识别对接（智谱视觉大模型 API）正在维修/偶有不稳定，如遇识别失败或超时，请稍后重试或直接手动框选/裁图；不影响其他功能。
+> **维护提示**：AI 识别对接可能偶有不稳定，如遇识别失败或超时，请稍后重试或直接手动框选/裁图；不影响其他功能。
 
-创建 `.ai_config.json`（与 README 同目录）：
+启动后打开 **「④ 设置」** 页面填写，或在项目目录创建 `.ai_config.json`：
 
 ```json
 {
-  "key": "你的智谱 API Key",
-  "base_url": "https://open.bigmodel.cn/api/paas/v4",
-  "model": "glm-4v-flash"
+  "base_url": "https://api.deepseek.com/v1",
+  "model": "deepseek-flash",
+  "key": "你的 API Key"
 }
 ```
 
-- 申请地址：https://open.bigmodel.cn/（手机号注册，glm-4v-flash 免费）
-- 不配置也能用，但 AI 识别/自动拆题功能不可用
+设置页提供预设，一键填入地址与模型名：
+
+| 服务 | 地址 | 模型 | 说明 |
+|---|---|---|---|
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-flash` | 支持图片识别；已自动关闭思考（reasoning_effort=none）提速 |
+| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4v-flash` | 免费，速度快 |
+| 通义 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-vl-plus` | 备用 |
+
+设置页支持「测试连接」；已配置时直接显示模型名与 Key 掩码，点「修改配置」才能查看/编辑。
+
+**重要**：识别图片必须使用**支持图片输入**的模型；纯文本模型（如 `deepseek-chat`）会静默忽略图片，输出残缺内容。
 
 ## 使用流程
 
@@ -80,6 +89,7 @@ python tools/crop-tool/app.py
 ├── tools/crop-tool/
 │   ├── app.py                # FastAPI 后端（全部接口）
 │   └── static/index.html     # 单页前端
+├── typst-packages/           # 本地 Typst 包（mitex: LaTeX 公式 → Typst）
 ├── fonts/                    # 内置排版字体（宋体/黑体/楷体/Times）
 ├── start.bat / start.sh      # 一键启动
 ├── build.bat                 # PyInstaller 打包
@@ -98,6 +108,17 @@ code_prefix.json    编号前缀（MA/PH/CH/...）
 ```
 
 直接复制这些目录即可备份。排版字体内置在 `fonts/` 目录。
+
+## URL 直达
+
+| 地址 | 页面 |
+|---|---|
+| `/editor` | 整页框选 |
+| `/library` | 错题库（科目列表） |
+| `/library/数学` | 指定科目 |
+| `/item/MA0003` | 直接打开该题的全屏编辑窗口 |
+| `/paper` | 组卷 |
+| `/settings` | 设置（AI 服务配置） |
 
 ## 隐私说明
 

@@ -53,6 +53,8 @@ else:
 for d in (PAGES_DIR, ITEMS_DIR, TMP_DIR):
     d.mkdir(parents=True, exist_ok=True)
 FONTS_DIR = ROOT / "fonts"
+TYPST_PKG_DIR = ROOT / "typst-packages"          # 本地 Typst 包(mitex)
+TYPST_PKG_DIR.mkdir(parents=True, exist_ok=True)
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="错题收集工具")
@@ -578,6 +580,8 @@ def split_ai(payload: dict):
              "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
         "temperature": 0.1,
     }
+    if "deepseek" in (ai_config()["base_url"] or "").lower():
+        body["reasoning_effort"] = "none"   # 识别是感知任务, 关思考可提速约 40%
     req = urllib.request.Request(
         cfg["base_url"].rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode(),
@@ -648,8 +652,32 @@ _SUB = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 _SUP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
 
 
+def ce_to_latex(s):
+    """把 mhchem 化学式宏 \\ce{...} 转成普通 LaTeX(mitex 不支持 \\ce)。"""
+    def repl(m):
+        body = m.group(1)
+        body = re.sub(r"([A-Z][a-z]?)(\d+)", r"\1_{\2}", body)      # H2O -> H_{2}O
+        body = body.replace("->", " \\rightarrow ").replace("<-", " \\leftarrow ")
+        body = body.replace("=>", " \\Rightarrow ")
+        body = body.replace("↑", " \\uparrow ").replace("↓", " \\downarrow ")
+        return body
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r"\\ce\{((?:[^{}]|\{[^{}]*\})*)\}", repl, s)   # 支持一层嵌套
+    return s
+
+
+def latex_var(s):
+    """LaTeX 片段 -> 可放入 Typst 字符串 mi(\"...\") 的形式。"""
+    s = ce_to_latex(s)
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def latex_to_typst(s):
-    """把 OCR/AI 输出的公式片段转成 Typst 数学语法, 化学式用 mathrm 正体。"""
+    """把 OCR/AI 输出的公式片段转成 Typst 数学语法, 化学式用正体。"""
+    s = re.sub(r"\\ce\{([^{}]*)\}", r"\1", s)   # mhchem \ce{H2O} -> H2O
+    s = re.sub(r"\\pu\{([^{}]*)\}", r"\1", s)
     s = re.sub(r"[₀-₉]", lambda m: "_" + m.group(0).translate(_SUB), s)
     s = re.sub(r"[⁰-⁹]", lambda m: "^" + m.group(0).translate(_SUP), s)
     s = s.replace("⁻", "^(-)").replace("⁺", "^(+)")
@@ -732,6 +760,8 @@ def call_ai_vision(img_rgb):
              "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
         "temperature": 0.1,
     }
+    if "deepseek" in (ai_config()["base_url"] or "").lower():
+        body["reasoning_effort"] = "none"   # 识别是感知任务, 关思考可提速约 40%
     req = urllib.request.Request(
         ai_config()["base_url"].rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode(),
@@ -803,6 +833,7 @@ def paper_pdf(ids: str = ""):
     subjects = sorted({it.get("subject") or "" for it in items})
     lines = [
         '#set page(width: 185mm, height: 260mm, margin: (top: 2cm, bottom: 2cm, left: 2.2cm, right: 2.2cm), footer: context { align(center)[#counter(page).display()] })',
+        '#import "@preview/mitex:0.2.4": mi',                        # LaTeX 公式支持
         '#set text(font: ("Times New Roman", "SimSun"), size: 10.5pt, lang: "zh")',  # 英文 Times 新罗马 / 中文宋体
         '#set par(justify: true, leading: 0.95em, spacing: 0.95em)',  # 行距=段距=块距, 全局统一
         '#show heading: set text(font: "SimHei")',                    # 题型/大题标题: 黑体
@@ -871,7 +902,7 @@ def paper_pdf(ids: str = ""):
                     out = ""
                     for seg in re.split(r"(\$[^$]+\$)", s):
                         if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
-                            out += "$" + latex_to_typst(seg[1:-1]) + "$"
+                            out += '#mi("' + latex_var(seg[1:-1]) + '")'   # 交给 mitex 渲染
                         else:
                             out += md_inline(seg)
                     return out
@@ -1005,7 +1036,8 @@ def paper_pdf(ids: str = ""):
     typ_path.write_text("\n".join(lines), encoding="utf-8")
     try:
         typst.compile(typ_path, output=pdf_path,
-                      font_paths=[str(FONTS_DIR)], root="/")
+                      font_paths=[str(FONTS_DIR)], root="/",
+                      package_path=str(TYPST_PKG_DIR))
     except Exception as e:
         return JSONResponse({"ok": False,
                             "msg": "PDF生成失败: " + str(e)[:200]}, status_code=500)
@@ -1031,22 +1063,65 @@ def ai_config():
     return cfg
 
 
+AI_PRESETS = {
+    "deepseek": {"label": "DeepSeek 多模态（deepseek-flash · 推荐）",
+                 "base_url": "https://api.deepseek.com/v1", "model": "deepseek-flash"},
+    "zhipu": {"label": "智谱 GLM-4V-Flash（免费 · 备用）",
+              "base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4v-flash"},
+    "qwen": {"label": "通义 qwen-vl-plus（备用）",
+             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+             "model": "qwen-vl-plus"},
+}
+
+
 @app.get("/api/ai/config")
 def get_ai_config():
     cfg = ai_config()
+    key = cfg["key"] or ""
     return {"ok": True, "base_url": cfg["base_url"], "model": cfg["model"],
-            "key_set": bool(cfg["key"])}
+            "key_set": bool(key),
+            "key_hint": (key[:4] + "****" + key[-4:]) if len(key) > 10 else ("****" if key else ""),
+            "presets": AI_PRESETS}
 
 
 @app.post("/api/ai/config")
 def set_ai_config(payload: dict):
     cfg = ai_config()
     for k in ("base_url", "key", "model"):
-        if k in payload:
+        if k in payload and str(payload[k]).strip():
             cfg[k] = str(payload[k]).strip()
     AI_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
                               encoding="utf-8")
-    return {"ok": True, "key_set": bool(cfg["key"]), "model": cfg["model"]}
+    try:
+        os.chmod(AI_CONFIG_FILE, 0o600)
+    except Exception:
+        pass
+    return {"ok": True, "key_set": bool(cfg["key"]), "model": cfg["model"],
+            "base_url": cfg["base_url"]}
+
+
+@app.post("/api/ai/test")
+def test_ai_config(payload: dict = None):
+    """测试当前配置能否连通(发一个最小文本请求)。"""
+    cfg = ai_config()
+    if not cfg["key"] or not cfg["base_url"]:
+        return JSONResponse({"ok": False, "msg": "尚未配置 API 地址或 Key"}, status_code=400)
+    body = {"model": cfg["model"] or "glm-4v-flash",
+            "messages": [{"role": "user", "content": "回复 OK"}],
+            "max_tokens": 8}
+    req = urllib.request.Request(
+        cfg["base_url"].rstrip("/") + "/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + cfg["key"]})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.loads(r.read())
+        reply = d["choices"][0]["message"]["content"][:30]
+        return {"ok": True, "msg": f"连接成功（模型回复：{reply}）"}
+    except Exception as e:
+        return JSONResponse({"ok": False, "msg": "连接失败: " + str(e)[:160]},
+                            status_code=502)
 
 
 @app.post("/api/ocr/ai")
@@ -1106,6 +1181,57 @@ def update_item(item_id: str, payload: dict):
                 it["figures"] = payload["figures"]
             save_db(db)
             return {"ok": True, "item": it}
+    return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
+
+
+@app.post("/api/item/{item_id}/upload")
+async def upload_figure(item_id: str, file: UploadFile = File(...)):
+    """上传图片作为题目的图片附件, 返回编号 n。"""
+    db = load_db()
+    for it in db["items"]:
+        if it["id"] == item_id:
+            src = ROOT / it["image"]
+            if not src.exists():
+                return JSONResponse({"ok": False, "msg": "原图不存在"}, status_code=404)
+            data = await file.read()
+            if len(data) < 100:
+                return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
+            figs = it.get("figures") or []
+            n = max((f.get("n", 0) for f in figs), default=0) + 1
+            suffix = Path(file.filename or "img.jpg").suffix.lower()
+            if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
+                suffix = ".jpg"
+            fname = f"{item_id}_fig{n}{suffix}"
+            fdir = src.parent
+            (fdir / fname).write_bytes(data)
+            figs.append({"n": n, "file": str((fdir / fname).relative_to(ROOT)),
+                         "upload": True})
+            it["figures"] = figs
+            save_db(db)
+            return {"ok": True, "n": n, "figures": figs}
+    return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
+
+
+@app.delete("/api/item/{item_id}/figure/{n}")
+def delete_figure(item_id: str, n: int):
+    """删除题目的第 n 个图片附件（同时删文件）。"""
+    db = load_db()
+    for it in db["items"]:
+        if it["id"] == item_id:
+            figs, keep = it.get("figures") or [], []
+            removed = None
+            for f in figs:
+                if int(f.get("n", 0)) == n:
+                    removed = f
+                else:
+                    keep.append(f)
+            if removed:
+                p = ROOT / str(removed.get("file", ""))
+                if p.exists():
+                    p.unlink(missing_ok=True)
+            it["figures"] = keep
+            save_db(db)
+            return {"ok": True, "figures": keep}
     return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
 
 
@@ -1215,6 +1341,15 @@ class NoCacheStaticFiles(StaticFiles):
 
 app.mount("/files", StaticFiles(directory=ROOT), name="files")
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/{route:path}", response_class=HTMLResponse)
+def spa_route(route: str):
+    """前端路由回退: /library、/library/数学、/paper、/item/MA0003 等都返回同一个页面。"""
+    head = route.split("/")[0]
+    if head in ("api", "files", "static", "docs", "openapi.json", "redoc"):
+        return JSONResponse({"ok": False, "msg": "not found"}, status_code=404)
+    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":
