@@ -234,22 +234,25 @@ def save_db(db):
 
 
 def imread_u(path):
-    """Windows 下 cv2.imread 不支持中文路径(用 ANSI 编码), 改用二进制解码。"""
+    """读图: cv2.imread/np.fromfile 在 Windows 上不支持中文路径, 用 Python IO + imdecode。"""
     try:
-        data = np.fromfile(str(path), dtype=np.uint8)
+        with open(str(path), "rb") as f:               # Python IO 支持任意 Unicode 路径
+            data = np.frombuffer(f.read(), dtype=np.uint8)
         return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
-    except Exception:
+    except Exception as e:
+        log_ai("读图失败", f"{path}: {e}")
         return None
 
 
 def imwrite_u(path, img, ext=None, params=None) -> bool:
-    """Windows 下 cv2.imwrite 不支持中文路径, 改用二进制编码写盘。"""
+    """写图: cv2.imwrite/np.tofile 在 Windows 上不支持中文路径, 用 imencode + Python IO。"""
     ext = ext or (Path(str(path)).suffix or ".jpg")
     try:
         ok, buf = cv2.imencode(ext, img, params or [])
         if not ok:
             return False
-        buf.tofile(str(path))          # tofile 走 Python IO, 支持中文路径
+        with open(str(path), "wb") as f:
+            f.write(buf.tobytes())
         return True
     except Exception as e:
         log_ai("写图失败", f"{path}: {e}")
