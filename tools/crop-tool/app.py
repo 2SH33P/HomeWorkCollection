@@ -402,66 +402,72 @@ def put_tpl(payload: dict):
     return {"ok": True, "templates": clean}
 
 
-def _auto_ai_bg(saved_items):
-    """后台线程池并发 AI 识别, 更新备注(公式 LaTeX); 自动裁剪题内图形, 裁不好打 fig_issue 标记。"""
-    from concurrent.futures import ThreadPoolExecutor
-
-    def work(it):
-        f = ROOT / it["image"]
-        if not f.exists():
-            return
-        # A 策略: 已有识别内容则跳过 AI, 保护手动输入(想重新识别可点卡片「AI识别」)
+def ai_recognize_one(it, force=False):
+    """对单个已保存题目做 AI 识别 + 题内图形裁剪, 写库并返回更新后的 item; 失败返回 None。
+    force=False 时遵循 A 策略(已有识别内容则不覆盖, 保护手动输入)。"""
+    f = ROOT / it["image"]
+    if not f.exists():
+        return None
+    if not force:
         with DB_LOCK:
-            db0 = load_db()
-            cur = next((x for x in db0["items"] if x["id"] == it["id"]), None)
+            cur = next((x for x in load_db()["items"] if x["id"] == it["id"]), None)
             if cur and (cur.get("note") or "").strip():
-                return
-        try:
-            text = call_ai_vision(np.array(open_photo(f)))
-        except Exception:
-            return
-        if not text:
-            return
-        issue = False
-        figs = []
-        raws = re.findall(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", text)
-        if raws:
-            full = np.array(open_photo(f))
-            FH, FW = full.shape[:2]
-            for i, (fx, fy, fw, fh) in enumerate(raws, start=1):
-                x0 = max(0, int(int(fx) / 1000 * FW)); y0 = max(0, int(int(fy) / 1000 * FH))
-                w0 = min(FW - x0, max(20, int(int(fw) / 1000 * FW)))
-                h0 = min(FH - y0, max(20, int(int(fh) / 1000 * FH)))
-                fig = trim_blank(full[y0:y0 + h0, x0:x0 + w0])
-                if fig.shape[0] < 10 or fig.shape[1] < 10:
-                    issue = True              # 有图但没裁好 -> 红色标记
-                    continue
-                rel = f"{it['image'][:-4]}_fig{i}.jpg"
-                imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
-                figs.append({"n": i, "file": rel, "x": int(fx), "y": int(fy),
-                             "w": int(fw), "h": int(fh)})
-            cnt = [0]
+                return None
+    try:
+        text = call_ai_vision(np.array(open_photo(f)))
+    except Exception as e:
+        log_ai("识别失败", f"{it.get('code')}: {str(e)[:120]}")
+        return None
+    if not text:
+        return None
+    issue = False
+    figs = []
+    raws = re.findall(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", text)
+    if raws:
+        full = np.array(open_photo(f))
+        FH, FW = full.shape[:2]
+        for i, (fx, fy, fw, fh) in enumerate(raws, start=1):
+            x0 = max(0, int(int(fx) / 1000 * FW)); y0 = max(0, int(int(fy) / 1000 * FH))
+            w0 = min(FW - x0, max(20, int(int(fw) / 1000 * FW)))
+            h0 = min(FH - y0, max(20, int(int(fh) / 1000 * FH)))
+            fig = trim_blank(full[y0:y0 + h0, x0:x0 + w0])
+            if fig.shape[0] < 10 or fig.shape[1] < 10:
+                issue = True                  # 有图但没裁好 -> 红色标记
+                continue
+            rel = f"{it['image'][:-4]}_fig{i}.jpg"
+            imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
+            figs.append({"n": i, "file": rel, "x": int(fx), "y": int(fy),
+                         "w": int(fw), "h": int(fh)})
+        cnt = [0]
 
-            def _renum(m):
-                cnt[0] += 1
-                return f"[图{cnt[0]}]"
+        def _renum(m):
+            cnt[0] += 1
+            return f"[图{cnt[0]}]"
 
-            text = re.sub(r"\[图@\d+,\d+,\d+,\d+\]", _renum, text)   # 坐标->图N
-        with DB_LOCK:
-            db = load_db()
-            for x in db["items"]:
-                if x["id"] == it["id"]:
-                    if not (x.get("note") or "").strip():      # A: 只填充空内容
-                        x["note"] = text[:4000]
-                        if figs and not (x.get("figures") or []):
-                            x["figures"] = figs
-                    if issue and not (x.get("figures") or []):
-                        x["fig_issue"] = True
-                    break
-            save_db(db)
+        text = re.sub(r"\[图@\d+,\d+,\d+,\d+\]", _renum, text)   # 坐标->图N
+    updated = None
+    with DB_LOCK:
+        db = load_db()
+        for x in db["items"]:
+            if x["id"] == it["id"]:
+                if force or not (x.get("note") or "").strip():
+                    x["note"] = text[:4000]
+                    if figs:
+                        x["figures"] = figs
+                    x.pop("fig_issue", None)
+                if issue and not (x.get("figures") or []):
+                    x["fig_issue"] = True
+                updated = dict(x)
+                break
+        save_db(db)
+    return updated
 
+
+def _auto_ai_bg(saved_items):
+    """后台线程池并发 AI 识别(A 策略: 已有内容不覆盖)。"""
+    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=3) as ex:
-        list(ex.map(work, saved_items))
+        list(ex.map(lambda it: ai_recognize_one(it, force=False), saved_items))
 
 
 @app.post("/api/crop/preview")
@@ -1593,6 +1599,30 @@ def ocr_ai(payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "msg": "AI 识别失败: " + str(e)[:200]},
                             status_code=502)
+
+
+@app.post("/api/item/{item_id}/ai")
+def item_reai(item_id: str, payload: dict = None):
+    """对已保存的题目重新 AI 识别(force=True 覆盖识别内容) + 重新裁剪题内图形。"""
+    db = load_db()
+    it = next((x for x in db["items"] if x["id"] == item_id), None)
+    if not it:
+        return JSONResponse({"ok": False, "msg": "题目不存在"}, status_code=404)
+    if not it.get("image"):
+        return JSONResponse({"ok": False, "msg": "该题没有图片（手动添加），无法识别"},
+                            status_code=400)
+    if not ai_config()["key"]:
+        return JSONResponse({"ok": False, "msg": "未配置 AI Key，请到「设置」页配置"},
+                            status_code=400)
+    if not (ROOT / it["image"]).exists():
+        return JSONResponse({"ok": False, "msg": "图片文件不存在"}, status_code=404)
+    force = bool((payload or {}).get("force", True))
+    upd = ai_recognize_one(it, force=force)
+    if upd is None:
+        return JSONResponse({"ok": False, "msg": "AI 未返回内容（或已有内容且未强制覆盖）"},
+                            status_code=502)
+    log_ai("重新识别", f"{upd.get('code')} 图片={it['image']}")
+    return {"ok": True, "item": upd}
 
 
 @app.get("/api/items")
