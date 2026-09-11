@@ -30,7 +30,7 @@ python -m venv .venv
 
 :deps
 ".venv\Scripts\python.exe" -m pip install -q --upgrade pip
-".venv\Scripts\python.exe" -m pip install -q fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy
+".venv\Scripts\python.exe" -m pip install -q fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
 if errorlevel 1 goto deps_fail
 
 :run
