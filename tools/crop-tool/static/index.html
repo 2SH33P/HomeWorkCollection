@@ -438,6 +438,14 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .list-top { display: flex; align-items: center; justify-content: space-between;
             gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 /* 题目列表行(默认折叠) */
+.subj-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--elev);
+              border: 1px solid var(--sep); border-radius: 999px; padding: 5px 6px 5px 13px;
+              font-size: 13px; color: var(--t1); }
+.subj-del { border: none; background: transparent; color: var(--t3); cursor: pointer;
+            width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; padding: 0; }
+.subj-del:hover { background: rgba(255,59,48,.14); color: var(--danger); }
+.subj-del .ic { width: 11px; height: 11px; }
 .q-ops .q-ai { color: #248a3d; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
 .q-ops .q-ai .ic { width: 13px; height: 13px; }
 .q-row { background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow);
@@ -954,6 +962,20 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
     </div>
 
     <div class="card" style="max-width:680px;margin-top:14px">
+      <h3 style="margin-bottom:6px">科目管理</h3>
+      <p class="hint" style="line-height:1.8;margin-bottom:12px">
+        增删科目后，错题库按科目分类、编号前缀、大题模板都会同步更新。<br>
+        删除科目时，该科目下的题目<b>不会删除</b>，会归入「其他」。
+      </p>
+      <div id="subjList" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+      <div class="actions" style="align-items:center">
+        <input type="text" id="newSubj" placeholder="新科目名，如 信息技术" style="flex:1;min-width:140px;max-width:260px"
+               autocomplete="off">
+        <button class="btn" id="addSubjBtn"><svg class="ic"><use href="#ic-plus"/></svg><span>添加科目</span></button>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:680px;margin-top:14px">
       <h3 style="margin-bottom:6px">数据导入导出</h3>
       <p class="hint" style="line-height:1.8;margin-bottom:12px">
         导出为 <b>ZIP 完整包</b>（含全部错题、图片、模板与编号设置），可直接用于备份或换电脑迁移。<br>
@@ -1128,16 +1150,43 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 
 <script>
 const $ = id => document.getElementById(id);
-const SUBJECTS = ["数学", "物理", "化学", "生物", "英语", "语文", "其他"];
+let SUBJECTS = ["数学", "物理", "化学", "生物", "英语", "语文", "政治", "历史", "地理", "其他"];
 const REASONS = ["概念不清", "计算失误", "审题错误", "方法不当", "记忆不牢", "其他"];  // 预留(界面已移除错因)
 
 let pages = [], curPage = null, img = null, imgW = 0, imgH = 0, scale = 1;
 let boxes = [], drag = null, selected = new Set(), library = [];
-// 初始化科目下拉
-(() => {
-  const sel = $("pvSubject");
-  sel.innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("") + "<option>未分类</option>";
-})();
+// 科目下拉统一渲染(科目可在「设置」页增删)
+function subjOptions(withUnc = true, keepValue = true) {
+  return SUBJECTS.map(s => `<option>${esc(s)}</option>`).join("") + (withUnc ? "<option>未分类</option>" : "");
+}
+
+function fillSelect(el, withUnc = true) {
+  if (!el) return;
+  const v = el.value;
+  el.innerHTML = subjOptions(withUnc);
+  if (keepVal(el, v)) el.value = v;
+}
+
+function keepVal(el, v) {
+  return v && [...el.options].some(o => o.value === v);
+}
+
+function renderSubjectSelects() {
+  fillSelect($("pvSubject"));
+  fillSelect($("curSubj"));
+  fillSelect($("tplSubject"));
+}
+
+// 初始化
+(() => { fillSelect($("pvSubject")); })();
+
+async function loadSubjects() {
+  try {
+    const d = await api("/api/subjects");
+    if (d.subjects && d.subjects.length) SUBJECTS = d.subjects;
+    renderSubjectSelects();
+  } catch (e) { /* 保持默认科目 */ }
+}
 
 /* ---------- toast (silk: 成功绿 / 错误红) ---------- */
 function toast(msg, kind = "") {
@@ -1181,7 +1230,7 @@ function switchTab(name) {
     else renderLibrary();                    // 已有数据: 直接渲染(否则切过来是空的)
   }
   if (name === "paper") { updateSelCount(); renderPaperList(); renderTplList(); }
-  if (name === "settings") loadLogs();
+  if (name === "settings") { loadLogs(); renderSubjList(); }
   if (name === "editor" && img) {                      // 切回框选页: 恢复裁题模式 + 重算尺寸
     if (!pageEdit && !cropMode) enterPageEdit();
     requestAnimationFrame(() => renderCanvas());
@@ -3108,6 +3157,50 @@ function renderAiCfg() {
   $("aiProofread").checked = !!AICFG.proofread;
 }
 
+/* ---------- 科目管理 ---------- */
+function renderSubjList() {
+  const box = $("subjList");
+  if (!box) return;
+  box.innerHTML = SUBJECTS.map(s => `
+    <span class="subj-chip" data-s="${esc(s)}">${esc(s)}<button class="subj-del" data-s="${esc(s)}"
+      title="删除科目"><svg class="ic"><use href="#ic-x"/></svg></button></span>`).join("")
+    || '<span class="hint">暂无科目</span>';
+  box.querySelectorAll(".subj-del").forEach(b => b.onclick = async () => {
+    const name = b.dataset.s;
+    const cnt = library.filter(it => (it.subject || "未分类") === name).length;
+    const msg = cnt ? `「${name}」下有 ${cnt} 道题，删除科目后这些题会归入「其他」（题目与图片不会删除）。继续？`
+                    : `删除科目「${name}」？`;
+    if (!confirm(msg)) return;
+    await saveSubjects(SUBJECTS.filter(x => x !== name));
+  });
+}
+
+async function saveSubjects(list) {
+  try {
+    const d = await api("/api/subjects", { method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subjects: list }) });
+    SUBJECTS = d.subjects;
+    renderSubjectSelects();
+    renderSubjList();
+    const msg = d.moved ? `已保存科目设置，${d.moved} 道题归入「其他」` : "科目已更新";
+    toast(msg, "ok");
+    loadLibrary();
+  } catch (err) { toast("保存失败: " + err.message, "err"); }
+}
+
+$("addSubjBtn").onclick = () => {
+  const inp = $("newSubj");
+  const name = (inp.value || "").trim();
+  if (!name) return toast("请输入科目名称", "err");
+  if (SUBJECTS.includes(name)) return toast("该科目已存在", "err");
+  const maxLen = 6;
+  if (name.length > maxLen) return toast(`科目名不要超过 ${maxLen} 个字`, "err");
+  inp.value = "";
+  saveSubjects([...SUBJECTS, name]);
+};
+$("newSubj").addEventListener("keydown", e => { if (e.key === "Enter") $("addSubjBtn").click(); });
+
 async function loadAiCfg() {
   try {
     AICFG = await api("/api/ai/config");
@@ -3143,6 +3236,7 @@ $("aiSave").onclick = async () => {
                              proofread: $("aiProofread").checked }) });
     toast("已保存", "ok");
     await loadAiCfg();
+loadSubjects();
   } catch (err) { toast("保存失败: " + err.message, "err"); }
   btn.disabled = false; btn.textContent = "保存";
 };

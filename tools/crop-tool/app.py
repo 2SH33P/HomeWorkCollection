@@ -39,15 +39,61 @@ PAGES_DIR = ROOT / "pages"                           # 整页照片
 ITEMS_DIR = ROOT / "items"                           # 裁剪出的错题图
 DB_FILE = ROOT / "library.json"
 
-# 科目 -> 英文目录名(界面仍显示中文)
+# 科目 -> 英文目录名(界面仍显示中文)。内置科目用固定英文名, 新增科目自动分配 customN
 SUBJ_DIRNAME = {"数学": "math", "物理": "physics", "化学": "chemistry",
                 "生物": "biology", "英语": "english", "语文": "chinese",
                 "政治": "politics", "历史": "history", "地理": "geography",
                 "其他": "other", "未分类": "uncategorized"}
+DEFAULT_SUBJECTS = list(SUBJ_DIRNAME.keys())[:10]      # 到「其他」为止
+SUBJ_FILE = ROOT / "subjects.json"
+_SUBJ_CACHE = None
+
+
+def load_subjects():
+    """返回 (科目列表, 科目->目录名 映射)。可在「设置」页增删。"""
+    global _SUBJ_CACHE
+    if _SUBJ_CACHE is None:
+        dirs, lst = dict(SUBJ_DIRNAME), list(DEFAULT_SUBJECTS)
+        if SUBJ_FILE.exists():
+            try:
+                d = json.loads(SUBJ_FILE.read_text("utf-8"))
+                if isinstance(d.get("list"), list) and d["list"]:
+                    lst = [str(x).strip() for x in d["list"] if str(x).strip()]
+                if isinstance(d.get("dirs"), dict):
+                    dirs.update({str(k): str(v) for k, v in d["dirs"].items()})
+            except Exception:
+                pass
+        for extra in ("其他", "未分类"):                # 兜底科目始终存在
+            if extra not in lst:
+                lst.append(extra)
+        _SUBJ_CACHE = (lst, dirs)
+    return _SUBJ_CACHE[0], dict(_SUBJ_CACHE[1])
+
+
+def save_subjects(lst, dirs):
+    global _SUBJ_CACHE
+    _SUBJ_CACHE = None
+    SUBJ_FILE.write_text(json.dumps({"list": lst, "dirs": dirs},
+                                    ensure_ascii=False, indent=2), "utf-8")
 
 
 def subj_dirname(subject):
-    return SUBJ_DIRNAME.get(subject or "", "other")
+    """科目 -> 目录名(英文)。未知科目自动分配 customN 并持久化。"""
+    subject = (subject or "").strip() or "其他"
+    lst, dirs = load_subjects()
+    if subject in dirs:
+        return dirs[subject]
+    used = set(dirs.values())
+    i = 1
+    while f"custom{i}" in used:
+        i += 1
+    dirs[subject] = f"custom{i}"
+    if subject not in lst:
+        lst.append(subject)
+    save_subjects(lst, dirs)
+    return dirs[subject]
+
+
 TMP_DIR = ROOT / ".tmp"                            # 清理预览临时文件
 if getattr(sys, "frozen", False):
     STATIC_DIR = Path(getattr(sys, "_MEIPASS", ROOT)) / "static"
@@ -195,6 +241,53 @@ def load_prefix():
         except Exception:
             pass
     return p
+
+
+@app.get("/api/subjects")
+def get_subjects():
+    lst, dirs = load_subjects()
+    return {"ok": True, "subjects": lst, "dirs": dirs, "prefixes": load_prefix()}
+
+
+@app.put("/api/subjects")
+def put_subjects(payload: dict):
+    """增删科目。被删科目下的题目归入「其他」(不删除题目和图片)。"""
+    new = [str(x).strip() for x in (payload.get("subjects") or []) if str(x).strip()]
+    if not new:
+        return JSONResponse({"ok": False, "msg": "科目不能为空"}, status_code=400)
+    if len(set(new)) != len(new):
+        return JSONResponse({"ok": False, "msg": "科目名称重复"}, status_code=400)
+    lst0, dirs0 = load_subjects()
+    removed = [x for x in lst0 if x not in new]
+    dirs, used = {}, set()
+    for s in new:                                        # 已存在的科目保留原目录名
+        if dirs0.get(s) and dirs0[s] not in used:
+            dirs[s] = dirs0[s]; used.add(dirs0[s])
+    i = 1
+    for s in new:                                        # 新科目分配 customN
+        if s not in dirs:
+            while f"custom{i}" in used:
+                i += 1
+            dirs[s] = f"custom{i}"; used.add(f"custom{i}")
+    save_subjects(new, dirs)
+    # 新科目补编号前缀(默认 OT, 可在设置页改)
+    pfx, changed = load_prefix(), False
+    for s in new:
+        if not pfx.get(s):
+            pfx[s] = "OT"; changed = True
+    if changed:
+        PREFIX_FILE.write_text(json.dumps(pfx, ensure_ascii=False, indent=2), "utf-8")
+    # 被删科目的题目 -> 其他
+    moved = 0
+    if removed:
+        with DB_LOCK:
+            db = load_db()
+            for it in db["items"]:
+                if it.get("subject") in removed:
+                    it["subject"] = "其他"; moved += 1
+            if moved:
+                save_db(db)
+    return {"ok": True, "subjects": new, "dirs": dirs, "removed": removed, "moved": moved}
 
 
 @app.get("/api/prefix")
@@ -1017,7 +1110,7 @@ def call_ai_vision(img_rgb):
     _, buf = cv2.imencode(".jpg", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR),
                           [cv2.IMWRITE_JPEG_QUALITY, 90])
     b64 = base64.b64encode(buf).decode()
-    prompt = '你是试卷题目识别工具。识别图片中的题目，注意：\n1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n3. 忽略与题目无关的内容：专题/章节标题、知识点标签、出题人/审题人署名、页码、页眉页脚、水印、练习册名称等，只保留题目本身的题干和选项；\n4. 第一行输出【题干】，后跟题干文字；\n5. 不要识别/输出答案：题干括号中的答案如（A）（D C）、选项后的对勾√×、答案行等一律忽略，无论括号是否闭合；\n6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / D．选项内容（用全角句点．）；\n7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界（含图形外框线），不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，如 [图@620,280,240,180]，没有图形不要加。\n输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n只输出识别结果，不要解释。'
+    prompt = '你是试卷题目识别工具。识别图片中的题目，注意：\n1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n3. 忽略与题目无关的内容：专题/章节标题、知识点标签、出题人/审题人署名、页码、页眉页脚、水印、练习册名称等，只保留题目本身的题干和选项；\n4. 第一行输出【题干】，后跟题干文字；\n5. 只输出题干与选项本身。绝对不要输出答案、解析、点评、解题过程、方法总结、易错点等任何附加内容(图片中即使有也全部忽略)：题干括号中的答案如（A）（D C）、选项后的对勾√×、答案行、答案解析段落一律忽略，无论括号是否闭合；\n6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / D．选项内容（用全角句点．）；\n7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界（含图形外框线），不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，如 [图@620,280,240,180]，没有图形不要加。\n输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n只输出识别结果，不要解释。'
     body = {
         "model": ai_config()["model"] or "glm-4v-flash",
         "messages": [{"role": "user", "content": [
@@ -1052,7 +1145,10 @@ def call_ai_vision(img_rgb):
 
 
 def clean_ai_text(text):
-    """AI 识别后处理: 去题干行首题号、删答案、拆分一行多选项、清理残留标记。"""
+    """AI 识别后处理: 去题干行首题号、删答案与解析、拆分一行多选项、清理残留标记。"""
+    # 0. AI 偶尔会附带答案/解析段落 -> 从标记处起到结尾整段丢弃
+    text = re.split(r"^\s*【\s*(?:答案|解析|解答|点评|分析|说明|方法总结)\s*】",
+                    text, maxsplit=1, flags=re.M)[0].rstrip()
     # 1. 去题干行首题号(1. 1、① 第1题), 小问(1)(2)保留
     lines = text.split("\n")
     for i, ln in enumerate(lines):
@@ -1198,17 +1294,21 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
          if header.strip() else '  header: none,'),
         ')',
         '#import "@preview/mitex:0.2.4": mi',                        # LaTeX 公式支持
-        '#set text(font: ("Times New Roman", "SimSun"), size: 10.5pt, lang: "zh")',  # 英文 Times 新罗马 / 中文宋体
+        '#let F_LATIN = "Times New Roman"',                          # 西文/数字: 保留真粗体与真斜体
+        '#let F_SONG = (F_LATIN, "SimSun")',                         # 正文: 中文宋体
+        '#let F_HEI = (F_LATIN, "SimHei")',                          # 强调/标题: 中文黑体
+        '#let F_KAI = (F_LATIN, "KaiTi")',                           # 斜体: 中文楷体                        # LaTeX 公式支持
+        '#set text(font: F_SONG, size: 10.5pt, lang: "zh")',          # 英文 Times 新罗马 / 中文宋体
         '#set par(justify: true, leading: 0.95em, spacing: 0.95em)',  # 行距=段距=块距, 全局统一
-        '#show heading: set text(font: "SimHei", size: 12pt)',         # 大题标题: 小四黑体
+        '#show heading: set text(font: F_HEI, size: 12pt)',           # 大题标题: 小四黑体(西文 Times-Bold)
         '#show heading: set par(leading: 0.7em)',
         '#show heading: set block(spacing: 0.95em)',
-        '#show emph: set text(font: "KaiTi")',                        # *斜体* -> 楷体
-        '#show strong: set text(font: "SimHei")',                     # **粗体** -> 黑体
+        '#show emph: set text(font: F_KAI)',                          # *斜体*: 中文楷体 / 西文 Times-Italic(不写 style, 否则西文退化为正体)
+        '#show strong: set text(font: F_HEI, weight: "bold")',        # **粗体**: 中文黑体 / 西文 Times-Bold
         '#set block(spacing: 0.95em)',
         # ---- 卷头(可自定义): 三号标题 / 二号黑体科目 / 五号说明 ----
-        f'#align(center)[#text(size: 16pt, font: "SimHei")[{typ_esc(title.strip() or "错题重组试卷")}]]',
-        f'#align(center)[#text(size: 22pt, font: "SimHei", weight: "bold")[{typ_esc(subject_line.strip() or (subjects[0] if len(subjects) == 1 else " ".join(subjects)))}]]',
+        f'#align(center)[#text(size: 16pt, font: F_HEI)[{typ_esc(title.strip() or "错题重组试卷")}]]',
+        f'#align(center)[#text(size: 22pt, font: F_HEI, weight: "bold")[{typ_esc(subject_line.strip() or (subjects[0] if len(subjects) == 1 else " ".join(subjects)))}]]',
         '#v(0.45cm)',
     ]
     # 注意事项(可自定义, 首行黑体小四, 条目五号)
@@ -1217,7 +1317,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         if not ln.strip():
             continue
         if i == 0:
-            lines.append(f'#text(font: "SimHei", size: 12pt)[{typ_esc(ln)}]')
+            lines.append(f'#text(font: F_HEI, size: 12pt)[{typ_esc(ln)}]')
         else:
             lines.append(f'#text(size: 10.5pt)[{typ_esc(ln)}]')
     lines.append('#v(0.45cm)')
@@ -1229,7 +1329,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         for it in gitems:
             g = it.get("group") or ""
             if g and g == prev_g:
-                lines.append('#text(font: "KaiTi", size: 10.5pt)[(续)] \\')
+                lines.append('#text(font: F_KAI, size: 10.5pt)[(续)] \\')
             else:
                 n += 1
                 lines.append(f"{n}．")               # 题号顶格, 题干接同一行
@@ -1410,7 +1510,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
     if attach in ("answer", "analysis", "both"):
         lines.append("#pagebreak()")
         title = {"answer": "参考答案", "analysis": "答案与解析", "both": "参考答案与解析"}[attach]
-        lines.append(f'#align(center)[#text(size: 14pt, font: "SimHei")[{title}]]')
+        lines.append(f'#align(center)[#text(size: 14pt, font: F_HEI)[{title}]]')
         lines.append("#v(0.4cm)")
         has_content = [False]
         for num in sorted(ordered):
@@ -1429,7 +1529,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
             has_content[0] = True
             lines.append(f"**{num}．**")
             for label, content, b in parts:
-                lines.append(f'#text(font: "SimHei")[{label}：]')
+                lines.append(f'#text(font: F_HEI)[{label}：]')
                 render_simple(content, b, lines)
             lines.append("#v(0.3cm)")
         if not has_content[0]:
@@ -1438,7 +1538,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
     # ---- 文末: 题号与编号对照页 ----
     if index == "1" or index == "true":
         lines.append("#pagebreak()")
-        lines.append('#align(center)[#text(size: 14pt, font: "SimHei")[题目编号对照]]')
+        lines.append('#align(center)[#text(size: 14pt, font: F_HEI)[题目编号对照]]')
         lines.append("#v(0.4cm)")
         for num in sorted(ordered):
             b = ordered[num][0]

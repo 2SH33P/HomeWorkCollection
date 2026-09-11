@@ -27,3 +27,4 @@ tests/
 .DS_Store
 Thumbs.db
 .venv/
+subjects.json
