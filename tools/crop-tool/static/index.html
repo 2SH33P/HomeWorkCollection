@@ -363,44 +363,17 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* AI 框题: 保留模式操作条 */
+.keep-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            padding: 8px 12px; margin: 0 0 8px; border-radius: var(--r-md);
+            background: color-mix(in srgb, var(--accent) 10%, var(--card));
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.keep-bar .kb-hint { font-size: 13px; color: var(--t1); }
+.keep-bar .btn-sm { height: 32px; padding: 0 12px; }
+
 /* 原图取景(核对/修正裁剪) */
 #rfPrev { display: block; margin: 0 auto; background: #fff; border-radius: 10px;
           box-shadow: var(--shadow); touch-action: none; cursor: move; max-width: 100%; }
-
-/* AI 框题: 选择保留面板(左列表 + 右大图可调) */
-.ais-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 16px 14px; gap: 10px; }
-.ais-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ais-bar .btn-sm { height: 30px; padding: 0 10px; }
-.ais-bar .chk { min-height: 30px; font-size: 13px; }
-.ais-main { flex: 1; min-height: 0; display: flex; gap: 12px; }
-.ais-list { flex: 1 1 44%; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
-            -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-right: 2px; }
-.ais-item { display: flex; gap: 9px; align-items: center; padding: 7px 9px; border: 1.5px solid var(--sep);
-            border-radius: 10px; background: var(--card); cursor: pointer; opacity: .5;
-            transition: opacity .18s var(--motion), border-color .18s, box-shadow .18s, transform .12s; }
-.ais-item.on { opacity: 1; }
-.ais-item.focus { border-color: var(--accent); box-shadow: 0 1px 8px rgba(0,122,255,.22); }
-.ais-item canvas { width: auto; height: auto; background: #fff; border-radius: 8px; flex: none;
-                   box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.ais-item .ais-meta { min-width: 0; font-size: 12px; color: var(--t3); line-height: 1.55; }
-.ais-item .ais-meta b { display: block; color: var(--t1); font-size: 13px; margin-bottom: 2px; }
-.ais-item .ais-keep { margin-left: auto; font-size: 18px; color: var(--t3); flex: none; }
-.ais-item.on .ais-keep { color: var(--success); }
-.ais-side { flex: 1 1 56%; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.ais-side-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ais-side-head .btn-sm { height: 30px; padding: 0 10px; }
-#aisPrev { width: auto; height: auto; max-width: 100%; display: block; background: #fff; border-radius: 10px; flex: none;
-           box-shadow: var(--shadow); touch-action: none; cursor: move; }
-.ais-fields { display: flex; gap: 8px; flex-wrap: wrap; }
-.ais-fields label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--t3); }
-.ais-fields input { width: 68px; padding: 4px 6px; font-size: 13px; }
-.ais-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; flex: none;
-            border-top: 1px solid var(--sep); }
-@media (max-width: 760px) {
-  .ais-main { flex-direction: column; }
-  .ais-list { flex: none; max-height: 34vh; }
-  .ais-item canvas { }
-}
 
 /* 自动组卷面板(精简版) */
 .auto-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
@@ -938,6 +911,14 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <button class="btn ghost btn-sm" id="pageEditDone"><svg class="ic"><use href="#ic-check"/></svg><span>完成</span></button>
           </div>
         </div>
+        <div class="keep-bar" id="keepBar" style="display:none">
+          <span class="kb-hint" id="kbHint">保留模式：点框切换保留（奇数次保留 · 偶数次不保留）</span>
+          <span style="flex:1"></span>
+          <button class="btn ghost btn-sm" id="kbAll">全保留</button>
+          <button class="btn ghost btn-sm" id="kbNone">全不保留</button>
+          <button class="btn ghost btn-sm" id="kbCancel">取消</button>
+          <button class="btn btn-sm" id="kbDone"><svg class="ic"><use href="#ic-check"/></svg><span>选好了</span></button>
+        </div>
         <canvas id="cv"></canvas>
       </div>
       <div class="side">
@@ -1319,47 +1300,6 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
     <div class="ais-foot">
       <button class="btn ghost" id="rfCancel">取消</button>
       <button class="btn" id="rfApply">按此框重新裁剪</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal-mask full" id="aiSplitMask">
-  <div class="bp-card" style="width:min(1040px,100%)">
-    <div class="bp-head">
-      <b>AI 框题结果 —— 勾选保留，并可拖动微调</b>
-      <button id="aisClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
-    </div>
-    <div class="ais-body">
-      <div class="ais-bar">
-        <span class="hint" id="aisCount">共 0 个</span>
-        <button class="btn ghost btn-sm" id="aisAll">全选</button>
-        <button class="btn ghost btn-sm" id="aisNone">全不选</button>
-        <span style="flex:1"></span>
-        <label class="chk" id="aisModeWrap"><input type="checkbox" id="aisAppend">追加到现有框</label>
-      </div>
-      <div class="ais-main">
-        <div class="ais-list" id="aisList"></div>
-        <div class="ais-side">
-          <div class="ais-side-head">
-            <b id="aisFocusTitle">第 1 个</b>
-            <span class="hint" id="aisFocusXY"></span>
-            <span style="flex:1"></span>
-            <button class="btn ghost btn-sm" id="aisFocusToggle">保留此项</button>
-          </div>
-          <canvas id="aisPrev"></canvas>
-          <div class="ais-fields">
-            <label>x<input type="number" id="aisX"></label>
-            <label>y<input type="number" id="aisY"></label>
-            <label>w<input type="number" id="aisW"></label>
-            <label>h<input type="number" id="aisH"></label>
-          </div>
-          <div class="hint">在大图上拖动方框可移动，拖边/角可改大小；也可直接改上面的数值。改动实时体现到左边缩略图。</div>
-        </div>
-      </div>
-    </div>
-    <div class="ais-foot">
-      <button class="btn ghost" id="aisCancel">取消</button>
-      <button class="btn" id="aisApply">保留选中的 0 个</button>
     </div>
   </div>
 </div>
@@ -1758,6 +1698,31 @@ function renderCanvas() {
       ctx.fill(); ctx.stroke();
     });
   });
+  // AI 保留模式: 保留=蓝色实线+勾, 不保留=灰色虚线+叉
+  if (aiKeepMode) {
+    boxes.forEach(function (b) {
+      if (!b._ai) return;
+      const bx = b.x / scale, by = b.y / scale, bw = b.w / scale, bh = b.h / scale;
+      ctx.save();
+      if (b._keep) {
+        ctx.fillStyle = "rgba(0,122,255,.16)"; ctx.strokeStyle = "#007AFF";
+        ctx.lineWidth = 3; ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = "rgba(120,120,128,.14)"; ctx.strokeStyle = "rgba(120,120,128,.9)";
+        ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
+      }
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = b._keep ? "#007AFF" : "rgba(120,120,128,.95)";
+      ctx.beginPath(); ctx.arc(bx + 14, by + 14, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(b._keep ? "✓" : "✕", bx + 14, by + 15);
+      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    });
+  }
   if (cropMode) {                        // 裁图模式: 红色题框 + 蓝色图形框
     const bx = cropMode.x / scale, by = cropMode.y / scale;
     const bw = cropMode.w / scale, bh = cropMode.h / scale;
@@ -1867,6 +1832,16 @@ function cvDown(e) {
     else { cropDrag = { mode: "new", startX: p.x, startY: p.y }; cropRect = null; }
     return;
   }
+  if (aiKeepMode) {            // 保留模式: 只处理 AI 框的拖动/点选, 不影响其他
+    const hit = hitTest(p);
+    if (hit) {
+      drag = hit.mode === "resize"
+        ? { mode: "resize", b: hit.b, edge: hit.edge, startX: p.x, startY: p.y, moved: false }
+        : { mode: "move", boxId: hit.b.id, offX: hit.offX, offY: hit.offY,
+            startX: p.x, startY: p.y, moved: false };
+    }
+    return;
+  }
   if (pageEdit && cropTool === "edit") {          // 编辑模式: 点框弹悬浮编辑窗
     const hit = hitTest(p);
     if (hit) { activeBoxId = hit.b.id; openBoxPop(hit.b); renderCanvas(); }
@@ -1946,6 +1921,20 @@ function cvUp(e) {
   }
   if (cropMode) {                                        // 裁图模式: 结束图形框拖拽
     cropDrag = null;
+    return;
+  }
+  if (aiKeepMode) {                          // 保留模式: 未拖动 = 点选 -> 切换保留状态
+    if (drag && !drag.moved && drag.boxId) {
+      const b = boxes.find(function (x) { return x.id === drag.boxId; });
+      if (b && b._ai) {                       // 奇数次=保留, 偶数次=不保留
+        b._keep = !b._keep;
+        renderCanvas(); updateKeepBar();
+        drag = null;
+        return;
+      }
+    }
+    drag = null;
+    saveBoxes();
     return;
   }
   if (pageEdit && cropTool === "frame" && drag && drag.mode !== "new") {
@@ -2554,249 +2543,72 @@ $("rfApply").onclick = async function () {
   btn.disabled = false; btn.textContent = "按此框重新裁剪";
 };
 
-/* AI 自动框题: 先勾选要保留的框(可在右侧大图拖动微调), 再填入 */
-let aiProposed = [], aiSplitBefore = null, aiFocus = 0;
+/* AI 自动框题: 框出后进入「保留模式」, 在画布上点框切换保留, 点「选好了」才落地 */
+let aiKeepMode = false, aiKeepBefore = null;
 
-function openAiSplitPicker(list, before) {
-  aiProposed = list.map(function (b, i) {
-    return { _on: false, x: b.x, y: b.y, w: b.w, h: b.h };
-  });
-  aiSplitBefore = before;
-  aiFocus = 0;
-  const hasExisting = boxes.length > 0;
-  $("aisAppend").checked = hasExisting;
-  $("aisAppend").disabled = !hasExisting;
-  $("aisModeWrap").style.opacity = hasExisting ? "" : ".5";
-  buildAiCards();
-  focusAiItem(0);
-  $("aiSplitMask").classList.add("show");
+function kbCount() {
+  const ai = boxes.filter(function (b) { return b._ai; });
+  return { total: ai.length, keep: ai.filter(function (b) { return b._keep; }).length };
 }
 
-function buildAiCards() {                       // 只在打开时建一次 DOM
-  const wrap = $("aisList");
-  let html = "";
-  aiProposed.forEach(function (b, i) {
-    html += '<div class="ais-item" data-i="' + i + '">'
-          + '<canvas data-cv="' + i + '"></canvas>'
-          + '<div class="ais-meta"><b>第 ' + (i + 1) + ' 个</b>'
-          + '<span data-meta="' + i + '"></span></div>'
-          + '<span class="ais-keep">✓</span></div>';
-  });
-  wrap.innerHTML = html;
-  aiProposed.forEach(function (b, i) {
-    const el = wrap.querySelector('.ais-item[data-i="' + i + '"]');
-    el.classList.toggle("on", !!b._on);          // 默认全部未勾选
-    el.onclick = function (e) {
-      if (e.shiftKey || e.target.closest(".ais-keep")) {   // 点右侧勾 -> 切换保留
-        b._on = !b._on;
-        el.classList.toggle("on", b._on);
-        updateAiSplitCount();
-        return;
-      }
-      focusAiItem(i);
-    };
-    drawAiThumb(i);
-  });
-  updateAiSplitCount();
+function updateKeepBar() {
+  const c = kbCount();
+  $("kbHint").textContent = "保留模式：点框切换保留（奇数次保留 · 偶数次不保留）　已保留 "
+                          + c.keep + " / " + c.total;
 }
 
-function drawAiThumb(i) {                       // 按框的宽高比画缩略图(DPR 高清)
-  const c = $("aisList").querySelector('canvas[data-cv="' + i + '"]');
-  const b = aiProposed[i];
-  if (!c || !b || !img) return;
-  const dpr = window.devicePixelRatio || 1;
-  const CW = (window.innerWidth <= 760 ? 84 : 118);
-  const CH = Math.max(24, Math.min(CW, Math.round(CW * (b.h || 1) / (b.w || 1))));
-  c.style.width = CW + "px"; c.style.height = CH + "px";
-  c.width = Math.round(CW * dpr); c.height = Math.round(CH * dpr);
-  const cx = c.getContext("2d");
-  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cx.imageSmoothingQuality = "high";
-  cx.fillStyle = "#fff"; cx.fillRect(0, 0, CW, CH);
-  cx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, CW, CH);
-  const meta = $("aisList").querySelector('[data-meta="' + i + '"]');
-  if (meta) meta.textContent = Math.round(b.x) + "," + Math.round(b.y) + " · "
-                             + Math.round(b.w) + "×" + Math.round(b.h);
-}
-
-function focusAiItem(i) {
-  aiFocus = i;
-  $("aisList").querySelectorAll(".ais-item").forEach(function (el) {
-    el.classList.toggle("focus", +el.dataset.i === i);
+function enterKeepMode(list, before) {           // list: AI 给出的框(缩略图坐标)
+  aiKeepBefore = before;
+  aiKeepMode = true;
+  setCropTool("frame");                          // 保留模式下可拖动/缩放这些框
+  const subj = (typeof curSubject === "string" && curSubject) || "其他";
+  const made = list.map(function (b) {
+    return { id: uid(), x: b.x, y: b.y, w: b.w, h: b.h, subject: subj,
+             chapter: "", title: "", note: "", group: "", figures: [],
+             _ai: true, _keep: true };
   });
-  syncAiFields();
-  drawAiPrev();
+  boxes = boxes.concat(made);
+  saveBoxes();
+  renderCanvas();
+  renderBoxList();
+  $("keepBar").style.display = "flex";
+  updateKeepBar();
+  toast("AI 框出 " + made.length + " 个框：点框切换保留，确认后点「选好了」", "ok");
 }
 
-function syncAiFields() {
-  const b = aiProposed[aiFocus];
-  if (!b) return;
-  $("aisFocusTitle").textContent = "第 " + (aiFocus + 1) + " 个";
-  $("aisFocusXY").textContent = b._on ? "（将保留）" : "（将丢弃）";
-  $("aisFocusToggle").textContent = b._on ? "改为丢弃" : "改为保留";
-  $("aisX").value = Math.round(b.x); $("aisY").value = Math.round(b.y);
-  $("aisW").value = Math.round(b.w); $("aisH").value = Math.round(b.h);
-}
-
-let aiPrevScale = 1;
-function drawAiPrev() {                         // 大预览: 整页 + 所有框(DPR 高清, 尺寸与坐标严格一致)
-  const c = $("aisPrev"), b = aiProposed[aiFocus];
-  if (!c || !img || !imgW) return;
-  const dpr = window.devicePixelRatio || 1;
-  const maxW = Math.max(220, c.parentElement.clientWidth || 480);
-  const maxH = Math.max(220, Math.min(460, window.innerHeight * 0.46));
-  aiPrevScale = Math.min(maxW / imgW, maxH / imgH);
-  const w = Math.round(imgW * aiPrevScale), h = Math.round(imgH * aiPrevScale);
-  c.style.width = w + "px"; c.style.height = h + "px";     // 关键: CSS 尺寸 = 逻辑尺寸, 不再被拉伸
-  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-  const cx = c.getContext("2d");
-  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cx.imageSmoothingQuality = "high";
-  cx.drawImage(img, 0, 0, w, h);
-  aiProposed.forEach(function (o, i) {
-    cx.save();
-    cx.strokeStyle = i === aiFocus ? "#007AFF"
-                   : (o._on ? "rgba(0,122,255,.38)" : "rgba(120,120,128,.30)");
-    cx.lineWidth = i === aiFocus ? 2.4 : 1.1;
-    if (i === aiFocus) cx.setLineDash([7, 4]);
-    cx.strokeRect(o.x * aiPrevScale, o.y * aiPrevScale, o.w * aiPrevScale, o.h * aiPrevScale);
-    cx.restore();
-  });
-  if (b) {
-    cx.fillStyle = "#007AFF";
-    [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].forEach(function (q) {
-      cx.beginPath();
-      cx.arc(q[0] * aiPrevScale, q[1] * aiPrevScale, 5, 0, Math.PI * 2);
-      cx.fill();
-    });
+function exitKeepMode(keep) {                    // keep=true 落地保留的, false 全部撤销
+  if (!aiKeepMode) return;
+  const before = aiKeepBefore;
+  if (keep) {
+    boxes = boxes.filter(function (b) { return !b._ai || b._keep; });
+    boxes.forEach(function (b) { delete b._ai; delete b._keep; });
+  } else {
+    boxes = boxes.filter(function (b) { return !b._ai; });
   }
+  aiKeepMode = false; aiKeepBefore = null;
+  $("keepBar").style.display = "none";
+  saveBoxes();
+  renderCanvas();
+  renderBoxList();
+  if (before) pushHistory(before);
+  toast(keep ? "已完成 AI 框题：保留 " + boxes.length + " 个框（可继续拖动微调）" : "已取消 AI 框题", "ok");
 }
 
-function updateAiSplitCount() {
-  const k = aiProposed.filter(function (b) { return b._on; }).length;
-  $("aisCount").textContent = "共 " + aiProposed.length + " 个，已选 " + k + " 个";
-  $("aisApply").textContent = "保留选中的 " + k + " 个";
-  $("aisApply").disabled = k === 0;
-  syncAiFields();
-}
-
-$("aisAll").onclick = function () {              // 只切类名(带动画), 不重建 DOM
-  aiProposed.forEach(function (b, i) {
-    b._on = true;
-    const el = $("aisList").querySelector('.ais-item[data-i="' + i + '"]');
-    if (el) el.classList.add("on");
-  });
-  updateAiSplitCount();
+$("kbDone").onclick = function () { exitKeepMode(true); };
+$("kbCancel").onclick = function () { exitKeepMode(false); };
+$("kbAll").onclick = function () {
+  boxes.forEach(function (b) { if (b._ai) b._keep = true; });
+  renderCanvas(); updateKeepBar();
 };
-$("aisNone").onclick = function () {
-  aiProposed.forEach(function (b, i) {
-    b._on = false;
-    const el = $("aisList").querySelector('.ais-item[data-i="' + i + '"]');
-    if (el) el.classList.remove("on");
-  });
-  updateAiSplitCount();
-};
-$("aisFocusToggle").onclick = function () {
-  const b = aiProposed[aiFocus];
-  if (!b) return;
-  b._on = !b._on;
-  const el = $("aisList").querySelector('.ais-item[data-i="' + aiFocus + '"]');
-  if (el) el.classList.toggle("on", b._on);
-  updateAiSplitCount();
-};
-$("aisClose").onclick = $("aisCancel").onclick = function () { $("aiSplitMask").classList.remove("show"); };
-$("aiSplitMask").onclick = function (e) {
-  if (e.target === $("aiSplitMask")) $("aiSplitMask").classList.remove("show");
-};
-
-/* 数值框 + 大图拖动: 改坐标后同步缩略图与大图 */
-function aiClampBox(b) {
-  b.w = Math.max(30, Math.min(imgW - b.x, b.w));
-  b.h = Math.max(30, Math.min(imgH - b.y, b.h));
-  b.x = Math.max(0, Math.min(imgW - b.w, b.x));
-  b.y = Math.max(0, Math.min(imgH - b.h, b.y));
-}
-["X", "Y", "W", "H"].forEach(function (k) {
-  $("ais" + k).oninput = function () {
-    const b = aiProposed[aiFocus];
-    if (!b) return;
-    const v = +$("ais" + k).value || 0;
-    b[k.toLowerCase()] = v;
-    aiClampBox(b);
-    drawAiThumb(aiFocus);
-    drawAiPrev();
-  };
-});
-
-(function () {
-  const c = $("aisPrev");
-  let drag = null;
-  const pos = function (e) {
-    const r = c.getBoundingClientRect();
-    return { x: (e.clientX - r.left) / aiPrevScale, y: (e.clientY - r.top) / aiPrevScale };
-  };
-  c.addEventListener("pointerdown", function (e) {
-    const b = aiProposed[aiFocus];
-    if (!b) return;
-    const p = pos(e);
-    const T = 14 / aiPrevScale;
-    const L = Math.abs(p.x - b.x) <= T, R = Math.abs(p.x - (b.x + b.w)) <= T;
-    const TT = Math.abs(p.y - b.y) <= T, BB = Math.abs(p.y - (b.y + b.h)) <= T;
-    if (!(p.x >= b.x - T && p.x <= b.x + b.w + T && p.y >= b.y - T && p.y <= b.y + b.h + T)) return;
-    if (L && TT) drag = { m: "nw" };
-    else if (R && TT) drag = { m: "ne" };
-    else if (L && BB) drag = { m: "sw" };
-    else if (R && BB) drag = { m: "se" };
-    else if (L || R) drag = { m: L ? "w" : "e" };
-    else if (TT || BB) drag = { m: TT ? "n" : "s" };
-    else drag = { m: "move", dx: p.x - b.x, dy: p.y - b.y };
-    try { c.setPointerCapture(e.pointerId); } catch (err) { }
-  });
-  c.addEventListener("pointermove", function (e) {
-    if (!drag) return;
-    const b = aiProposed[aiFocus];
-    if (!b) return;
-    const p = pos(e), MIN = 30;
-    if (drag.m === "move") {
-      b.x = p.x - drag.dx; b.y = p.y - drag.dy;
-    } else {
-      if (drag.m.indexOf("e") >= 0) b.w = Math.max(MIN, p.x - b.x);
-      if (drag.m.indexOf("s") >= 0) b.h = Math.max(MIN, p.y - b.y);
-      if (drag.m.indexOf("w") >= 0) {
-        const nx = Math.min(p.x, b.x + b.w - MIN);
-        b.w += b.x - nx; b.x = nx;
-      }
-      if (drag.m.indexOf("n") >= 0) {
-        const ny = Math.min(p.y, b.y + b.h - MIN);
-        b.h += b.y - ny; b.y = ny;
-      }
-    }
-    aiClampBox(b);
-    syncAiFields();
-    drawAiThumb(aiFocus);
-    drawAiPrev();
-  });
-  c.addEventListener("pointerup", function () { drag = null; });
-})();
-
-$("aisApply").onclick = function () {
-  const keep = aiProposed.filter(function (b) { return b._on; }).map(function (b) {
-    return { id: uid(), x: Math.round(b.x), y: Math.round(b.y),
-             w: Math.round(b.w), h: Math.round(b.h),
-             subject: (typeof curSubject === "string" && curSubject) || "其他",
-             chapter: "", title: "", note: "", group: "", figures: [] };
-  });
-  if (!keep.length) return;
-  const append = $("aisAppend").checked && !$("aisAppend").disabled;
-  boxes = append ? boxes.concat(keep) : keep;
-  saveBoxes(); renderCanvas(); renderBoxList(); pushHistory(aiSplitBefore);
-  $("aiSplitMask").classList.remove("show");
-  toast("已保留 " + keep.length + " 个框" + (append ? "（追加）" : "（覆盖）") + "，请拖动微调后保存", "ok");
+$("kbNone").onclick = function () {
+  boxes.forEach(function (b) { if (b._ai) b._keep = false; });
+  renderCanvas(); updateKeepBar();
 };
 
 /* AI 自动框题: 让模型返回每道题的框, 填入框选列表(可撤销、可微调) */
 $("ctAiSplit").onclick = async () => {
   if (!curPage) return toast("先选一页照片", "err");
+  if (aiKeepMode) return toast("正在保留模式：请先点「选好了」或「取消」", "err");
   const btn = $("ctAiSplit"), label = btn.querySelector("span");
   await runAiSplit(snap());
 };
@@ -2810,7 +2622,7 @@ async function runAiSplit(before) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ page: curPage }) });
     if (!(d.boxes || []).length) throw new Error("没识别到题目");
-    openAiSplitPicker(d.boxes, before);          // 先让用户勾选保留哪些
+    enterKeepMode(d.boxes, before);              // 进入保留模式, 在画布上点选保留
   } catch (err) {
     toast("AI 框题失败: " + err.message, "err");
   }
