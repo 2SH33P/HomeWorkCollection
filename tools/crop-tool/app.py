@@ -2457,7 +2457,48 @@ def spa_route(route: str):
     return _index_html()
 
 
+def _bind_dual_stack(port=8091):
+    """自己建一个双栈 socket(IPv6 + v4-mapped IPv4)。
+    uvicorn 在 host="::" 时会强制 IPV6_V6ONLY=1, 导致 IPv4 访问不通, 故手工建 socket 交给它。"""
+    import socket
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)   # 关键: 同时接受 IPv4
+    except OSError:
+        pass
+    sock.bind(("::", port))
+    sock.listen(2048)
+    return sock
+
+
 if __name__ == "__main__":
     import uvicorn
-    print("\n错题收集工具已启动: http://localhost:8091\n")
-    uvicorn.run(app, host="0.0.0.0", port=8091, log_level="warning")
+    host = os.environ.get("HOST", "")          # 需要只监听 IPv4 时设 HOST=0.0.0.0
+    print("\n错题收集工具已启动：")
+    print("  本机     http://localhost:8091")
+    try:                                       # 局域网地址(手机同 WiFi 用这个)
+        import socket as _sk
+        _s = _sk.socket(_sk.AF_INET, _sk.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        print(f"  手机/局域网 http://{_s.getsockname()[0]}:8091")
+        _s.close()
+    except OSError:
+        pass
+    try:                                       # 公网 IPv6 地址(需服务端与客户端都有 IPv6)
+        _v6 = [a for a in _sk.getaddrinfo(_sk.gethostname(), None, _sk.AF_INET6)
+               if not a[4][0].startswith("fe80")]
+        if _v6:
+            print(f"  公网 IPv6   http://[{_v6[0][4][0]}]:8091")
+    except OSError:
+        pass
+    print()
+    if host:
+        uvicorn.run(app, host=host, port=8091, log_level="warning")
+    else:
+        try:
+            srv = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+            srv.run(sockets=[_bind_dual_stack(8091)])
+        except OSError as e:
+            print(f"双栈监听失败({e})，回退到 IPv4")
+            uvicorn.run(app, host="0.0.0.0", port=8091, log_level="warning")
