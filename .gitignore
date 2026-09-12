@@ -33,3 +33,6 @@ subjects.json
 img-example/
 auto_last.json
 drafts.json
+
+# 本地协作规则(不推送)
+AGENT.md
