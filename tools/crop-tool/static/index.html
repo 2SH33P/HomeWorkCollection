@@ -4587,12 +4587,19 @@ function updateBar() {
 }
 
 $("chkUpd").onclick = async () => {
+  $("updInfo").textContent = "检查中…";
   try {
-    const d = await (await fetch("/api/version", { cache: "no-store" })).json();
-    if (!LOADED_VERSION) { $("updInfo").textContent = "当前版本 " + d.version; return; }
+    const r = await fetch("/api/version", { cache: "no-store" });
+    const d = await r.json().catch(function () { return {}; });
+    if (!d || !d.version) {          // 旧版服务端没有该接口(SPA 回退会返回 {ok:false})
+      $("updInfo").innerHTML = "本机服务端是<b>旧版本</b>（没有版本接口）—— 请更新代码并重启服务，" +
+                               "然后刷新本页（当前页面版本 " + (LOADED_VERSION || "未知") + "）";
+      return;
+    }
+    if (!LOADED_VERSION) { $("updInfo").textContent = "服务端版本 " + d.version; return; }
     if (d.version === LOADED_VERSION) { $("updInfo").textContent = "已是最新（" + d.version + "）"; }
-    else { $("updInfo").textContent = "有新版本 " + d.version; updateBar(); }
-  } catch (e) { $("updInfo").textContent = "检查失败（服务可能未启动）"; }
+    else { $("updInfo").textContent = "有新版本 " + d.version + "（当前页面 " + LOADED_VERSION + "）"; updateBar(); }
+  } catch (e) { $("updInfo").textContent = "检查失败（服务未启动或网络不通）"; }
 };
 
 async function checkVersion() {
