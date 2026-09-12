@@ -386,7 +386,9 @@ def serve_file(path: str):
     if not fp.is_file():
         log_ai("文件缺失", "-", False, 0, f"/files/{rel} → {fp}")
         return JSONResponse({"ok": False, "msg": "not found"}, status_code=404)
-    return FileResponse(fp)
+    # 图片/文件可能被同名覆盖(如重裁图块、重新取景), 必须每次校验, 否则浏览器一直显示旧图
+    return FileResponse(fp, headers={"Cache-Control": "no-cache, must-revalidate",
+                                     "Pragma": "no-cache"})
 
 
 # ---------- 页面路由 ----------
@@ -643,7 +645,8 @@ async def crop(payload: dict):
             except Exception:
                 continue
             figs.append({"n": len(figs) + 1, "file": f"items/{sd}/{fname}",
-                         "x": fx, "y": fy, "w": fw, "h": fh})
+                         "x": fx, "y": fy, "w": fw, "h": fh,
+                         "t": int(time.time() * 1000)})
         item = {
             "id": item_id,
             "code": next_code(db, subject),
@@ -660,6 +663,7 @@ async def crop(payload: dict):
             "figures": figs,
             "group": b.get("group", ""),   # 续块分组: 同一组的多块视为一道题
             "source_page": f"pages/{srcs[0].name}",
+            "box": {k: int(b.get(k, 0)) for k in ("x", "y", "w", "h")},   # 取景框(缩略图坐标)
             "created": time.strftime("%Y-%m-%d %H:%M"),
         }
         db["items"].append(item)
@@ -2518,17 +2522,64 @@ def crop_item_figure(item_id: str, payload: dict = None):
             rel = old.get("file") or f"{it['image'][:-4]}_fig{n}.jpg"
             if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
                 return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
-            old.update({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh})
+            old.update({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh,
+                        "t": int(time.time() * 1000)})
         else:                                       # 新增图块
             n = max([int(f.get("n", 0) or 0) for f in figs] + [0]) + 1
             rel = f"{it['image'][:-4]}_fig{n}.jpg"
             if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
                 return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
-            figs.append({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh})
+            figs.append({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh,
+                         "t": int(time.time() * 1000)})
         it["figures"] = figs
         save_db(db)
     log_ai("裁图块", "-", True, 0, f"{item_id} 第{n}块" + ("(覆盖)" if old else ""))
     return {"ok": True, "n": n, "figures": figs, "replaced": bool(old)}
+
+
+@app.post("/api/item/{item_id}/recrop")
+def recrop_item(item_id: str, payload: dict = None):
+    """用"原图取景框"(缩略图坐标)重新裁剪题目图, 覆盖 it.image。
+    用于核对/修正"裁剪结果与实际框选位置不一致"的题。payload: {x,y,w,h}"""
+    payload = payload or {}
+    with DB_LOCK:
+        db = load_db()
+        it = next((x for x in db["items"] if x["id"] == item_id), None)
+        if it is None:
+            return JSONResponse({"ok": False, "msg": "题目不存在"}, status_code=404)
+        src_rel = it.get("source_page") or ""
+        pid = Path(src_rel).stem if src_rel else ""
+        srcs = [s for s in PAGES_DIR.glob(f"{pid}.*") if "_web" not in s.name] if pid else []
+        if not srcs:
+            return JSONResponse({"ok": False,
+                                "msg": "找不到该题对应的整页照片，无法重新取景"}, status_code=404)
+        r = page_ratio(pid) or 1.0
+        img = open_photo(srcs[0])
+        W, H = img.size
+        try:
+            x = int(payload.get("x", 0) * r); y = int(payload.get("y", 0) * r)
+            w = int(payload.get("w", 0) * r); h = int(payload.get("h", 0) * r)
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "msg": "坐标无效"}, status_code=400)
+        x = max(0, min(x, W - 20)); y = max(0, min(y, H - 20))
+        w = min(w, W - x); h = min(h, H - y)
+        if w < 20 or h < 20:
+            return JSONResponse({"ok": False, "msg": "框太小"}, status_code=400)
+        sd = subj_dirname(it.get("subject") or "其他")
+        d = ITEMS_DIR / sd
+        d.mkdir(parents=True, exist_ok=True)
+        name = f"{item_id}_recrop{int(time.time())}.jpg"
+        img.crop((x, y, x + w, y + h)).save(d / name, "JPEG", quality=95)
+        old_img = ROOT / it["image"] if it.get("image") else None
+        it["image"] = f"items/{sd}/{name}"
+        it["box"] = {k: int(payload.get(k, 0)) for k in ("x", "y", "w", "h")}
+        it.pop("fig_issue", None)
+        save_db(db)
+    if old_img and old_img.exists():
+        to_trash(old_img)                       # 旧裁剪图移入回收站(可恢复)
+    log_ai("重新取景", "-", True, 0, f"{it['code']} box={it['box']}")
+    return {"ok": True, "image": it["image"], "box": it["box"],
+            "figures_kept": len(it.get("figures") or [])}
 
 
 @app.get("/api/paper", response_class=HTMLResponse)

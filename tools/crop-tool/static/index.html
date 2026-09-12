@@ -363,6 +363,10 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* 原图取景(核对/修正裁剪) */
+#rfPrev { display: block; margin: 0 auto; background: #fff; border-radius: 10px;
+          box-shadow: var(--shadow); touch-action: none; cursor: move; max-width: 100%; }
+
 /* AI 框题: 选择保留面板(左列表 + 右大图可调) */
 .ais-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 16px 14px; gap: 10px; }
 .ais-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -1296,6 +1300,29 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 </div>
 
 <!-- 题目全屏编辑窗口 -->
+<div class="modal-mask full" id="reframeMask">
+  <div class="bp-card" style="width:min(760px,100%)">
+    <div class="bp-head">
+      <b>原图取景 —— 拖动方框后重新裁剪</b>
+      <button id="rfClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
+    </div>
+    <div class="ais-body">
+      <canvas id="rfPrev"></canvas>
+      <div class="ais-fields">
+        <label>x<input type="number" id="rfX"></label>
+        <label>y<input type="number" id="rfY"></label>
+        <label>w<input type="number" id="rfW"></label>
+        <label>h<input type="number" id="rfH"></label>
+      </div>
+      <div class="hint">蓝框 = 这道题在整页照片上的取景范围。可拖动移动、拖边角改大小，确认后按此框重新裁剪题目图（旧图移入回收站）。</div>
+    </div>
+    <div class="ais-foot">
+      <button class="btn ghost" id="rfCancel">取消</button>
+      <button class="btn" id="rfApply">按此框重新裁剪</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask full" id="aiSplitMask">
   <div class="bp-card" style="width:min(1040px,100%)">
     <div class="bp-head">
@@ -1382,6 +1409,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
         <div class="prev-ops">
           <button class="btn ghost" id="pvAi"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 识别</span></button>
           <button class="btn ghost" id="pvCropBtn">裁图</button>
+          <button class="btn ghost" id="pvReframe" title="查看该题在原图上的取景框，可拖动后重新裁剪">
+            <svg class="ic"><use href="#ic-crop"/></svg><span>原图取景</span></button>
           <button class="btn ghost" id="pvViewImg"><svg class="ic"><use href="#ic-image"/></svg><span>浏览图片</span></button>
           <button class="btn ghost" id="pvCropOk" style="display:none">确认裁剪</button>
           <button class="btn ghost" id="pvCropCancel" style="display:none">取消</button>
@@ -2391,6 +2420,140 @@ $("canvasWrap").addEventListener("click", e => {          // 点击锁定遮罩�
     enterPageEdit();
   }
 }, true);
+/* 图块/图片 URL: 带版本号, 避免覆盖同名文件后浏览器显示旧图 */
+function figUrl(f) {
+  if (!f) return "";
+  return "/files/" + f.file + (f.t ? ("?v=" + f.t) : "");
+}
+
+/* ---------- 原图取景: 核对并修正"裁剪结果与框选位置不一致" ---------- */
+let rfBox = null, rfScale = 1, rfImg = null, rfPage = "", rfDrag = null, rfItem = null;
+
+async function openReframe(it) {
+  rfItem = it;
+  if (!it) return;
+  const src = it.source_page || "";
+  if (!src) return toast("这道题没有记录整页照片（多为手动添加），无法取景", "err");
+  rfPage = src.replace(/^pages\//, "").replace(/\.[^.]+$/, "");
+  // 必须用缩略图(_web): 库里的取景框坐标就是缩略图坐标, 用原图会导致框位置与重裁全都错位
+  const stem = src.replace(/\.[^.]+$/, "");
+  const url = "/files/" + stem + "_web.jpg" + "?t=" + Date.now();
+  $("rfPrev").style.opacity = ".4";
+  rfImg = new Image();
+  rfImg.onload = () => {
+    $("rfPrev").style.opacity = "1";
+    rfBox = (it.box && it.box.w) ? Object.assign({}, it.box)
+            : { x: Math.round(rfImg.width * 0.08), y: Math.round(rfImg.height * 0.10),
+                w: Math.round(rfImg.width * 0.84), h: Math.round(rfImg.height * 0.20) };
+    drawReframe(); syncReframeFields();
+  };
+  rfImg.onerror = () => { toast("整页照片加载失败", "err"); };
+  rfImg.src = url;
+  $("reframeMask").classList.add("show");
+}
+
+function drawReframe() {
+  const c = $("rfPrev");
+  if (!rfImg || !rfBox) return;
+  const dpr = window.devicePixelRatio || 1;
+  const maxW = Math.max(240, c.parentElement.clientWidth || 640);
+  const maxH = Math.max(220, Math.min(460, window.innerHeight * 0.44));
+  rfScale = Math.min(maxW / rfImg.width, maxH / rfImg.height);
+  const w = Math.round(rfImg.width * rfScale), h = Math.round(rfImg.height * rfScale);
+  c.style.width = w + "px"; c.style.height = h + "px";
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  const cx = c.getContext("2d");
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.imageSmoothingQuality = "high";
+  cx.drawImage(rfImg, 0, 0, w, h);
+  cx.save();
+  cx.strokeStyle = "#007AFF"; cx.lineWidth = 2.4; cx.setLineDash([7, 4]);
+  cx.strokeRect(rfBox.x * rfScale, rfBox.y * rfScale, rfBox.w * rfScale, rfBox.h * rfScale);
+  cx.restore();
+  cx.fillStyle = "#007AFF";
+  [[rfBox.x, rfBox.y], [rfBox.x + rfBox.w, rfBox.y],
+   [rfBox.x, rfBox.y + rfBox.h], [rfBox.x + rfBox.w, rfBox.y + rfBox.h]].forEach(function (q) {
+    cx.beginPath(); cx.arc(q[0] * rfScale, q[1] * rfScale, 5, 0, Math.PI * 2); cx.fill();
+  });
+}
+
+function syncReframeFields() {
+  if (!rfBox) return;
+  $("rfX").value = Math.round(rfBox.x); $("rfY").value = Math.round(rfBox.y);
+  $("rfW").value = Math.round(rfBox.w); $("rfH").value = Math.round(rfBox.h);
+}
+
+function rfClamp() {
+  rfBox.w = Math.max(30, Math.min(rfImg.width - rfBox.x, rfBox.w));
+  rfBox.h = Math.max(30, Math.min(rfImg.height - rfBox.y, rfBox.h));
+  rfBox.x = Math.max(0, Math.min(rfImg.width - rfBox.w, rfBox.x));
+  rfBox.y = Math.max(0, Math.min(rfImg.height - rfBox.h, rfBox.y));
+}
+
+["X", "Y", "W", "H"].forEach(function (k) {
+  $("rf" + k).oninput = function () {
+    if (!rfBox) return;
+    rfBox[k.toLowerCase()] = +$("rf" + k).value || 0;
+    rfClamp(); drawReframe();
+  };
+});
+
+(function () {
+  const c = $("rfPrev");
+  const pos = function (e) {
+    const r = c.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / rfScale, y: (e.clientY - r.top) / rfScale };
+  };
+  c.addEventListener("pointerdown", function (e) {
+    if (!rfBox) return;
+    const p = pos(e), T = 14 / rfScale;
+    const L = Math.abs(p.x - rfBox.x) <= T, R = Math.abs(p.x - (rfBox.x + rfBox.w)) <= T;
+    const TT = Math.abs(p.y - rfBox.y) <= T, BB = Math.abs(p.y - (rfBox.y + rfBox.h)) <= T;
+    if (!(p.x >= rfBox.x - T && p.x <= rfBox.x + rfBox.w + T &&
+          p.y >= rfBox.y - T && p.y <= rfBox.y + rfBox.h + T)) return;
+    if (L && TT) rfDrag = { m: "nw" }; else if (R && TT) rfDrag = { m: "ne" };
+    else if (L && BB) rfDrag = { m: "sw" }; else if (R && BB) rfDrag = { m: "se" };
+    else if (L || R) rfDrag = { m: L ? "w" : "e" };
+    else if (TT || BB) rfDrag = { m: TT ? "n" : "s" };
+    else rfDrag = { m: "move", dx: p.x - rfBox.x, dy: p.y - rfBox.y };
+    try { c.setPointerCapture(e.pointerId); } catch (err) { }
+  });
+  c.addEventListener("pointermove", function (e) {
+    if (!rfDrag || !rfBox) return;
+    const p = pos(e), MIN = 30;
+    if (rfDrag.m === "move") { rfBox.x = p.x - rfDrag.dx; rfBox.y = p.y - rfDrag.dy; }
+    else {
+      if (rfDrag.m.indexOf("e") >= 0) rfBox.w = Math.max(MIN, p.x - rfBox.x);
+      if (rfDrag.m.indexOf("s") >= 0) rfBox.h = Math.max(MIN, p.y - rfBox.y);
+      if (rfDrag.m.indexOf("w") >= 0) { const nx = Math.min(p.x, rfBox.x + rfBox.w - MIN); rfBox.w += rfBox.x - nx; rfBox.x = nx; }
+      if (rfDrag.m.indexOf("n") >= 0) { const ny = Math.min(p.y, rfBox.y + rfBox.h - MIN); rfBox.h += rfBox.y - ny; rfBox.y = ny; }
+    }
+    rfClamp(); syncReframeFields(); drawReframe();
+  });
+  c.addEventListener("pointerup", function () { rfDrag = null; });
+})();
+
+$("rfClose").onclick = $("rfCancel").onclick = function () { $("reframeMask").classList.remove("show"); };
+$("reframeMask").onclick = function (e) {
+  if (e.target === $("reframeMask")) $("reframeMask").classList.remove("show");
+};
+$("rfApply").onclick = async function () {
+  if (!rfItem || !rfBox) return;
+  const btn = $("rfApply"); btn.disabled = true; btn.textContent = "裁剪中…";
+  try {
+    const d = await api("/api/item/" + rfItem.id + "/recrop", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: Math.round(rfBox.x), y: Math.round(rfBox.y),
+                             w: Math.round(rfBox.w), h: Math.round(rfBox.h) }) });
+    rfItem.image = d.image; rfItem.box = d.box;
+    $("pvImg").src = "/files/" + d.image + "?t=" + Date.now();   // 立刻换图
+    $("reframeMask").classList.remove("show");
+    toast("已按新取景框重新裁剪" + (d.figures_kept ? "（图块仍保留，如位置不对请用「重裁」）" : ""), "ok");
+    loadLibrary(false);
+  } catch (err) { toast("重新裁剪失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "按此框重新裁剪";
+};
+
 /* AI 自动框题: 先勾选要保留的框(可在右侧大图拖动微调), 再填入 */
 let aiProposed = [], aiSplitBefore = null, aiFocus = 0;
 
@@ -2904,7 +3067,7 @@ function renderList(subj) {
         <div class="q-sec"><div class="q-sec-t">题干与选项</div>
           <div class="q-pre">${esc(it.note || "（未识别，点题号可编辑或重新识别）")}</div></div>
         ${(it.figures || []).length ? `<div class="q-sec"><div class="q-sec-t">图片附件（${(it.figures || []).length}）</div>
-          <div class="fig-strip">${(it.figures || []).map(f => `<img src="/files/${f.file}" title="[图${f.n}]">`).join("")}</div></div>` : ""}
+          <div class="fig-strip">${(it.figures || []).map(f => `<img src="${figUrl(f)}" title="[图${f.n}]">`).join("")}</div></div>` : ""}
         <div class="q-ops">
           ${it.image ? `<button class="q-ai" data-reai="${it.id}"><svg class="ic"><use href="#ic-sparkle"/></svg>AI 识别</button>` : ""}
           <button data-viewimg="${it.id}">浏览图片</button>
@@ -3405,7 +3568,7 @@ function renderPvFigs(it) {
   const figs = it.figures || [];
   $("pvFigList").innerHTML = figs.length ? figs.map(f => `
     <div class="fig-item">
-      <img src="/files/${f.file}" loading="lazy">
+      <img src="${figUrl(f)}" loading="lazy">
       <div class="fig-info"><b>[图${f.n}]</b> ${f.upload ? "上传" : "裁剪"}</div>
       <div class="fig-ops">
         <button data-recrop="${f.n}" title="重新框选该图块（拖动虚线框后确认覆盖）">重裁</button>
@@ -3499,6 +3662,7 @@ pvcv.addEventListener("pointermove", e => {
 pvcv.addEventListener("pointerup", () => { pvDrag = null; });
 
 $("pvViewImg").onclick = () => { if (pvItem) openImageViewer(pvItem, pvItem.image ? "crop" : "page"); };
+$("pvReframe").onclick = () => openReframe(pvItem);
 
 // 重裁已有图块: 进裁图模式并把原矩形画出来, 可拖动/调整后覆盖
 function pvRecrop(n) {
