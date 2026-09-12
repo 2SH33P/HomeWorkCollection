@@ -516,31 +516,7 @@ def ai_recognize_one(it, force=False):
         return None
     if not text:
         return None
-    issue = False
-    figs = []
-    raws = re.findall(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", text)
-    if raws:
-        full = np.array(open_photo(f))
-        FH, FW = full.shape[:2]
-        for i, (fx, fy, fw, fh) in enumerate(raws, start=1):
-            x0 = max(0, int(int(fx) / 1000 * FW)); y0 = max(0, int(int(fy) / 1000 * FH))
-            w0 = min(FW - x0, max(20, int(int(fw) / 1000 * FW)))
-            h0 = min(FH - y0, max(20, int(int(fh) / 1000 * FH)))
-            fig = trim_blank(full[y0:y0 + h0, x0:x0 + w0])
-            if fig.shape[0] < 10 or fig.shape[1] < 10:
-                issue = True                  # 有图但没裁好 -> 红色标记
-                continue
-            rel = f"{it['image'][:-4]}_fig{i}.jpg"
-            imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR))
-            figs.append({"n": i, "file": rel, "x": int(fx), "y": int(fy),
-                         "w": int(fw), "h": int(fh)})
-        cnt = [0]
-
-        def _renum(m):
-            cnt[0] += 1
-            return f"[图{cnt[0]}]"
-
-        text = re.sub(r"\[图@\d+,\d+,\d+,\d+\]", _renum, text)   # 坐标->图N
+    text = strip_fig_marks(text)          # 图形一律人工处理, 这里只保留文字
     updated = None
     with DB_LOCK:
         db = load_db()
@@ -548,33 +524,17 @@ def ai_recognize_one(it, force=False):
             if x["id"] == it["id"]:
                 if force or not (x.get("note") or "").strip():
                     x["note"] = text[:4000]
-                    if figs:
-                        x["figures"] = figs
-                    x.pop("fig_issue", None)
-                if issue and not (x.get("figures") or []):
-                    x["fig_issue"] = True
                 updated = dict(x)
                 break
         save_db(db)
     return updated
 
 
-def extract_ai_figs(text):
-    """把 AI 输出的图形坐标标记换成 [图N], 返回 (新文本, [{n,x,y,w,h}])。
-    兼容三种写法: [图@l,t,w,h] / 图@l,t,w,h / AI 照抄的占位符(非数字, 直接丢弃)。"""
+def strip_fig_marks(text):
+    """清理 AI 输出里可能出现的图形坐标标记(已不启用 AI 裁图, 一律丢弃, 避免污染正文)。"""
     text = text or ""
-    figs = []
-    pat = re.compile(r"\[?\s*图@\s*(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)\s*\]?")
-
-    def _rep(m):
-        figs.append({"n": len(figs) + 1, "x": int(m.group(1)), "y": int(m.group(2)),
-                     "w": int(m.group(3)), "h": int(m.group(4))})
-        return f"[图{figs[-1]['n']}]"
-
-    text = pat.sub(_rep, text)
-    text = re.sub(r"\[图@[^\]]*\]", " ", text)            # 残留的带括号无效标记
-    text = re.sub(r"图@[^\d\n]*", " ", text)                # 残留的 图@占位符(含后面的非数字部分)
-    return re.sub(r"\n{3,}", "\n\n", text).strip(), figs
+    text = re.sub(r"\[?\s*图@[^\]\n]*\]?", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _auto_ai_bg(saved_items):
@@ -1147,33 +1107,9 @@ def call_ai_vision(img_rgb):
               '6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / '
               'D．选项内容（用全角句点．）；\n'
               '7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n'
-              '8. 题目内嵌的图形/示意图要标出位置：用方括号包一个图形标记，里面写「图@」加四个'
-              '0-1000 的比例整数，依次是框的左边缘、上边缘、宽度、高度，之间用英文逗号分隔。'
-              '例如图形位于整图左上角、占宽高各两成时，标记形如 图@0,0,200,200。'
-              '上面的数字只是说明格式，必须填写你自己量出的真实数值，绝不能原样照抄示例。'
-              '框要贴合图形本身（含外框线、坐标轴、图注），不要包含题干文字、选项或大片空白；'
-              '图片里没有图形就不要输出任何图形标记。\n')
-    if ai_config().get("font_marks", True):
-        prompt += ('9. 标注原题的视觉强调，只用两种标记(不要用其他符号)：\n'
-                   '   - 比正文更粗更黑的文字(黑体、加粗的宋体等) -> **文字**\n'
-                   '   - 楷体或斜体的文字 -> *文字*\n'
-                   '   - 注释序号等上标 -> 用 ^ 号包起来，如 ^①^ ^②^ ^[注]^\n'
-                   '   普通宋体正文不加任何标记；只标确实能分辨的印刷体，'
-                   '不确定或手写内容不要标记，宁可漏标不要标错；\n')
-    prompt += ('10. 还原原卷的版式结构，下面的标记必须单独占一行：\n'
-               '   - 材料标签：**材料一：** **材料二：**\n'
-               '   - 整首诗歌/词曲等韵文：开头一行写 ::: poem，结尾一行写 :::，中间每句一行\n'
-               '   - 所有附属说明行都必须用 ::: quote 开头、::: 结尾，且各自单独一行，包括：'
-               '注释条目（[注] …）、出处与节选说明（“（节选自《史记·滑稽列传》）”）、'
-               '摘编与删改说明（“（摘编自…）”“（有删改）”“（周扬、谢素台译，有删改）”）、'
-               '资料卡片、命题说明；\n'
-               '   - 大题层级标题（如“（一）现代文阅读 I（本题共 5 小题，19 分）”）：用 **加粗** 单独一行\n'
-               '   - 表格：用 Markdown 管道表，第一行表头、第二行分隔（如 | --- | :--: |），'
-               '之后每行一条记录，单元格内不要换行、不要用竖线以外的分隔符\n'
-               '11. 英语试卷：题目文字保持英文原样，不要翻译；选项逐行输出 A．… B．… ；'
-               '填空的空格用 ______ 表示，括号中的提示词原样保留；'
-               '选项超过 4 个（如七选五 A．… G．…）也逐行输出；\n'
-               '输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
+              '8. 不要输出任何图形位置标记（例如「图@」加数字、[图@x,y,w,h] 这类坐标），'
+              '也不要为图形留占位符：图片里的图形/示意图一律交给用户自己裁剪，你只负责把文字识别准确。\n'
+              '输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
                '只输出识别结果，不要解释。')
     body = {
         "model": ai_config()["model"] or "glm-4v-flash",
@@ -2234,20 +2170,8 @@ def ocr_ai(payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "msg": "AI 识别失败: " + str(e)[:200]},
                             status_code=502)
-    text, figs = extract_ai_figs(text)          # [图@..] -> [图N] + 图形列表
-    # 立刻把每个图形裁出来给前端看(坐标相对题图 0-1000)
-    FH, FW = img.shape[:2]
-    for f in figs:
-        x0 = max(0, int(f["x"] / 1000 * FW)); y0 = max(0, int(f["y"] / 1000 * FH))
-        w0 = min(FW - x0, max(20, int(f["w"] / 1000 * FW)))
-        h0 = min(FH - y0, max(20, int(f["h"] / 1000 * FH)))
-        piece = trim_blank(img[y0:y0 + h0, x0:x0 + w0])
-        if piece.shape[0] < 10 or piece.shape[1] < 10:
-            piece = img[y0:y0 + h0, x0:x0 + w0]
-        fp = TMP_DIR / f"aifig_{int(time.time() * 1000)}_{f['n']}.jpg"
-        if imwrite_u(fp, cv2.cvtColor(piece, cv2.COLOR_RGB2BGR)):
-            f["preview"] = f"/files/.tmp/{fp.name}"
-    return {"ok": True, "text": text, "figures": figs}
+    text = strip_fig_marks(text)                # 图形由用户手动裁剪, AI 只给文字
+    return {"ok": True, "text": text}
 
 
 @app.post("/api/item/{item_id}/ai")
