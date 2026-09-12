@@ -363,6 +363,26 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* AI 框题: 选择保留面板 */
+.ais-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 16px 14px; gap: 10px; }
+.ais-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ais-bar .btn-sm { height: 30px; padding: 0 10px; }
+.ais-bar .chk { min-height: 30px; font-size: 13px; }
+.ais-list { flex: 1; min-height: 0; overflow-y: auto; display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;
+            align-content: start; align-items: start;
+            -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.ais-item { display: flex; gap: 9px; align-items: center; padding: 8px; border: 1.5px solid var(--sep);
+            border-radius: 10px; background: var(--card); cursor: pointer; opacity: .55;
+            transition: opacity .15s, border-color .15s, box-shadow .15s; }
+.ais-item.on { opacity: 1; border-color: var(--accent); box-shadow: 0 1px 6px rgba(0,122,255,.18); }
+.ais-item canvas { width: 84px; height: auto; background: #fff; border-radius: 8px; flex: none;
+                   box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.ais-item .ais-meta { min-width: 0; font-size: 12px; color: var(--t3); line-height: 1.5; }
+.ais-item .ais-meta b { display: block; color: var(--t1); font-size: 13px; margin-bottom: 2px; }
+.ais-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; flex: none;
+            border-top: 1px solid var(--sep); }
+
 /* 自动组卷面板(精简版) */
 .auto-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .auto-top .fld { min-width: 108px; margin-bottom: 0; }
@@ -1261,6 +1281,30 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 </div>
 
 <!-- 题目全屏编辑窗口 -->
+<div class="modal-mask full" id="aiSplitMask">
+  <div class="bp-card" style="width:min(800px,100%)">
+    <div class="bp-head">
+      <b>AI 框题结果 —— 勾选要保留的</b>
+      <button id="aisClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
+    </div>
+    <div class="ais-body">
+      <div class="ais-bar">
+        <span class="hint" id="aisCount">共 0 个</span>
+        <button class="btn ghost btn-sm" id="aisAll">全选</button>
+        <button class="btn ghost btn-sm" id="aisNone">全不选</button>
+        <span style="flex:1"></span>
+        <label class="chk" id="aisModeWrap"><input type="checkbox" id="aisAppend">追加到现有框</label>
+      </div>
+      <div class="ais-list" id="aisList"></div>
+      <div class="hint">点方框切换保留/丢弃；不勾「追加」= 用选中的框替换本页原有框。保留后仍可拖动微调。</div>
+    </div>
+    <div class="ais-foot">
+      <button class="btn ghost" id="aisCancel">取消</button>
+      <button class="btn" id="aisApply">保留选中的 0 个</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-mask full" id="prevMask">
   <div class="pv-full">
     <div class="pv-top">
@@ -2315,22 +2359,86 @@ $("canvasWrap").addEventListener("click", e => {          // 点击锁定遮罩�
     enterPageEdit();
   }
 }, true);
+/* AI 自动框题: 先勾选要保留的框, 再填入 */
+let aiProposed = [], aiSplitBefore = null;
+
+function openAiSplitPicker(list, before) {
+  aiProposed = list.map(function (b, i) { return Object.assign({ _on: true, _i: i }, b); });
+  aiSplitBefore = before;
+  const hasExisting = boxes.length > 0;
+  $("aisAppend").checked = hasExisting;
+  $("aisAppend").disabled = !hasExisting;
+  $("aisModeWrap").style.opacity = hasExisting ? "" : ".5";
+  renderAiSplitList();
+  $("aiSplitMask").classList.add("show");
+}
+
+function renderAiSplitList() {
+  const wrap = $("aisList");
+  let html = "";
+  aiProposed.forEach(function (b, i) {
+    html += '<div class="ais-item on" data-i="' + i + '">'
+          + '<canvas data-cv="' + i + '"></canvas>'
+          + '<div class="ais-meta"><b>第 ' + (i + 1) + ' 个</b>'
+          + Math.round(b.x) + ',' + Math.round(b.y) + '<br>'
+          + Math.round(b.w) + ' × ' + Math.round(b.h) + '</div></div>';
+  });
+  wrap.innerHTML = html;
+  aiProposed.forEach(function (b, i) {
+    const c = wrap.querySelector('canvas[data-cv="' + i + '"]');
+    if (!c || !img) return;
+    const CW = 84, CH = Math.max(26, Math.min(84, Math.round(84 * (b.h || 1) / (b.w || 1))));
+    c.width = CW; c.height = CH;                 // 按框的宽高比出图, 不留大片空白
+    const cx = c.getContext("2d");
+    cx.fillStyle = "#fff"; cx.fillRect(0, 0, CW, CH);
+    cx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, CW, CH);
+  });
+  wrap.querySelectorAll(".ais-item").forEach(function (el) {
+    el.onclick = function () {
+      const i = +el.dataset.i;
+      aiProposed[i]._on = !aiProposed[i]._on;
+      el.classList.toggle("on", aiProposed[i]._on);
+      updateAiSplitCount();
+    };
+  });
+  updateAiSplitCount();
+}
+
+function updateAiSplitCount() {
+  const k = aiProposed.filter(function (b) { return b._on; }).length;
+  $("aisCount").textContent = "共 " + aiProposed.length + " 个，已选 " + k + " 个";
+  $("aisApply").textContent = "保留选中的 " + k + " 个";
+  $("aisApply").disabled = k === 0;
+}
+
+$("aisAll").onclick = function () { aiProposed.forEach(function (b) { b._on = true; }); renderAiSplitList(); };
+$("aisNone").onclick = function () { aiProposed.forEach(function (b) { b._on = false; }); renderAiSplitList(); };
+$("aisClose").onclick = $("aisCancel").onclick = function () { $("aiSplitMask").classList.remove("show"); };
+$("aiSplitMask").onclick = function (e) {
+  if (e.target === $("aiSplitMask")) $("aiSplitMask").classList.remove("show");
+};
+$("aisApply").onclick = function () {
+  const keep = aiProposed.filter(function (b) { return b._on; }).map(function (b) {
+    return { id: uid(), x: b.x, y: b.y, w: b.w, h: b.h,
+             subject: (typeof curSubject === "string" && curSubject) || "其他",
+             chapter: "", title: "", note: "", group: "", figures: [] };
+  });
+  if (!keep.length) return;
+  const append = $("aisAppend").checked && !$("aisAppend").disabled;
+  boxes = append ? boxes.concat(keep) : keep;
+  saveBoxes(); renderCanvas(); renderBoxList(); pushHistory(aiSplitBefore);
+  $("aiSplitMask").classList.remove("show");
+  toast("已保留 " + keep.length + " 个框" + (append ? "（追加）" : "（覆盖）") + "，请拖动微调后保存", "ok");
+};
+
 /* AI 自动框题: 让模型返回每道题的框, 填入框选列表(可撤销、可微调) */
 $("ctAiSplit").onclick = async () => {
   if (!curPage) return toast("先选一页照片", "err");
   const btn = $("ctAiSplit"), label = btn.querySelector("span");
-  const before = snap();
-  const existing = boxes.length;
-  if (existing) {                       // 已有框: 让用户选用哪种方式
-    openPickMenu(btn, ["追加到现有框", "覆盖现有框"], async (pick) => {
-      if (pick) await runAiSplit(pick === "覆盖现有框", before);
-    });
-    return;
-  }
-  await runAiSplit(false, before);
+  await runAiSplit(snap());
 };
 
-async function runAiSplit(overwrite, before) {
+async function runAiSplit(before) {
   const btn = $("ctAiSplit"), label = btn.querySelector("span");
   const old = label.textContent;
   btn.disabled = true; label.textContent = "识别中…";
@@ -2338,19 +2446,8 @@ async function runAiSplit(overwrite, before) {
     const d = await api("/api/split/ai", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ page: curPage }) });
-    const made = (d.boxes || []).map(b => ({
-      id: uid(), x: b.x, y: b.y, w: b.w, h: b.h,
-      subject: (typeof curSubject === "string" && curSubject) || "其他",
-      chapter: "", title: "", note: "", group: "", figures: [],
-    }));
-    if (!made.length) throw new Error("没识别到题目");
-    boxes = overwrite ? made : boxes.concat(made);
-    saveBoxes();
-    renderCanvas();
-    renderBoxList();
-    pushHistory(before);
-    toast(`AI 已框出 ${made.length} 道题${overwrite ? "（覆盖原框）" : "（追加到列表）"}，` +
-          "请拖动边框微调后保存", "ok");
+    if (!(d.boxes || []).length) throw new Error("没识别到题目");
+    openAiSplitPicker(d.boxes, before);          // 先让用户勾选保留哪些
   } catch (err) {
     toast("AI 框题失败: " + err.message, "err");
   }
