@@ -367,14 +367,6 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .b-ai { color: #248a3d !important; font-weight: 600; }
 .b-ai[disabled] { opacity: .5; }
 
-/* AI 框题: 保留模式操作条 */
-.keep-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-            padding: 8px 12px; margin: 0 0 8px; border-radius: var(--r-md);
-            background: color-mix(in srgb, var(--accent) 10%, var(--card));
-            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
-.keep-bar .kb-hint { font-size: 13px; color: var(--t1); }
-.keep-bar .btn-sm { height: 32px; padding: 0 12px; }
-
 /* 原图取景(核对/修正裁剪) */
 #rfPrev { display: block; margin: 0 auto; background: #fff; border-radius: 10px;
           box-shadow: var(--shadow); touch-action: none; cursor: move; max-width: 100%; }
@@ -907,22 +899,12 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <button class="ct-ic" id="ctRedo" title="重做 (Ctrl+Shift+Z)" disabled><svg class="ic"><use href="#ic-redo"/></svg></button>
           </div>
           <div class="ct-right">
-            <button class="btn ghost btn-sm" id="ctAiSplit"
-                    title="让 AI 自动框出这一页的每道题（框完可手动微调）"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 自动框题</span></button>
             <button class="btn ghost btn-sm" id="ctCropFig" title="对当前选中的题目框裁图"><svg class="ic"><use href="#ic-cfig"/></svg><span>裁图</span></button>
             <span class="ct-val" id="cropFigCount" style="display:none"></span>
             <button class="btn btn-sm" id="cropOk" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>确认</span></button>
             <button class="btn ghost btn-sm" id="cropCancel" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>结束裁图</span></button>
             <button class="btn ghost btn-sm" id="pageEditDone"><svg class="ic"><use href="#ic-check"/></svg><span>完成</span></button>
           </div>
-        </div>
-        <div class="keep-bar" id="keepBar" style="display:none">
-          <span class="kb-hint" id="kbHint">保留模式：点框切换保留（奇数次保留 · 偶数次不保留）</span>
-          <span style="flex:1"></span>
-          <button class="btn ghost btn-sm" id="kbAll">全保留</button>
-          <button class="btn ghost btn-sm" id="kbNone">全不保留</button>
-          <button class="btn ghost btn-sm" id="kbCancel">取消</button>
-          <button class="btn btn-sm" id="kbDone"><svg class="ic"><use href="#ic-check"/></svg><span>选好了</span></button>
         </div>
         <canvas id="cv"></canvas>
       </div>
@@ -1778,31 +1760,6 @@ function renderCanvas() {
       ctx.fill(); ctx.stroke();
     });
   });
-  // AI 保留模式: 保留=蓝色实线+勾, 不保留=灰色虚线+叉
-  if (aiKeepMode) {
-    boxes.forEach(function (b) {
-      if (!b._ai) return;
-      const bx = b.x / scale, by = b.y / scale, bw = b.w / scale, bh = b.h / scale;
-      ctx.save();
-      if (b._keep) {
-        ctx.fillStyle = "rgba(0,122,255,.16)"; ctx.strokeStyle = "#007AFF";
-        ctx.lineWidth = 3; ctx.setLineDash([]);
-      } else {
-        ctx.fillStyle = "rgba(120,120,128,.14)"; ctx.strokeStyle = "rgba(120,120,128,.9)";
-        ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
-      }
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.setLineDash([]);
-      ctx.fillStyle = b._keep ? "#007AFF" : "rgba(120,120,128,.95)";
-      ctx.beginPath(); ctx.arc(bx + 14, by + 14, 11, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.font = "bold 13px sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(b._keep ? "✓" : "✕", bx + 14, by + 15);
-      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
-      ctx.restore();
-    });
-  }
   if (cropMode) {                        // 裁图模式: 红色题框 + 蓝色图形框
     const bx = cropMode.x / scale, by = cropMode.y / scale;
     const bw = cropMode.w / scale, bh = cropMode.h / scale;
@@ -1912,16 +1869,6 @@ function cvDown(e) {
     else { cropDrag = { mode: "new", startX: p.x, startY: p.y }; cropRect = null; }
     return;
   }
-  if (aiKeepMode) {            // 保留模式: 只处理 AI 框的拖动/点选, 不影响其他
-    const hit = hitTest(p);
-    if (hit) {
-      drag = hit.mode === "resize"
-        ? { mode: "resize", b: hit.b, edge: hit.edge, startX: p.x, startY: p.y, moved: false }
-        : { mode: "move", boxId: hit.b.id, offX: hit.offX, offY: hit.offY,
-            startX: p.x, startY: p.y, moved: false };
-    }
-    return;
-  }
   if (pageEdit && cropTool === "edit") {          // 编辑模式: 点框弹悬浮编辑窗
     const hit = hitTest(p);
     if (hit) { activeBoxId = hit.b.id; openBoxPop(hit.b); renderCanvas(); }
@@ -2001,20 +1948,6 @@ function cvUp(e) {
   }
   if (cropMode) {                                        // 裁图模式: 结束图形框拖拽
     cropDrag = null;
-    return;
-  }
-  if (aiKeepMode) {                          // 保留模式: 未拖动 = 点选 -> 切换保留状态
-    if (drag && !drag.moved && drag.boxId) {
-      const b = boxes.find(function (x) { return x.id === drag.boxId; });
-      if (b && b._ai) {                       // 奇数次=保留, 偶数次=不保留
-        b._keep = !b._keep;
-        renderCanvas(); updateKeepBar();
-        drag = null;
-        return;
-      }
-    }
-    drag = null;
-    saveBoxes();
     return;
   }
   if (pageEdit && cropTool === "frame" && drag && drag.mode !== "new") {
@@ -2656,92 +2589,6 @@ $("rfApply").onclick = async function () {
   } catch (err) { toast("重新裁剪失败: " + err.message, "err"); }
   btn.disabled = false; btn.textContent = "按此框重新裁剪";
 };
-
-/* AI 自动框题: 框出后进入「保留模式」, 在画布上点框切换保留, 点「选好了」才落地 */
-let aiKeepMode = false, aiKeepBefore = null;
-
-function kbCount() {
-  const ai = boxes.filter(function (b) { return b._ai; });
-  return { total: ai.length, keep: ai.filter(function (b) { return b._keep; }).length };
-}
-
-function updateKeepBar() {
-  const c = kbCount();
-  $("kbHint").textContent = "保留模式：点框切换保留（奇数次保留 · 偶数次不保留）　已保留 "
-                          + c.keep + " / " + c.total;
-}
-
-function enterKeepMode(list, before) {           // list: AI 给出的框(缩略图坐标)
-  aiKeepBefore = before;
-  aiKeepMode = true;
-  setCropTool("frame");                          // 保留模式下可拖动/缩放这些框
-  const subj = (typeof curSubject === "string" && curSubject) || "其他";
-  const made = list.map(function (b) {
-    return { id: uid(), x: b.x, y: b.y, w: b.w, h: b.h, subject: subj,
-             chapter: "", title: "", note: "", group: "", figures: [],
-             _ai: true, _keep: true };
-  });
-  boxes = boxes.concat(made);
-  saveBoxes();
-  renderCanvas();
-  renderBoxList();
-  $("keepBar").style.display = "flex";
-  updateKeepBar();
-  toast("AI 框出 " + made.length + " 个框：点框切换保留，确认后点「选好了」", "ok");
-}
-
-function exitKeepMode(keep) {                    // keep=true 落地保留的, false 全部撤销
-  if (!aiKeepMode) return;
-  const before = aiKeepBefore;
-  if (keep) {
-    boxes = boxes.filter(function (b) { return !b._ai || b._keep; });
-    boxes.forEach(function (b) { delete b._ai; delete b._keep; });
-  } else {
-    boxes = boxes.filter(function (b) { return !b._ai; });
-  }
-  aiKeepMode = false; aiKeepBefore = null;
-  $("keepBar").style.display = "none";
-  saveBoxes();
-  renderCanvas();
-  renderBoxList();
-  if (before) pushHistory(before);
-  toast(keep ? "已完成 AI 框题：保留 " + boxes.length + " 个框（可继续拖动微调）" : "已取消 AI 框题", "ok");
-}
-
-$("kbDone").onclick = function () { exitKeepMode(true); };
-$("kbCancel").onclick = function () { exitKeepMode(false); };
-$("kbAll").onclick = function () {
-  boxes.forEach(function (b) { if (b._ai) b._keep = true; });
-  renderCanvas(); updateKeepBar();
-};
-$("kbNone").onclick = function () {
-  boxes.forEach(function (b) { if (b._ai) b._keep = false; });
-  renderCanvas(); updateKeepBar();
-};
-
-/* AI 自动框题: 让模型返回每道题的框, 填入框选列表(可撤销、可微调) */
-$("ctAiSplit").onclick = async () => {
-  if (!curPage) return toast("先选一页照片", "err");
-  if (aiKeepMode) return toast("正在保留模式：请先点「选好了」或「取消」", "err");
-  const btn = $("ctAiSplit"), label = btn.querySelector("span");
-  await runAiSplit(snap());
-};
-
-async function runAiSplit(before) {
-  const btn = $("ctAiSplit"), label = btn.querySelector("span");
-  const old = label.textContent;
-  btn.disabled = true; label.textContent = "识别中…";
-  try {
-    const d = await api("/api/split/ai", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ page: curPage }) });
-    if (!(d.boxes || []).length) throw new Error("没识别到题目");
-    enterKeepMode(d.boxes, before);              // 进入保留模式, 在画布上点选保留
-  } catch (err) {
-    toast("AI 框题失败: " + err.message, "err");
-  }
-  btn.disabled = false; label.textContent = old;
-}
 
 $("ctCropFig").onclick = () => {
   if (cropMode) return toast("已在裁图模式", "err");
