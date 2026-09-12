@@ -387,6 +387,36 @@ def source_version():
     return h.hexdigest()[:12]
 
 
+@app.post("/api/self-update")
+def self_update():
+    """界面点「立即更新」: 从远程仓库拉取最新代码, 再以退出码 3 结束进程,
+    由启动脚本(start.sh / start.bat 的循环)自动用新代码重启。"""
+    import subprocess
+    root = str(ROOT)
+    if not (ROOT / ".git").exists():
+        return JSONResponse({"ok": False, "msg": "当前目录不是 git 仓库（可能是下载的 ZIP 包），"
+                                                "请手动下载新版覆盖"}, status_code=400)
+    if shutil.which("git") is None:
+        return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令，请手动更新"}, status_code=400)
+    try:
+        r = subprocess.run(["git", "-C", root, "pull", "--ff-only"],
+                           capture_output=True, text=True, timeout=150)
+    except Exception as e:
+        return JSONResponse({"ok": False, "msg": "执行 git pull 失败: " + str(e)[:120]},
+                            status_code=500)
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if r.returncode != 0:
+        return JSONResponse({"ok": False,
+                             "msg": "更新失败（本地有未提交改动或连不上仓库）: " + out[-200:]},
+                            status_code=500)
+    if ("Already up to date" in out) or ("已经是最新" in out):
+        log_ai("检查更新", "-", True, 0, "已是最新")
+        return {"ok": True, "updated": False, "msg": "已经是最新版本", "log": out[-200:]}
+    log_ai("自动更新", "-", True, 0, "已拉取新代码, 即将重启")
+    threading.Timer(1.2, lambda: os._exit(3)).start()      # -> 启动脚本自动拉起新代码
+    return {"ok": True, "updated": True, "msg": "已拉取新代码，服务正在自动重启…", "log": out[-200:]}
+
+
 @app.get("/api/version")
 def get_version():
     return {"ok": True, "version": source_version()}
