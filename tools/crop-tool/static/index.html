@@ -90,13 +90,23 @@ html[data-route="library"] .tabbar button[data-tab="library"],
 html[data-route="paper"] .tabbar button[data-tab="paper"],
 html[data-route="settings"] .tabbar button[data-tab="settings"] { color: var(--accent); font-weight: 600; }
 
-main { max-width: 1280px; margin: 0 auto; padding: 8px 24px 90px; }
+main { max-width: 1560px; margin: 0 auto; padding: 8px 24px 90px; }
 section { display: none; }
 section.active,
 html[data-route="editor"] #tab-editor,
 html[data-route="library"] #tab-library,
 html[data-route="paper"] #tab-paper,
 html[data-route="settings"] #tab-settings { display: block; animation: fadeSlide .28s var(--motion); }
+
+/* 设置页: 宽屏下多列铺满(窄屏/手机仍单列) */
+@media (min-width: 1100px) {
+  #tab-settings.active, html[data-route="settings"] #tab-settings {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 14px; align-items: start; }
+  #tab-settings > .card { margin-top: 0 !important; }
+  #tab-settings > .card:last-child { grid-column: 1 / -1; }   /* 运行日志占满整行 */
+  #tab-paper > .card { width: 100%; }
+}
 @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 @keyframes fadeSlide { from { opacity: 0; transform: translateY(8px); }
                        to   { opacity: 1; transform: none; } }
@@ -354,10 +364,30 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .auto-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .auto-top .fld { min-width: 108px; margin-bottom: 0; }
 .auto-bottom { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
-.auto-group .ag-adv { display: none; gap: 10px; flex-wrap: wrap; align-items: center;
-                      margin-top: 7px; font-size: 12px; color: var(--t3); }
-.auto-group .ag-adv-t { color: var(--t3); }
+.auto-group .ag-adv { display: none; flex-direction: column; gap: 9px;
+                      margin-top: 10px; padding: 10px 12px 11px; border-radius: 12px;
+                      background: var(--elev); border: 1px dashed var(--sep); }
 .advanced .auto-group .ag-adv { display: flex; }
+.ag-adv-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ag-adv-t { font-size: 12px; font-weight: 600; color: var(--t2); }
+.ag-sum { font-size: 12px; color: var(--t3); }
+.ag-adv-clear { margin-left: auto; border: none; background: none; cursor: pointer;
+                font-size: 12px; color: var(--accent); padding: 0; }
+.ag-cells { display: flex; flex-wrap: wrap; gap: 7px; }
+.ag-cell { display: inline-flex; align-items: center; white-space: nowrap; gap: 4px; padding: 4px 8px 4px 9px;
+           background: var(--card); border: 1px solid var(--sep); border-radius: 9px;
+           font-size: 12px; color: var(--t2); transition: border-color .15s, box-shadow .15s; }
+.ag-cell b { color: var(--t3); font-weight: 600; white-space: nowrap; }
+.ag-cell.set { border-color: var(--accent); box-shadow: 0 1px 5px rgba(0,122,255,.16); }
+.ag-cell.set b { color: var(--accent); }
+.ag-cell input { width: 34px; padding: 3px 2px; font-size: 12px; text-align: center;
+                 border: 1px solid transparent; border-radius: 6px;
+                 background: var(--elev); color: var(--t1); -moz-appearance: textfield; }
+.ag-cell input::-webkit-outer-spin-button, .ag-cell input::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0; }
+.ag-cell input:hover { border-color: var(--sep); }
+.ag-cell input:focus { border-color: var(--accent); outline: none; background: var(--card); }
+.ag-cell i { font-style: normal; color: var(--t3); }
 .ag-avail { font-size: 12px; }
 
 /* 批量修改 + 行内大题编辑 */
@@ -927,7 +957,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 
   <!-- ========== ③ 组卷 ========== -->
   <section id="tab-paper">
-    <div class="card" style="max-width:660px">
+    <div class="card">
       <h3 style="margin-bottom:8px"> 错题重组试卷</h3>
       <p style="font-size:13px;color:var(--t2);line-height:1.8">
         在「② 错题库」勾选要组卷的题目  生成试卷页面：
@@ -1020,7 +1050,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       </div>
       <div class="hint" style="margin-top:8px">打印对话框选「另存为 PDF」即导出电子版；答案/解析会自动分页排在文末</div>
     </div>
-    <div class="card paper-card" style="max-width:660px;margin-top:14px">
+    <div class="card paper-card" style="margin-top:14px">
       <h3 style="margin-bottom:6px">已选题目（按顺序编号）</h3>
       <div class="hint" style="margin-bottom:10px;line-height:1.7">
         在「② 错题库」点图片，在预览里点「加入组卷」。这里可上下调整顺序决定题号，
@@ -1029,7 +1059,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       <div id="paperList"></div>
       <div class="empty" id="paperEmpty">还没选题目，去「② 错题库」点图片加入</div>
     </div>
-    <div class="card" style="max-width:660px;margin-top:14px">
+    <div class="card" style="margin-top:14px">
       <h3 style="margin-bottom:6px">大题模板</h3>
       <div class="hint" style="line-height:1.7;margin-bottom:10px">按科目预设大题归类，框选题目和预览里可直接选择</div>
       <div class="actions" style="margin-bottom:10px">
@@ -1044,7 +1074,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 
   <!-- ========== ④ 设置 ========== -->
   <section id="tab-settings">
-    <div class="card" style="max-width:680px">
+    <div class="card">
       <h3 style="margin-bottom:6px">AI 识别服务</h3>
 
       <!-- 已配置状态 -->
@@ -1088,7 +1118,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       </div>
     </div>
 
-    <div class="card" style="max-width:680px;margin-top:14px">
+    <div class="card" style="margin-top:14px">
       <h3 style="margin-bottom:6px">科目管理</h3>
       <p class="hint" style="line-height:1.8;margin-bottom:12px">
         增删科目后，错题库按科目分类、编号前缀、大题模板都会同步更新。<br>
@@ -1102,7 +1132,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       </div>
     </div>
 
-    <div class="card" style="max-width:680px;margin-top:14px">
+    <div class="card" style="margin-top:14px">
       <h3 style="margin-bottom:6px">数据导入导出</h3>
       <p class="hint" style="line-height:1.8;margin-bottom:12px">
         导出为 <b>ZIP 完整包</b>（含全部错题、图片、模板与编号设置），可直接用于备份或换电脑迁移。<br>
@@ -1116,7 +1146,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       <div class="hint" id="impResult" style="margin-top:10px"></div>
     </div>
 
-    <div class="card" style="max-width:680px;margin-top:14px">
+    <div class="card" style="margin-top:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <h3>运行日志</h3>
         <div class="actions" style="margin:0">
@@ -3352,9 +3382,12 @@ function autoGroupRow(ch) {
   const chs = autoChapters($("autoSubject").value);
   const opts = chs.map(c => `<option value="${esc(c)}"${c === ch ? " selected" : ""}>${esc(c)}</option>`).join("")
                || '<option value="">（该科目暂无大题，先给题目填「大题归类」）</option>';
-  const stars = [1, 2, 3, 4, 5].map(n => `<span class="ag-star"><b>${n}星</b>
-      <input type="number" min="0" max="99" placeholder="少" data-star="${n}" data-bound="min">
-      <input type="number" min="0" max="99" placeholder="多" data-star="${n}" data-bound="max"></span>`).join("");
+  const cells = [1, 2, 3, 4, 5].map(n => `<label class="ag-cell" data-n="${n}">
+      <b>${n}星</b>
+      <input type="number" min="0" max="99" data-star="${n}" data-bound="min" title="最少几道（留空=不限）">
+      <i>~</i>
+      <input type="number" min="0" max="99" data-star="${n}" data-bound="max" title="最多几道（留空=不限）">
+    </label>`).join("");
   const el = document.createElement("div");
   el.className = "auto-group";
   el.innerHTML = `<div class="ag-head">
@@ -3366,8 +3399,19 @@ function autoGroupRow(ch) {
       <button class="ag-mv" data-mv="down" title="下移">↓</button>
       <button class="ag-del" title="删除该大题"><svg class="ic"><use href="#ic-x"/></svg></button>
     </div>
-    <div class="ag-adv"><span class="ag-adv-t">星级约束（留空=不限）</span>${stars}</div>`;
+    <div class="ag-adv">
+      <div class="ag-adv-head"><span class="ag-adv-t">精确星级约束（可选）</span>
+        <span class="ag-sum">各星级不限</span>
+        <button type="button" class="ag-adv-clear">清空</button></div>
+      <div class="ag-cells">${cells}</div>
+    </div>`;
   el.querySelector(".ag-ch").innerHTML = opts;
+  el.querySelectorAll(".ag-adv input").forEach(i2 => i2.oninput = () => autoSum(el));
+  el.querySelector(".ag-adv-clear").onclick = () => {
+    el.querySelectorAll(".ag-adv input").forEach(i2 => { i2.value = ""; });
+    autoSum(el);
+  };
+  autoSum(el);
   el.querySelector(".ag-del").onclick = () => el.remove();
   el.querySelector('[data-mv="up"]').onclick = () => {
     const prev = el.previousElementSibling;
@@ -3397,6 +3441,21 @@ function autoSaveCfg() {
     };
     localStorage.setItem("autoCfg", JSON.stringify(all));
   } catch (e) { }
+}
+
+function autoSum(row) {
+  const parts = [];
+  [1, 2, 3, 4, 5].forEach(n => {
+    const lo = row.querySelector('input[data-star="' + n + '"][data-bound="min"]');
+    const hi = row.querySelector('input[data-star="' + n + '"][data-bound="max"]');
+    const l = (lo.value || "").trim(), h = (hi.value || "").trim();
+    const cell = row.querySelector('.ag-cell[data-n="' + n + '"]');
+    if (cell) cell.classList.toggle("set", l !== "" || h !== "");
+    if (l === "" && h === "") return;
+    parts.push(n + "星 " + (l === "" ? "≤" + h : (h === "" ? "≥" + l : l + "~" + h)));
+  });
+  const sum = row.querySelector(".ag-sum");
+  if (sum) sum.textContent = parts.length ? "当前：" + parts.join(" · ") : "各星级不限";
 }
 
 function autoPoolCount(chapter) {
@@ -3434,6 +3493,7 @@ function autoInitGroups(force) {
           if (hi && b[1] !== null && b[1] !== undefined) hi.value = b[1];
         });
       }
+      autoSum(el);
       box.appendChild(el);
     });
   }
