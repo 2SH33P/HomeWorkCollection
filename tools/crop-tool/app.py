@@ -1072,7 +1072,7 @@ def ai_proofread(img_rgb, draft):
               "4) 选项是否缺失、题干与选项是否混杂；\n"
               "5) 与图片不符之处。\n"
               "保持原格式：【题干】标记、选项每行一个(A．B．C．D．)、"
-              "公式用 $...$、图形用 [图@x,y,w,h]、不要输出解释。\n"
+              "公式用 $...$、不要输出图形坐标标记、不要输出解释。\n"
               "只输出修正后的完整结果。\n\n识别结果：\n" + draft)
     body = {"model": cfg["model"] or "glm-4v-flash",
             "messages": [{"role": "user", "content": [
@@ -1125,9 +1125,9 @@ def call_ai_vision(img_rgb):
               '6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / '
               'D．选项内容（用全角句点．）；\n'
               '7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n'
-              '8. 题目内嵌图形/示意图用 [图@x,y,w,h] 标记，框必须精确贴合图形本身边界（含图形外框线），'
-              '不要包含图形周围的文字、题干或大块空白；坐标是图形相对整图0-1000 比例，'
-              '如 [图@620,280,240,180]，没有图形不要加。\n')
+              '8. 不要输出任何图形位置标记（不要写 [图@x,y,w,h] 这类坐标）。图形位置由用户在'
+              '「裁图」里手动框选确定，你只负责把文字识别准确；题干里遇到图形时，'
+              '按上下文正常接续文字即可，不要为图形留占位符。\n')
     if ai_config().get("font_marks", True):
         prompt += ('9. 标注原题的视觉强调，只用两种标记(不要用其他符号)：\n'
                    '   - 比正文更粗更黑的文字(黑体、加粗的宋体等) -> **文字**\n'
@@ -2481,7 +2481,7 @@ def undo_last_write():
 def crop_item_figure(item_id: str, payload: dict = None):
     """在题目图上按 0-1000 相对坐标当场裁出图块并存为附件(不再拖到渲染时裁)。
     返回 {n, figures}: n 为该图块编号(用于在正文里写 [图N])。
-    payload: {x, y, w, h}"""
+    payload: {x, y, w, h, replace?}  replace=某图块编号时覆盖它(用于手动微调)"""
     payload = payload or {}
     with DB_LOCK:
         db = load_db()
@@ -2508,15 +2508,27 @@ def crop_item_figure(item_id: str, payload: dict = None):
         if fig.shape[0] < 8 or fig.shape[1] < 8:
             fig = img[y0:y0 + h0, x0:x0 + w0]
         figs = list(it.get("figures") or [])
-        n = max([int(f.get("n", 0) or 0) for f in figs] + [0]) + 1
-        rel = f"{it['image'][:-4]}_fig{n}.jpg"
-        if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
-            return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
-        figs.append({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh})
+        try:
+            rep_n = int(payload.get("replace") or 0)
+        except (TypeError, ValueError):
+            rep_n = 0
+        old = next((f for f in figs if int(f.get("n", 0) or 0) == rep_n), None) if rep_n else None
+        if old:                                     # 覆盖已有图块(手动微调)
+            n = rep_n
+            rel = old.get("file") or f"{it['image'][:-4]}_fig{n}.jpg"
+            if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
+                return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
+            old.update({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh})
+        else:                                       # 新增图块
+            n = max([int(f.get("n", 0) or 0) for f in figs] + [0]) + 1
+            rel = f"{it['image'][:-4]}_fig{n}.jpg"
+            if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
+                return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
+            figs.append({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh})
         it["figures"] = figs
         save_db(db)
-    log_ai("裁图块", "-", True, 0, f"{item_id} 第{n}块")
-    return {"ok": True, "n": n, "figures": figs}
+    log_ai("裁图块", "-", True, 0, f"{item_id} 第{n}块" + ("(覆盖)" if old else ""))
+    return {"ok": True, "n": n, "figures": figs, "replaced": bool(old)}
 
 
 @app.get("/api/paper", response_class=HTMLResponse)

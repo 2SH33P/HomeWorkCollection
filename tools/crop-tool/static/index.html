@@ -2977,7 +2977,7 @@ $("pvSplit").addEventListener("pointerup", () => {
 });
 function openPreview(it) {
   pvItem = it;
-  pvCropOn = false; pvRect = null; pvDrag = null;
+  pvCropOn = false; pvRect = null; pvDrag = null; pvCropReplace = 0;
   pvcv.classList.remove("on"); $("pvCropBtn").classList.remove("on");
   $("pvCropOk").style.display = "none"; $("pvCropCancel").style.display = "none";
   $("pvCropHint").style.display = "none";
@@ -3067,6 +3067,7 @@ function renderPvFigs(it) {
       <img src="/files/${f.file}" loading="lazy">
       <div class="fig-info"><b>[图${f.n}]</b> ${f.upload ? "上传" : "裁剪"}</div>
       <div class="fig-ops">
+        <button data-recrop="${f.n}" title="重新框选该图块（拖动虚线框后确认覆盖）">重裁</button>
         <button data-ins="${f.n}">插入</button>
         <button class="danger" data-del="${f.n}">删除</button>
       </div>
@@ -3079,6 +3080,7 @@ function renderPvFigs(it) {
     ta.focus();
     toast(`已在识别内容插入 ${tag}`, "ok");
   });
+  $("pvFigList").querySelectorAll("[data-recrop]").forEach(b => b.onclick = () => pvRecrop(+b.dataset.recrop));
   $("pvFigList").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
     const n = b.dataset.del;
     if (!confirm(`删除 [图${n}]？题干中若还引用它，渲染时会显示缺失提示`)) return;
@@ -3107,6 +3109,7 @@ $("prevMask").onclick = e => { if (e.target === $("prevMask")) $("prevMask").cla
 
 /* ---------- 手动裁图: 在预览大图上框选图形区域 -> [图@x,y,w,h] ---------- */
 let pvCropOn = false, pvDrag = null, pvRect = null, pvScale = 1;
+let pvCropReplace = 0;                 // >0 表示这次裁剪是覆盖该编号的图块
 const pvcv = $("pvCv"), pvctx = pvcv.getContext("2d");
 
 function pvResizeCv() {
@@ -3155,6 +3158,25 @@ pvcv.addEventListener("pointermove", e => {
 pvcv.addEventListener("pointerup", () => { pvDrag = null; });
 
 $("pvViewImg").onclick = () => { if (pvItem) openImageViewer(pvItem, pvItem.image ? "crop" : "page"); };
+
+// 重裁已有图块: 进裁图模式并把原矩形画出来, 可拖动/调整后覆盖
+function pvRecrop(n) {
+  const f = ((pvItem && pvItem.figures) || []).find(x => x.n === n);
+  if (!f) return;
+  pvCropReplace = n;
+  if (!pvCropOn) $("pvCropBtn").click();
+  const place = () => {
+    pvResizeCv();
+    const dispW = parseFloat(pvcv.style.width) || 1, dispH = parseFloat(pvcv.style.height) || 1;
+    pvRect = { x: (f.x || 0) / 1000 * dispW, y: (f.y || 0) / 1000 * dispH,
+               w: Math.max(10, (f.w || 0) / 1000 * dispW), h: Math.max(10, (f.h || 0) / 1000 * dispH) };
+    pvDraw();
+    toast("正在调整图 " + n + "：拖动虚线框后点「确认裁剪」覆盖", "ok");
+  };
+  const im = $("pvImg");
+  if (im.complete && im.naturalWidth) requestAnimationFrame(place);
+  else im.onload = place;
+}
 $("pvCropBtn").onclick = () => {
   pvCropOn = !pvCropOn;
   pvcv.classList.toggle("on", pvCropOn);
@@ -3180,18 +3202,25 @@ $("pvCropOk").onclick = async () => {
   const y = Math.round(pvRect.y / dispH * 1000);
   const w = Math.round(pvRect.w / dispW * 1000);
   const h = Math.round(pvRect.h / dispH * 1000);
+  const replacing = pvCropReplace;
+  pvCropReplace = 0;
   try {
-    // 当场裁好并存为图片附件(不再写成 [图@坐标] 拖到渲染时裁, 图片被改动后就不会错位)
+    // 当场裁好并存为图片附件(不再写成 [图@坐标] 拖到渲染时裁, 图片被改动后也不会错位)
     const d = await api(`/api/item/${pvItem.id}/figure/crop`, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ x: Math.max(0, x), y: Math.max(0, y),
-                             w: Math.min(1000, w), h: Math.min(1000, h) }) });
+                             w: Math.min(1000, w), h: Math.min(1000, h),
+                             replace: replacing || 0 }) });
     pvItem.figures = d.figures;
     renderPvFigs(pvItem);
-    const tag = "[图" + d.n + "]";
-    const note = $("pvNote").value.trim();
-    $("pvNote").value = note ? note + "\n[图" + d.n + "]" : tag;
-    toast("已裁好图 " + d.n + "（存为图片附件，正文里用 [图" + d.n + "] 引用）", "ok");
+    if (replacing) {
+      toast("图 " + d.n + " 已按新框重新裁剪", "ok");
+    } else {
+      const tag = "[图" + d.n + "]";
+      const note = $("pvNote").value.trim();
+      $("pvNote").value = note ? note + "\n[图" + d.n + "]" : tag;
+      toast("已裁好图 " + d.n + "（存为图片附件，正文里用 [图" + d.n + "] 引用）", "ok");
+    }
   } catch (err) { toast("裁图失败: " + err.message, "err"); }
   $("pvCropBtn").click();          // 关闭裁图模式
 };
