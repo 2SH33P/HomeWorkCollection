@@ -367,6 +367,12 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .b-ai { color: #248a3d !important; font-weight: 600; }
 .b-ai[disabled] { opacity: .5; }
 
+/* 题号悬浮: 鼠标右侧大号预览图 */
+.hover-prev { position: fixed; z-index: 120; pointer-events: none;
+              background: #fff; border-radius: 12px; padding: 6px;
+              box-shadow: 0 10px 34px rgba(0,0,0,.28); border: 1px solid var(--sep); }
+.hover-prev img { display: block; max-width: 420px; max-height: 560px; border-radius: 8px; }
+
 /* 原图取景(核对/修正裁剪) */
 #rfPrev { display: block; margin: 0 auto; background: #fff; border-radius: 10px;
           box-shadow: var(--shadow); touch-action: none; cursor: move; max-width: 100%; }
@@ -943,6 +949,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <option value="3">≥3 星</option><option value="4">≥4 星</option>
           <option value="5">5 星</option>
         </select></label>
+      <label class="fl"><span>大题</span>
+        <select id="fChapter"><option value="">全部</option></select></label>
       <button class="btn ghost btn-sm" id="fClear"><svg class="ic"><use href="#ic-x"/></svg><span>清除筛选</span></button>
       <span class="hint" id="fCount"></span>
     </div>
@@ -1069,7 +1077,9 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       <div class="hint" style="margin-top:8px">打印对话框选「另存为 PDF」即导出电子版；答案/解析会自动分页排在文末</div>
     </div>
     <div class="card paper-card" style="margin-top:14px">
-      <h3 style="margin-bottom:6px">已选题目（按顺序编号）</h3>
+      <h3 style="margin-bottom:6px">已选题目（按顺序编号）
+        <button class="btn ghost btn-sm" id="sortChapBtn" style="margin-left:8px"
+                title="按大题的数字序号（一、二、三…）自动排序"><svg class="ic"><use href="#ic-list"/></svg><span>按大题排序</span></button></h3>
       <div class="hint" style="margin-bottom:10px;line-height:1.7">
         在「② 错题库」点图片，在预览里点「加入组卷」。这里可上下调整顺序决定题号，
         同「大题归属」的题自动归为一道大题（黑体标题）。
@@ -1207,6 +1217,9 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
     </div>
   </div>
 </div>
+
+<!-- 题号悬浮大图预览 -->
+<div id="hoverPrev" class="hover-prev" style="display:none"><img id="hoverPrevImg" alt=""></div>
 
 <!-- 预设大题选择浮层 -->
 <div id="chapMenu" class="chap-menu" style="display:none"></div>
@@ -2761,11 +2774,38 @@ function cardHTML(it, compact = false) {
 /* ===== 错题库: 列表(默认) / 相册 两种视图, 科目->大题->日期分层 ===== */
 let libView = { mode: "subjects", subject: null };   // subjects | list | grid
 let libViewMode = localStorage.getItem("libViewMode") || "list";
-let libFilters = { q: "", star: 0, from: "", to: "" };
+let libFilters = { q: "", star: 0, from: "", to: "", chapter: "" };
 
 function fmtDate(d) {
   const p = (d || "").split("-");
   return p.length >= 3 ? `${parseInt(p[1])}月${parseInt(p[2])}日` : d;
+}
+
+function chapterOptions() {                       // 当前范围里出现过的大题(按序号排)
+  const arr = (libView && libView.subject)
+    ? library.filter(x => (x.subject || "未分类") === libView.subject) : library;
+  const seen = [];
+  arr.forEach(x => { const c = (x.chapter || "").trim(); if (c && !seen.includes(c)) seen.push(c); });
+  const ord = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+  return seen.sort((a, b) => chapterNum(a) - chapterNum(b));
+}
+
+function chapterNum(c) {                          // 大题序号: 一、->0  二、->1 ... 无序号->99
+  const m = (c || "").match(/^[（(]?([一二三四五六七八九十]+)[）)、．.]/);
+  if (!m) return 99;
+  const ord = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+  return ord.indexOf(m[1].charAt(0));
+}
+
+function refreshChapterFilter() {
+  const sel = $("fChapter");
+  if (!sel) return;
+  const cur = libFilters.chapter;
+  const list = chapterOptions();
+  sel.innerHTML = '<option value="">全部</option>' +
+    list.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join("");
+  sel.value = list.includes(cur) ? cur : "";
+  if (!sel.value) libFilters.chapter = "";
 }
 
 function filteredItems() {
@@ -2783,13 +2823,14 @@ function filteredItems() {
     });
   }
   if (libFilters.star > 0) arr = arr.filter(it => (it.star || 0) >= libFilters.star);
+  if (libFilters.chapter) arr = arr.filter(it => (it.chapter || "").trim() === libFilters.chapter);
   if (libFilters.from) arr = arr.filter(it => (it.created || "").slice(0, 10) >= libFilters.from);
   if (libFilters.to) arr = arr.filter(it => (it.created || "").slice(0, 10) <= libFilters.to);
   return arr;
 }
 
 function updateFilterUI() {
-  $("fCount").textContent = (libFilters.q || libFilters.star || libFilters.from || libFilters.to)
+  $("fCount").textContent = (libFilters.q || libFilters.star || libFilters.from || libFilters.to || libFilters.chapter)
     ? `筛选出 ${filteredItems().length} 题` : "";
 }
 
@@ -2882,6 +2923,26 @@ function renderList(subj) {
     h.querySelector(".q-toggle").textContent = row.classList.contains("open") ? "收起" : "展开";
   });
   // 点题号 -> 打开全屏编辑窗口
+  // 题号悬浮 -> 鼠标右侧显示大号预览图(仅鼠标设备)
+  const hoverBox = $("hoverPrev"), hoverImg = $("hoverPrevImg");
+  const hideHover = () => { hoverBox.style.display = "none"; };
+  $("libGrid").querySelectorAll(".q-code").forEach(c => {
+    c.onmouseenter = (e) => {
+      if (isTouch()) return;
+      const it = library.find(x => x.id === c.dataset.code);
+      if (!it || !it.image) return;
+      hoverImg.src = "/files/" + it.image;
+      hoverBox.style.display = "";
+      const w = hoverBox.offsetWidth || 300, h = hoverBox.offsetHeight || 200;
+      let x = e.clientX + 18, y = e.clientY - 10;
+      if (x + w > window.innerWidth - 8) x = Math.max(8, e.clientX - w - 18);   // 右侧放不下就放左边
+      if (y + h > window.innerHeight - 8) y = Math.max(8, window.innerHeight - h - 8);
+      hoverBox.style.left = x + "px";
+      hoverBox.style.top = y + "px";
+    };
+    c.onmouseleave = hideHover;
+  });
+  window.addEventListener("scroll", hideHover, { passive: true });
   $("libGrid").querySelectorAll(".q-code").forEach(c => c.onclick = e => {
     e.stopPropagation();
     const it = library.find(x => x.id === c.dataset.code);
@@ -2981,6 +3042,7 @@ function renderAlbum(subj) {
 }
 
 function renderLibrary() {
+  refreshChapterFilter();
   updateFilterUI();
   if (libView.mode === "subjects") {
     renderSubjects();
@@ -3002,9 +3064,15 @@ $("libQ").oninput = () => {
 $("fFrom").onchange = () => { libFilters.from = $("fFrom").value; renderLibrary(); };
 $("fTo").onchange = () => { libFilters.to = $("fTo").value; renderLibrary(); };
 $("fStar").onchange = () => { libFilters.star = +$("fStar").value || 0; renderLibrary(); };
+if ($("fChapter")) $("fChapter").onchange = () => {
+  libFilters.chapter = $("fChapter").value;
+  renderLibrary();
+};
+$("sortChapBtn").onclick = () => { sortPaperByChapter(); toast("已按大题序号排序", "ok"); };
 $("fClear").onclick = () => {
   libFilters = { q: "", star: 0, from: "", to: "" };
   $("libQ").value = ""; $("fFrom").value = ""; $("fTo").value = ""; $("fStar").value = "0";
+  if ($("fChapter")) $("fChapter").value = "";
   renderLibrary();
 };
 document.querySelectorAll(".lib-search .seg button").forEach(b => b.onclick = () => {
@@ -3563,6 +3631,17 @@ $("pvCropOk").onclick = async () => {
 };
 
 /* ---------- 组卷列表(选图顺序 = 题号顺序) ---------- */
+function sortPaperByChapter() {          // 按大题数字序号(一、二、三…)重排, 同一大题内保持原顺序
+  const arr = [...selected];
+  const keyed = arr.map((id, i) => {
+    const it = library.find(x => x.id === id) || {};
+    return { id: id, i: i, ch: chapterNum(it.chapter || "") };
+  });
+  keyed.sort((a, b) => (a.ch - b.ch) || (a.i - b.i));
+  selected = new Set(keyed.map(x => x.id));
+  renderPaperList();
+}
+
 function renderPaperList() {
   const arr = [...selected];
   $("paperEmpty").style.display = arr.length ? "none" : "block";
@@ -3633,6 +3712,7 @@ function bindPaperChapters() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chapter: it.chapter }) });
         toast("大题已更新", "ok");
+        sortPaperByChapter();                     // 改完大题自动按序重排
       } catch (err) { toast("保存失败: " + err.message, "err"); }
     };
   });
@@ -3659,6 +3739,7 @@ $("pdfBtn").onclick = async () => {
   btn.querySelector("span").textContent = "排版中…";
   try {
     savePaperHead();
+    sortPaperByChapter();                       // 组卷时按大题数字排序
     const q = new URLSearchParams({ ids: [...selected].join(","),
       attach: $("paperAttach").value || "",
       index: $("paperIndex").checked ? "1" : "",
