@@ -350,6 +350,16 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* 自动组卷面板(精简版) */
+.auto-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.auto-top .fld { min-width: 108px; margin-bottom: 0; }
+.auto-bottom { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.auto-group .ag-adv { display: none; gap: 10px; flex-wrap: wrap; align-items: center;
+                      margin-top: 7px; font-size: 12px; color: var(--t3); }
+.auto-group .ag-adv-t { color: var(--t3); }
+.advanced .auto-group .ag-adv { display: flex; }
+.ag-avail { font-size: 12px; }
+
 /* 批量修改 + 行内大题编辑 */
 .batch-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
                 margin: 0 0 12px; padding: 9px 12px; background: var(--elev);
@@ -963,21 +973,30 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <input type="text" id="paperHeader" placeholder="如：错题重组试卷 · 内部资料"></label>
       </details>
       <details class="paper-head-set" id="autoPanel" style="margin-top:12px">
-        <summary>自动组卷（按大题与星级自动抽题；一次生成多份，互不重复）</summary>
+        <summary>自动组卷（按大题自动抽题；一次生成多份，互不重复）</summary>
         <div style="margin-top:10px">
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-            <label class="fld" style="min-width:120px"><span>科目</span><select id="autoSubject"></select></label>
-            <label class="fld" style="min-width:88px"><span>份数</span>
+          <div class="auto-top">
+            <label class="fld"><span>科目</span><select id="autoSubject"></select></label>
+            <label class="fld"><span>份数</span>
               <input type="number" id="autoPapers" value="3" min="1" max="50"></label>
-            <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="autoKw">同份卷内关键字不重复</label>
-            <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="autoAvoid">避开上次用过的题</label>
+            <label class="fld"><span>难度倾向</span>
+              <select id="autoTilt">
+                <option value="">不限</option>
+                <option value="easy">偏易（多抽低星）</option>
+                <option value="mid">中等（3 星为主）</option>
+                <option value="hard">偏难（多抽高星）</option>
+              </select></label>
+            <button class="btn ghost btn-sm" id="autoFill"
+                    title="按题库里各大题的题量与份数自动填好题量">按题库一键填充</button>
+            <button class="btn ghost btn-sm" id="autoAdvBtn" title="展开后可为每个大题指定各星级的最少/最多">高级约束 ▾</button>
           </div>
-          <div class="hint" style="margin:8px 0">每个大题填题量与该星级的最少/最多（留空=不限）；
-            用 <b>↑↓</b> 调整大题顺序（决定卷内先后）；每个大题内部自动按星级从低到高排列。</div>
           <div id="autoGroups"></div>
-          <div class="actions" style="margin-top:10px">
-            <button class="btn ghost btn-sm" id="autoAddGroup"><svg class="ic"><use href="#ic-plus"/></svg><span>添加大题</span></button>
-            <button class="btn ghost btn-sm" id="autoCheck"><svg class="ic"><use href="#ic-search"/></svg><span>预检可行性</span></button>
+          <div class="auto-bottom">
+            <label class="chk"><input type="checkbox" id="autoKw">关键字不重复</label>
+            <label class="chk"><input type="checkbox" id="autoAvoid">避开上次用过的题</label>
+            <span style="flex:1"></span>
+            <button class="btn ghost btn-sm" id="autoAddGroup" style="display:none">+ 大题</button>
+            <button class="btn ghost btn-sm" id="autoCheck">预检</button>
             <button class="btn" id="autoBuild">生成</button>
             <button class="btn ghost btn-sm" id="autoExportAll" style="display:none">全部导出 ZIP</button>
           </div>
@@ -3332,20 +3351,23 @@ function autoChapters(subj) {
 function autoGroupRow(ch) {
   const chs = autoChapters($("autoSubject").value);
   const opts = chs.map(c => `<option value="${esc(c)}"${c === ch ? " selected" : ""}>${esc(c)}</option>`).join("")
-               || '<option value="">（该科目暂无大题归类，先给题目填「大题归类」）</option>';
+               || '<option value="">（该科目暂无大题，先给题目填「大题归类」）</option>';
   const stars = [1, 2, 3, 4, 5].map(n => `<span class="ag-star"><b>${n}星</b>
       <input type="number" min="0" max="99" placeholder="少" data-star="${n}" data-bound="min">
       <input type="number" min="0" max="99" placeholder="多" data-star="${n}" data-bound="max"></span>`).join("");
   const el = document.createElement("div");
   el.className = "auto-group";
   el.innerHTML = `<div class="ag-head">
-      <select class="ag-ch">${opts}</select>
+      <select class="ag-ch"></select>
       <span class="ag-count">题量 <input type="number" min="0" max="99" value="0" class="ag-num"></span>
+      <span class="ag-avail hint"></span>
+      <span style="flex:1"></span>
       <button class="ag-mv" data-mv="up" title="上移（决定卷内大题顺序）">↑</button>
       <button class="ag-mv" data-mv="down" title="下移">↓</button>
       <button class="ag-del" title="删除该大题"><svg class="ic"><use href="#ic-x"/></svg></button>
     </div>
-    <div class="ag-stars">${stars}</div>`;
+    <div class="ag-adv"><span class="ag-adv-t">星级约束（留空=不限）</span>${stars}</div>`;
+  el.querySelector(".ag-ch").innerHTML = opts;
   el.querySelector(".ag-del").onclick = () => el.remove();
   el.querySelector('[data-mv="up"]').onclick = () => {
     const prev = el.previousElementSibling;
@@ -3358,13 +3380,80 @@ function autoGroupRow(ch) {
   return el;
 }
 
+function autoSavedCfg() {
+  try {
+    const all = JSON.parse(localStorage.getItem("autoCfg") || "{}");
+    return all[$("autoSubject").value] || null;
+  } catch (e) { return null; }
+}
+
+function autoSaveCfg() {
+  try {
+    const all = JSON.parse(localStorage.getItem("autoCfg") || "{}");
+    all[$("autoSubject").value] = {
+      papers: $("autoPapers").value, tilt: $("autoTilt").value,
+      kw: $("autoKw").checked, avoid: $("autoAvoid").checked,
+      groups: autoCollect(),
+    };
+    localStorage.setItem("autoCfg", JSON.stringify(all));
+  } catch (e) { }
+}
+
+function autoPoolCount(chapter) {
+  const subj = $("autoSubject").value;
+  return library.filter(x => (x.subject || "") === subj && (x.chapter || "") === chapter
+                             && !(x.title || "").trim().startsWith("§")).length;
+}
+
+function autoRefreshAvail() {
+  document.querySelectorAll("#autoGroups .auto-group").forEach(el => {
+    const ch = el.querySelector(".ag-ch").value;
+    el.querySelector(".ag-avail").textContent = ch ? "库中 " + autoPoolCount(ch) + " 道" : "";
+  });
+}
+
 function autoInitGroups(force) {
   const box = $("autoGroups");
   if (!force && box.children.length) return;
   box.innerHTML = "";
+  const saved = (autoSavedCfg() || {}).groups || [];
   const chs = autoChapters($("autoSubject").value);
-  if (!chs.length) box.appendChild(autoGroupRow(""));
-  else chs.forEach(c => box.appendChild(autoGroupRow(c)));
+  if (!chs.length) {
+    box.appendChild(autoGroupRow(""));
+  } else {
+    chs.forEach(c => {
+      const el = autoGroupRow(c);
+      const sv = saved.find(g => g.chapter === c);
+      if (sv) {
+        el.querySelector(".ag-num").value = sv.count || 0;
+        Object.keys(sv.stars || {}).forEach(st => {
+          const b = sv.stars[st] || [];
+          const lo = el.querySelector('input[data-star="' + st + '"][data-bound="min"]');
+          const hi = el.querySelector('input[data-star="' + st + '"][data-bound="max"]');
+          if (lo && b[0] !== null && b[0] !== undefined) lo.value = b[0];
+          if (hi && b[1] !== null && b[1] !== undefined) hi.value = b[1];
+        });
+      }
+      box.appendChild(el);
+    });
+  }
+  autoRefreshAvail();
+}
+
+function autoFill() {
+  const papers = Math.max(1, +$("autoPapers").value || 1);
+  let ok = 0;
+  document.querySelectorAll("#autoGroups .auto-group").forEach(el => {
+    const ch = el.querySelector(".ag-ch").value;
+    const avail = autoPoolCount(ch);
+    const num = el.querySelector(".ag-num");
+    if (!ch || avail <= 0) { num.value = 0; return; }
+    num.value = Math.max(1, Math.min(8, Math.floor(avail / papers)));   // 按份数均分题库
+    ok++;
+  });
+  autoRefreshAvail();
+  autoSaveCfg();
+  toast(ok ? `已按题库填好 ${ok} 个大题的题量（份数 ${papers}），可手动微调` : "该科目题库为空", ok ? "ok" : "err");
 }
 
 function autoCollect() {
@@ -3390,6 +3479,7 @@ function autoBody(extra) {
     papers: +$("autoPapers").value || 1,
     unique_keywords: $("autoKw").checked,
     avoid_last: $("autoAvoid").checked,
+    tilt: $("autoTilt").value,
     groups: autoCollect(),
   }, extra || {}));
 }
@@ -3444,20 +3534,51 @@ async function autoPdf(i) {
   } catch (err) { toast("导出失败: " + err.message, "err"); }
 }
 
-$("autoSubject").onchange = () => autoInitGroups(true);
-$("autoAddGroup").onclick = () => $("autoGroups").appendChild(autoGroupRow(""));
+$("autoSubject").onchange = () => {
+  try { localStorage.setItem("autoSubject", $("autoSubject").value); } catch (e) { }
+  const cfg = autoSavedCfg();
+  if (cfg) {
+    $("autoPapers").value = cfg.papers || 3;
+    $("autoTilt").value = cfg.tilt || "";
+    $("autoKw").checked = !!cfg.kw;
+    $("autoAvoid").checked = !!cfg.avoid;
+  }
+  autoInitGroups(true);
+};
+$("autoFill").onclick = () => autoFill();
+$("autoAdvBtn").onclick = () => {
+  const on = $("autoPanel").classList.toggle("advanced");
+  $("autoAdvBtn").textContent = on ? "高级约束 ▴" : "高级约束 ▾";
+  $("autoAddGroup").style.display = on ? "" : "none";
+};
+$("autoAddGroup").onclick = () => {
+  $("autoGroups").appendChild(autoGroupRow(""));
+  autoRefreshAvail();
+};
 $("autoPanel").ontoggle = () => {
   const sel = $("autoSubject");
   if (!sel.options.length) {
     sel.innerHTML = autoSubjects().map(s => `<option>${esc(s)}</option>`).join("");
-    if (typeof curSubject === "string" && autoSubjects().includes(curSubject)) sel.value = curSubject;
+    let want = "";
+    try { want = localStorage.getItem("autoSubject") || ""; } catch (e) { }
+    if (!want) want = (typeof curSubject === "string" ? curSubject : "");
+    if (autoSubjects().includes(want)) sel.value = want;
+  }
+  const cfg = autoSavedCfg();
+  if (cfg) {
+    $("autoPapers").value = cfg.papers || 3;
+    $("autoTilt").value = cfg.tilt || "";
+    $("autoKw").checked = !!cfg.kw;
+    $("autoAvoid").checked = !!cfg.avoid;
   }
   autoInitGroups(false);
+  autoRefreshAvail();
 };
 $("autoCheck").onclick = async () => {
   const groups = autoCollect();
   if (!groups.length) return toast("请先填写至少一个大题的题量", "err");
   try {
+    autoSaveCfg();
     const d = await api("/api/auto/plan", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: autoBody() });
@@ -3471,6 +3592,7 @@ $("autoBuild").onclick = async () => {
   const btn = $("autoBuild");
   btn.disabled = true; btn.textContent = "生成中…";
   try {
+    autoSaveCfg();
     const d = await api("/api/auto/build", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: autoBody() });

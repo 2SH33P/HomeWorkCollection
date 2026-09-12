@@ -1424,7 +1424,15 @@ def auto_pool(items, groups, subject="", exclude_ids=None):
     return pool
 
 
-def _alloc_star_counts(group, avail, P):
+TILT_W = {                       # 难度倾向 -> 各星级权重(用于补足阶段的挑选偏好)
+    "": {0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1},
+    "easy": {0: 3, 1: 4, 2: 3, 3: 2, 4: 1, 5: 0.5},
+    "mid": {0: 1, 1: 1, 2: 2, 3: 3, 4: 2, 5: 1},
+    "hard": {0: 0.5, 1: 0.5, 2: 1, 3: 2, 4: 3, 5: 4},
+}
+
+
+def _alloc_star_counts(group, avail, P, tilt=""):
     """把"某大题各星级可用数"分摊到 P 份卷子: 返回 P×6 的数量矩阵, 或 (None, 原因)。
     约束: 每份总量 = count, 各星级 lo ≤ n ≤ hi(hi=None 不限), 且各份合计不超过可用数。"""
     C = int(group.get("count") or 0)
@@ -1453,7 +1461,9 @@ def _alloc_star_counts(group, avail, P):
         if not cand:
             return None, (f"题目不足：受星级「最多」限制，每份最多只能排 "
                           f"{C - r[pi]} 道 / 需要 {C} 道")
-        st = max(cand, key=lambda x: (R[x], -n[pi][x]))         # 先消耗最富余的星级
+        w = TILT_W.get(tilt or "", TILT_W[""])
+        # 难度倾向优先(决定整体偏易/偏难), 同权重内再看剩余量与已取数(保持份与份之间均衡)
+        st = max(cand, key=lambda x: (w.get(x, 1), R[x], -n[pi][x]))
         n[pi][st] += 1
         R[st] -= 1
         r[pi] -= 1
@@ -1462,7 +1472,7 @@ def _alloc_star_counts(group, avail, P):
 
 
 def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
-              exclude_ids=None, seed=None, max_probe=50):
+              exclude_ids=None, seed=None, max_probe=50, tilt=""):
     """自动组卷: 先算全局配额(每份各星级拿几道), 再发牌。
     返回 (卷子列表, 诊断); 卷子内按大题顺序、大题内按星级升序。"""
     rnd = random.Random(seed)
@@ -1482,7 +1492,7 @@ def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
     for P in range(1, upper + 1):
         bad = None
         for g in live:
-            _, err = _alloc_star_counts(g, avail.get(g.get("chapter") or "", collections.Counter()), P)
+            _, err = _alloc_star_counts(g, avail.get(g.get("chapter") or "", collections.Counter()), P, tilt)
             if err:
                 bad = err
                 break
@@ -1493,7 +1503,8 @@ def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
     if diag["max_papers"] == upper and diag["max_papers"] > 0:
         for g in live:                      # 已到总量上限: 再试一份, 报告卡在哪
             _, err2 = _alloc_star_counts(g, avail.get(g.get("chapter") or "",
-                                                      collections.Counter()), diag["max_papers"] + 1)
+                                                      collections.Counter()),
+                                                    diag["max_papers"] + 1, tilt)
             if err2:
                 diag["msg"] = f"再出第 {diag['max_papers'] + 1} 份时不够：{err2}"
                 break
@@ -1508,7 +1519,7 @@ def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
         papers_items, kw_used, fail = [[] for _ in range(want)], [set() for _ in range(want)], None
         for g in live:
             ch = g.get("chapter") or ""
-            n, err = _alloc_star_counts(g, avail.get(ch, collections.Counter()), want)
+            n, err = _alloc_star_counts(g, avail.get(ch, collections.Counter()), want, tilt)
             if err:
                 fail = err
                 break
@@ -1561,7 +1572,8 @@ def auto_plan_api(payload: dict = None):
         return JSONResponse({"ok": False, "msg": "请先设置各大题的题量与星级限制"}, status_code=400)
     ex = set(load_auto_last()) if payload.get("avoid_last") else set()
     _, diag = auto_plan(load_db()["items"], groups, payload.get("subject") or "",
-                        papers=1, exclude_ids=ex, seed=payload.get("seed"))
+                        papers=1, exclude_ids=ex, seed=payload.get("seed"),
+                        tilt=payload.get("tilt") or "")
     mx = diag.get("max_papers", 0)
     msg = (f"最多可出 {mx} 份（{diag.get('msg', '')}）" if diag.get("ok") else diag.get("msg", ""))
     return {"ok": bool(diag.get("ok")), "max_papers": mx,
@@ -1579,7 +1591,8 @@ def auto_build_api(payload: dict = None):
     papers, diag = auto_plan(load_db()["items"], groups, payload.get("subject") or "",
                              papers=int(payload.get("papers") or 1),
                              unique_keywords=bool(payload.get("unique_keywords")),
-                             exclude_ids=ex, seed=payload.get("seed"))
+                             exclude_ids=ex, seed=payload.get("seed"),
+                             tilt=payload.get("tilt") or "")
     if not diag.get("ok"):
         return JSONResponse({"ok": False, "msg": diag.get("msg", "组卷失败"),
                              "max_papers": diag.get("max_papers", 0),
