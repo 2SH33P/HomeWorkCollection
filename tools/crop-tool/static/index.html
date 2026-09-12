@@ -922,7 +922,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
         <canvas id="cv"></canvas>
       </div>
       <div class="side">
-        <h3>框选列表（<span id="boxCount">0</span> 题）</h3>
+        <h3>框选列表（<span id="boxCount">0</span> 题）<span class="hint" id="draftHint"
+            style="font-weight:400;margin-left:6px">草稿自动保存在服务器</span></h3>
         <div class="subj-line">
           <span class="hint">科目（统一）</span>
           <select id="curSubj"></select>
@@ -1628,15 +1629,70 @@ async function openEditor(pageId) {
     el.classList.toggle("active", el.dataset.page === pageId));
   const page = pages.find(p => p.page === pageId);
   img = new Image();
-  img.onload = () => { imgW = img.naturalWidth; imgH = img.naturalHeight;
-                       boxes = loadBoxes(pageId);
-                       if (!cropMode) enterPageEdit();      // 打开页面即进入裁题模式
-                       renderCanvas(); renderBoxList(); };
+  img.onload = async () => {
+    imgW = img.naturalWidth; imgH = img.naturalHeight;
+    await loadDrafts();                       // 先拿到服务端草稿, 再决定用哪份
+    boxes = loadBoxes(pageId);
+    if (!cropMode) enterPageEdit();           // 打开页面即进入裁题模式
+    renderCanvas(); renderBoxList();
+  };
   img.src = page.web_url;
 }
-function loadBoxes(pid) { try { return JSON.parse(localStorage.getItem("boxes_" + pid)) || []; } catch { return []; } }
-function saveBoxes() { localStorage.setItem("boxes_" + curPage, JSON.stringify(boxes));
-                       $("boxCount").textContent = boxes.length; }
+let serverDrafts = {};                 // 服务端草稿(页 -> {boxes, at})
+let draftTimer = null;
+
+let draftsReady = null;
+function loadDrafts(force) {           // 返回 Promise, 可 await; 默认只拉一次
+  if (force || !draftsReady) {
+    draftsReady = api("/api/drafts").then(function (d) {
+      serverDrafts = (d && d.drafts) || {};
+    }).catch(function () { serverDrafts = {}; });
+  }
+  return draftsReady;
+}
+
+function saveDraftSoon() {             // 防抖 700ms, 避免频繁写盘
+  if (!curPage) return;
+  const pid = curPage;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(async () => {
+    try {
+      const clean = boxes.map(function (b) {
+        const c = Object.assign({}, b); delete c._ai; delete c._keep; return c;
+      });
+      const d = await api("/api/draft/" + encodeURIComponent(pid), { method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boxes: clean }) });
+      serverDrafts[pid] = { boxes: clean, at: d.at, count: d.count };
+      setDraftHint("草稿已自动保存 · " + (d.at || "").slice(11));
+    } catch (e) { setDraftHint("草稿保存失败（仅存于本浏览器）"); }
+  }, 700);
+}
+
+function setDraftHint(txt) {
+  const el = $("draftHint");
+  if (el) el.textContent = txt;
+}
+
+function loadBoxes(pid) {
+  let local = [];
+  try { local = JSON.parse(localStorage.getItem("boxes_" + pid)) || []; } catch (e) { local = []; }
+  const srv = serverDrafts[pid];
+  const localAt = localStorage.getItem("boxes_at_" + pid) || "";
+  // 两边都有: 取较新的那份; 只有一边: 用它
+  if (srv && srv.boxes && srv.boxes.length && (!local.length || (srv.at || "") > localAt)) {
+    localStorage.setItem("boxes_" + pid, JSON.stringify(srv.boxes));
+    localStorage.setItem("boxes_at_" + pid, srv.at || "");
+    return srv.boxes;
+  }
+  return local;
+}
+function saveBoxes() {
+  localStorage.setItem("boxes_" + curPage, JSON.stringify(boxes));
+  localStorage.setItem("boxes_at_" + curPage, new Date().toISOString());
+  $("boxCount").textContent = boxes.length;
+  saveDraftSoon();                     // 顺带同步到服务端草稿(见下)
+}
 function uid() { return Date.now() + "_" + Math.random().toString(36).slice(2, 7); }
 
 /* ---------- Canvas ---------- */
@@ -2747,6 +2803,9 @@ $("saveBtn").onclick = async () => {
         body: JSON.stringify({ page: g.pid, boxes: payload }) });
       saved += d.count;
       localStorage.removeItem("boxes_" + g.pid);
+      localStorage.removeItem("boxes_at_" + g.pid);
+      try { await api("/api/draft/" + encodeURIComponent(g.pid), { method: "DELETE" }); } catch (e) { }
+      delete serverDrafts[g.pid];
     } catch (err) { failed = err.message; break; }
   }
   for (const pg of pages) {
@@ -4239,6 +4298,7 @@ $("aiSave").onclick = async () => {
     toast("已保存", "ok");
     await loadAiCfg();
 loadSubjects();
+loadDrafts();
   } catch (err) { toast("保存失败: " + err.message, "err"); }
   btn.disabled = false; btn.textContent = "保存";
 };

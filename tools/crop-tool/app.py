@@ -1371,6 +1371,18 @@ def render_simple(txt, it, lines):
 
 # ---------- 自动组卷 ----------
 AUTO_LAST_FILE = ROOT / "auto_last.json"
+DRAFT_FILE = ROOT / "drafts.json"      # 框选草稿(框的位置 + 已填内容), 防止浏览器数据丢失
+
+
+def load_drafts():
+    try:
+        return json.loads(DRAFT_FILE.read_text("utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def put_draft_file(d):
+    DRAFT_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=1), "utf-8")
 
 
 def load_auto_last():
@@ -2584,6 +2596,37 @@ def recrop_item(item_id: str, payload: dict = None):
     log_ai("重新取景", "-", True, 0, f"{it['code']} box={it['box']}")
     return {"ok": True, "image": it["image"], "box": it["box"],
             "figures_kept": len(it.get("figures") or [])}
+
+
+@app.get("/api/drafts")
+def get_drafts():
+    """所有页的框选草稿(每页最近一次)."""
+    return {"ok": True, "drafts": load_drafts()}
+
+
+@app.put("/api/draft/{page_id}")
+def put_draft(page_id: str, payload: dict = None):
+    """保存某页的框选草稿(框位置 + 已填写的题干/答案/大题等)。"""
+    payload = payload or {}
+    boxes = payload.get("boxes")
+    if not isinstance(boxes, list):
+        return JSONResponse({"ok": False, "msg": "boxes 必须是数组"}, status_code=400)
+    with DB_LOCK:
+        d = load_drafts()
+        at = time.strftime("%Y-%m-%d %H:%M:%S")
+        d[page_id] = {"boxes": boxes, "at": at, "count": len(boxes)}
+        put_draft_file(d)
+    return {"ok": True, "page": page_id, "count": len(boxes), "at": at}
+
+
+@app.delete("/api/draft/{page_id}")
+def delete_draft(page_id: str):
+    """清掉某页草稿(已保存到错题库后调用)。"""
+    with DB_LOCK:
+        d = load_drafts()
+        d.pop(page_id, None)
+        put_draft_file(d)
+    return {"ok": True}
 
 
 @app.get("/api/paper", response_class=HTMLResponse)
