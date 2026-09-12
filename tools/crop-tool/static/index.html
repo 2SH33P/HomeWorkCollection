@@ -906,8 +906,9 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <button class="btn ghost btn-sm" id="ctAiSplit"
                     title="让 AI 自动框出这一页的每道题（框完可手动微调）"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 自动框题</span></button>
             <button class="btn ghost btn-sm" id="ctCropFig" title="对当前选中的题目框裁图"><svg class="ic"><use href="#ic-cfig"/></svg><span>裁图</span></button>
+            <span class="ct-val" id="cropFigCount" style="display:none"></span>
             <button class="btn btn-sm" id="cropOk" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>确认</span></button>
-            <button class="btn ghost btn-sm" id="cropCancel" style="display:none"><svg class="ic"><use href="#ic-x"/></svg><span>取消</span></button>
+            <button class="btn ghost btn-sm" id="cropCancel" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>结束裁图</span></button>
             <button class="btn ghost btn-sm" id="pageEditDone"><svg class="ic"><use href="#ic-check"/></svg><span>完成</span></button>
           </div>
         </div>
@@ -2712,14 +2713,26 @@ function enterCropMode(pid, bid) {
   setCropTool("frame");
   updateCropZoomUI();
   updateBarUI();
-  toast("裁图模式：在红色题框内拖拽框选图形", "ok");
+  toast("裁图模式：在红色题框内拖拽框选图形（可连续裁多个）", "ok");
   renderCanvas();
+  updateCropFigCount();
 }
+function updateCropFigCount() {
+  const el = $("cropFigCount");
+  if (!el) return;
+  if (!cropMode) { el.style.display = "none"; return; }
+  const box = loadBoxes(cropMode.pid).find(x => x.id === cropMode.bid);
+  const n = (box && box.figures ? box.figures.length : 0);
+  el.textContent = n ? ("已裁 " + n + " 个") : "";
+  el.style.display = n ? "" : "none";
+}
+
 function exitCropMode() {
   cropMode = null; cropRect = null; cropDrag = null; cropZoom = 1; panDrag = null;
   updateBarUI();                            // 回到裁题模式(工具栏保留)
   setCropTool(cropPrevTool || "frame");     // 恢复进入裁图前的模式
   cropPrevTool = null;
+  updateCropFigCount();
   renderCanvas();
 }
 $("cropCancel").onclick = exitCropMode;
@@ -2745,9 +2758,12 @@ $("cropOk").onclick = () => {
     const note = (box.note || "").trim();
     box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
     localStorage.setItem("boxes_" + b.pid, JSON.stringify(bs));
-    toast(`已裁好图${n}，可在题干中移动 [图${n}] 的位置`, "ok");
+    toast(`已裁好图${n}，可继续框选下一个`, "ok");
   }
-  exitCropMode();
+  cropRect = null;                       // 清掉图形框, 继续裁下一个(不退出裁图模式)
+  renderCanvas();
+  updateCropFigCount();
+  if (box) localStorage.setItem("boxes_" + b.pid, JSON.stringify(bs));
   renderBoxList();
   pushHistory(beforeCrop);            // 裁图 -> 可撤销
 };
