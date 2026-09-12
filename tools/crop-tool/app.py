@@ -816,7 +816,6 @@ def page_ratio(page):
     return orig.size[0] / web.size[0]
 
 
-@app.post("/api/split/ai")
 def trim_blank(img, margin=6):
     """自动裁剪图片四周的空白边缘(与背景色接近的连续行列)。返回收边后的图。"""
     if img is None or img.size == 0:
@@ -838,6 +837,7 @@ def trim_blank(img, margin=6):
     return img[y0:y1, x0:x1]
 
 
+@app.post("/api/split/ai")
 def split_ai(payload: dict):
     """AI 版面分析自动拆题: 视觉模型直接返回每道题边界框(相对坐标 0-1000)。
     不依赖题号识别, 超宽长图/手写题号都能拆。返回缩略图坐标, 与画布一致。"""
@@ -2220,7 +2220,7 @@ def item_reai(item_id: str, payload: dict = None):
     if upd is None:
         return JSONResponse({"ok": False, "msg": "AI 未返回内容（或已有内容且未强制覆盖）"},
                             status_code=502)
-    log_ai("重新识别", f"{upd.get('code')} 图片={it['image']}")
+    log_ai("重新识别", "-", True, 0, f"{upd.get('code')} 图片={it['image']}")
     return {"ok": True, "item": upd}
 
 
