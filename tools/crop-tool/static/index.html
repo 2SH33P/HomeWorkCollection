@@ -376,7 +376,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             transition: opacity .18s var(--motion), border-color .18s, box-shadow .18s, transform .12s; }
 .ais-item.on { opacity: 1; }
 .ais-item.focus { border-color: var(--accent); box-shadow: 0 1px 8px rgba(0,122,255,.22); }
-.ais-item canvas { width: 118px; height: auto; background: #fff; border-radius: 8px; flex: none;
+.ais-item canvas { width: auto; height: auto; background: #fff; border-radius: 8px; flex: none;
                    box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .ais-item .ais-meta { min-width: 0; font-size: 12px; color: var(--t3); line-height: 1.55; }
 .ais-item .ais-meta b { display: block; color: var(--t1); font-size: 13px; margin-bottom: 2px; }
@@ -385,7 +385,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .ais-side { flex: 1 1 56%; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .ais-side-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ais-side-head .btn-sm { height: 30px; padding: 0 10px; }
-#aisPrev { width: 100%; height: auto; background: #fff; border-radius: 10px; flex: none;
+#aisPrev { width: auto; height: auto; max-width: 100%; display: block; background: #fff; border-radius: 10px; flex: none;
            box-shadow: var(--shadow); touch-action: none; cursor: move; }
 .ais-fields { display: flex; gap: 8px; flex-wrap: wrap; }
 .ais-fields label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--t3); }
@@ -395,7 +395,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 @media (max-width: 760px) {
   .ais-main { flex-direction: column; }
   .ais-list { flex: none; max-height: 34vh; }
-  .ais-item canvas { width: 84px; }
+  .ais-item canvas { }
 }
 
 /* 自动组卷面板(精简版) */
@@ -2396,7 +2396,7 @@ let aiProposed = [], aiSplitBefore = null, aiFocus = 0;
 
 function openAiSplitPicker(list, before) {
   aiProposed = list.map(function (b, i) {
-    return { _on: true, x: b.x, y: b.y, w: b.w, h: b.h };
+    return { _on: false, x: b.x, y: b.y, w: b.w, h: b.h };
   });
   aiSplitBefore = before;
   aiFocus = 0;
@@ -2422,7 +2422,7 @@ function buildAiCards() {                       // 只在打开时建一次 DOM
   wrap.innerHTML = html;
   aiProposed.forEach(function (b, i) {
     const el = wrap.querySelector('.ais-item[data-i="' + i + '"]');
-    el.classList.toggle("on", !!b._on);
+    el.classList.toggle("on", !!b._on);          // 默认全部未勾选
     el.onclick = function (e) {
       if (e.shiftKey || e.target.closest(".ais-keep")) {   // 点右侧勾 -> 切换保留
         b._on = !b._on;
@@ -2437,14 +2437,18 @@ function buildAiCards() {                       // 只在打开时建一次 DOM
   updateAiSplitCount();
 }
 
-function drawAiThumb(i) {                       // 按框的宽高比画缩略图
+function drawAiThumb(i) {                       // 按框的宽高比画缩略图(DPR 高清)
   const c = $("aisList").querySelector('canvas[data-cv="' + i + '"]');
   const b = aiProposed[i];
   if (!c || !b || !img) return;
+  const dpr = window.devicePixelRatio || 1;
   const CW = (window.innerWidth <= 760 ? 84 : 118);
   const CH = Math.max(24, Math.min(CW, Math.round(CW * (b.h || 1) / (b.w || 1))));
-  c.width = CW; c.height = CH;
+  c.style.width = CW + "px"; c.style.height = CH + "px";
+  c.width = Math.round(CW * dpr); c.height = Math.round(CH * dpr);
   const cx = c.getContext("2d");
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.imageSmoothingQuality = "high";
   cx.fillStyle = "#fff"; cx.fillRect(0, 0, CW, CH);
   cx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, CW, CH);
   const meta = $("aisList").querySelector('[data-meta="' + i + '"]');
@@ -2472,30 +2476,34 @@ function syncAiFields() {
 }
 
 let aiPrevScale = 1;
-function drawAiPrev() {                         // 右侧大图: 整页 + 所有框, 当前框高亮
+function drawAiPrev() {                         // 大预览: 整页 + 所有框(DPR 高清, 尺寸与坐标严格一致)
   const c = $("aisPrev"), b = aiProposed[aiFocus];
   if (!c || !img || !imgW) return;
-  const maxW = Math.max(200, c.parentElement.clientWidth || 480);
-  const maxH = Math.max(160, Math.min(340, window.innerHeight * 0.34));
+  const dpr = window.devicePixelRatio || 1;
+  const maxW = Math.max(220, c.parentElement.clientWidth || 480);
+  const maxH = Math.max(220, Math.min(460, window.innerHeight * 0.46));
   aiPrevScale = Math.min(maxW / imgW, maxH / imgH);
   const w = Math.round(imgW * aiPrevScale), h = Math.round(imgH * aiPrevScale);
-  c.width = w; c.height = h;
+  c.style.width = w + "px"; c.style.height = h + "px";     // 关键: CSS 尺寸 = 逻辑尺寸, 不再被拉伸
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
   const cx = c.getContext("2d");
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.imageSmoothingQuality = "high";
   cx.drawImage(img, 0, 0, w, h);
-  aiProposed.forEach(function (o, i) {           // 其他框: 保留=淡蓝, 丢弃=灰
+  aiProposed.forEach(function (o, i) {
     cx.save();
     cx.strokeStyle = i === aiFocus ? "#007AFF"
-                   : (o._on ? "rgba(0,122,255,.35)" : "rgba(120,120,128,.35)");
-    cx.lineWidth = i === aiFocus ? 2.5 : 1.2;
+                   : (o._on ? "rgba(0,122,255,.38)" : "rgba(120,120,128,.30)");
+    cx.lineWidth = i === aiFocus ? 2.4 : 1.1;
     if (i === aiFocus) cx.setLineDash([7, 4]);
     cx.strokeRect(o.x * aiPrevScale, o.y * aiPrevScale, o.w * aiPrevScale, o.h * aiPrevScale);
     cx.restore();
   });
-  if (b) {                                       // 当前框四角手柄
+  if (b) {
     cx.fillStyle = "#007AFF";
-    [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].forEach(function (p) {
+    [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].forEach(function (q) {
       cx.beginPath();
-      cx.arc(p[0] * aiPrevScale, p[1] * aiPrevScale, 4.5, 0, Math.PI * 2);
+      cx.arc(q[0] * aiPrevScale, q[1] * aiPrevScale, 5, 0, Math.PI * 2);
       cx.fill();
     });
   }
