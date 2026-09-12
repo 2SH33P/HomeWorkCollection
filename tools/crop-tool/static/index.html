@@ -369,9 +369,15 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .b-fig-strip figure { margin: 0; text-align: center; }
 .b-fig-strip img { max-width: 108px; max-height: 76px; background: #fff; border-radius: 8px;
                    box-shadow: var(--shadow); display: block; }
+.b-fig-ph2 { min-width: 96px; padding: 0 8px; font-size: 11px; }
 .b-fig-ph { display: inline-flex; align-items: center; justify-content: center; min-width: 60px;
             height: 40px; background: var(--elev); border-radius: 8px; font-size: 12px; color: var(--t3); }
-.b-fig-strip figcaption { font-size: 11px; color: var(--t3); margin-top: 2px; }
+.b-fig-strip figcaption { font-size: 11px; color: var(--t3); margin-top: 2px;
+                          display: flex; align-items: center; justify-content: center; gap: 4px; }
+.b-fig img { cursor: pointer; }
+.b-fig-del { border: none; background: transparent; color: var(--t3); cursor: pointer;
+             padding: 0 2px; font-size: 11px; line-height: 1; }
+.b-fig-del:hover { color: var(--danger); }
 .b-ai { color: #248a3d !important; font-weight: 600; }
 .b-ai[disabled] { opacity: .5; }
 
@@ -2108,10 +2114,9 @@ function boxCardHTML(b, i, pid) {
         ${(b.figures || []).length ? `<div class="b-figs">
           <span class="hint">AI 裁出的图形（保存后写入题内图形）：</span>
           <div class="b-fig-strip">${(b.figures || []).map(f =>
-            `<figure title="[图${f.n}]">
-               ${f.preview ? `<img src="${esc(f.preview)}?t=${Date.now()}" loading="lazy">`
-                           : `<span class="b-fig-ph">[图${f.n}]</span>`}
-               <figcaption>[图${f.n}]</figcaption>
+            `<figure class="b-fig" data-id="${b.id}" data-pid="${pid}" data-n="${f.n}" title="点图可拖动方框修正，✕ 删除">
+               <img src="${esc(f.preview || "")}" loading="lazy" alt="[图${f.n}]">
+               <figcaption>[图${f.n}]<button class="b-fig-del" data-n="${f.n}" title="删除这个图">✕</button></figcaption>
              </figure>`).join("")}</div>
         </div>` : ""}
         <div class="brow">
@@ -2158,6 +2163,50 @@ function renderBoxList() {
     const id = btn.dataset.id;
     openBoxes.has(id) ? openBoxes.delete(id) : openBoxes.add(id);
     renderBoxList();
+  });
+  // 缩略图缺失或加载失败时, 用 /api/crop/preview 现算一张(坐标=题框内相对坐标换算到页坐标)
+  el.querySelectorAll(".b-fig").forEach(fig => {
+    fig.onclick = (e) => { e.stopPropagation(); startFigAdjust(fig.dataset.pid, fig.dataset.id, +fig.dataset.n); };
+  });
+  el.querySelectorAll(".b-fig img").forEach(img => {
+    const fig = img.closest(".b-fig"), pid = fig.dataset.pid, n = +fig.dataset.n;
+    const need = () => {
+      const b = loadBoxes(pid).find(x => x.id === fig.dataset.id);
+      const f = b && (b.figures || []).find(x => x.n === n);
+      if (!b || !f) return;
+      figPreview(pid, b, f).then(url => {
+        if (!url) {                                   // 区域空白等原因取不到预览 -> 给个提示, 仍可点开调整
+          img.style.display = "none";
+          if (!fig.querySelector(".b-fig-ph2")) {
+            const ph = document.createElement("span");
+            ph.className = "b-fig-ph b-fig-ph2";
+            ph.textContent = "预览失败·点此调整";
+            img.parentNode.insertBefore(ph, img);
+          }
+          return;
+        }
+        f.preview = url;
+        img.src = url;
+        const bs = loadBoxes(pid).find(x => x.id === b.id);
+        if (bs) { const ff = (bs.figures || []).find(x => x.n === n); if (ff) ff.preview = url;
+                  saveBoxesFor(pid, loadBoxes(pid)); }
+      });
+    };
+    if (!img.getAttribute("src")) need();
+    img.onerror = () => { img.removeAttribute("src"); need(); };
+  });
+  el.querySelectorAll(".b-fig-del").forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    const fig = btn.closest(".b-fig"), pid = fig.dataset.pid, n = +fig.dataset.n, bid = fig.dataset.id;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (!b) return;
+    b.figures = (b.figures || []).filter(x => x.n !== n);
+    b.note = (b.note || "").replace(new RegExp("\\[图" + n + "\\]", "g"), "");   // 正文引用一并去掉
+    saveBoxesFor(pid, bs);
+    if (pid === curPage) boxes = bs;
+    renderBoxList();
+    toast("已删除 [图" + n + "]", "ok");
   });
   el.querySelectorAll(".b-ai").forEach(btn => btn.onclick = async () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
@@ -2794,6 +2843,47 @@ function enterCropMode(pid, bid) {
   renderCanvas();
   updateCropFigCount();
 }
+async function figPreview(pid, box, f) {
+  try {
+    const x = box.x + (f.x || 0) / 1000 * box.w;
+    const y = box.y + (f.y || 0) / 1000 * box.h;
+    const w = Math.max(20, (f.w || 0) / 1000 * box.w);
+    const h = Math.max(20, (f.h || 0) / 1000 * box.h);
+    const d = await api("/api/crop/preview", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page: pid, box: { x: Math.round(x), y: Math.round(y),
+                                               w: Math.round(w), h: Math.round(h) } }) });
+    return d.url ? (d.url + "?t=" + Date.now()) : "";
+  } catch (e) { return ""; }
+}
+
+let figAdjust = null;              // {pid, bid, n} 正在微调某个已有图形
+function startFigAdjust(pid, bid, n) {
+  const open = () => {
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    const f = b && (b.figures || []).find(x => x.n === n);
+    if (!b || !f) return toast("找不到该图形", "err");
+    cropMode = { pid, bid, x: b.x, y: b.y, w: b.w, h: b.h };
+    cropRect = { x: b.x + (f.x || 0) / 1000 * b.w, y: b.y + (f.y || 0) / 1000 * b.h,
+                 w: Math.max(10, (f.w || 0) / 1000 * b.w), h: Math.max(10, (f.h || 0) / 1000 * b.h) };
+    figAdjust = { pid, bid, n };
+    cropDrag = null; cropZoom = 1;
+    cropPrevTool = cropTool;
+    pageEdit = true;
+    $("cropBar").style.display = "flex";
+    $("canvasWrap").classList.add("cropping");
+    setCropTool("frame");
+    updateCropZoomUI(); updateBarUI(); renderCanvas();
+    toast("正在微调 [图" + n + "]：拖动方框调整，点「确认」保存", "ok");
+  };
+  if (pid !== curPage) {
+    const th = document.querySelector('.page-thumb[data-page="' + pid + '"]');
+    if (th) th.click();
+    setTimeout(open, 900);
+  } else open();
+}
+
 function updateCropFigCount() {
   const el = $("cropFigCount");
   if (!el) return;
@@ -2830,12 +2920,21 @@ $("cropOk").onclick = () => {
   const box = bs.find(x => x.id === b.bid);
   if (box) {
     const figs = box.figures || (box.figures = []);
-    const n = figs.length + 1;
-    figs.push({ n, x: rx, y: ry, w: rw, h: rh });
-    const note = (box.note || "").trim();
-    box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
-    saveBoxesFor(b.pid, bs);
-    toast(`已裁好图${n}，可继续框选下一个`, "ok");
+    if (figAdjust && box && figs.some(x => x.n === figAdjust.n)) {
+      const f = figs.find(x => x.n === figAdjust.n);      // 微调已有图形: 覆盖坐标并清掉旧预览
+      f.x = rx; f.y = ry; f.w = rw; f.h = rh; f.preview = "";
+      saveBoxesFor(b.pid, bs);
+      toast("已更新 [图" + f.n + "]", "ok");
+      figAdjust = null;
+      renderBoxList();
+    } else {
+      const n = figs.length + 1;
+      figs.push({ n, x: rx, y: ry, w: rw, h: rh });
+      const note = (box.note || "").trim();
+      box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
+      saveBoxesFor(b.pid, bs);
+      toast(`已裁好图${n}，可继续框选下一个`, "ok");
+    }
   }
   cropRect = null;                       // 清掉图形框, 继续裁下一个(不退出裁图模式)
   renderCanvas();
