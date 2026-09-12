@@ -1296,7 +1296,8 @@ def render_simple(txt, it, lines):
 @app.get("/api/paper/pdf")
 def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = "",
               title: str = "", subject_line: str = "", notice: str = "",
-              body_size: str = "", leading: str = ""):
+              body_size: str = "", leading: str = "", subtitle: str = "",
+              first_indent: str = ""):
     """用 Typst 渲染试卷 PDF。attach: 附答案解析页; index: 1 附编号对照页; header: 页眉文字。
     body_size/leading: 正文字号(pt)与行距(em), 语文卷常用 12pt / 1.5em。"""
     try:
@@ -1307,6 +1308,10 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         lead_em = min(2.5, max(0.85, float(leading))) if leading else 0.95
     except (TypeError, ValueError):
         lead_em = 0.95
+    try:                                   # 段落首行缩进(语文卷常用 2 字符)
+        indent_em = min(4.0, max(0.0, float(first_indent))) if first_indent else 0.0
+    except (TypeError, ValueError):
+        indent_em = 0.0
     db = load_db()
     wanted = [i for i in ids.split(",") if i]
     order = {iid: n for n, iid in enumerate(wanted)}
@@ -1341,7 +1346,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         '#let hbk(body) = text(font: F_HEI, stroke: 0.03em, body)',   # 黑体加粗
         '#let __unused_hb = 0',    # 黑体加粗(同上)                        # LaTeX 公式支持
         f'#set text(font: F_SONG, size: {size_pt}pt, lang: "zh")',    # 英文 Times 新罗马 / 中文宋体
-        f'#set par(justify: true, leading: {lead_em}em, spacing: {lead_em}em)',  # 行距=段距=块距
+        f'#set par(justify: true, leading: {lead_em}em, spacing: {lead_em}em, first-line-indent: {indent_em}em)',
         '#let BODY = ' + f'{size_pt}pt',
         '#show heading: set text(font: F_HEI, size: 12pt)',           # 大题标题: 小四黑体(西文 Times-Bold)
         '#show heading: set par(leading: 0.7em)',
@@ -1352,6 +1357,8 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         # ---- 卷头(可自定义): 三号标题 / 二号黑体科目 / 五号说明 ----
         f'#align(center)[#text(size: 16pt, font: F_HEI)[{typ_esc(title.strip() or "错题重组试卷")}]]',
         f'#align(center)[#text(size: 22pt, font: F_HEI, weight: "bold")[{typ_esc(subject_line.strip() or (subjects[0] if len(subjects) == 1 else " ".join(subjects)))}]]',
+        (f'#align(center)[#text(size: BODY, font: F_SONG)[{typ_esc(subtitle.strip())}]]'
+         if subtitle.strip() else '#none'),
         '#v(0.45cm)',
     ]
     # 注意事项(可自定义, 首行黑体小四, 条目五号)
@@ -1360,9 +1367,9 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         if not ln.strip():
             continue
         if i == 0:
-            lines.append(f'#text(font: F_HEI, size: 12pt)[{typ_esc(ln)}]')
+            lines.append(f'#text(font: F_HEI, size: 12pt)[{typ_esc(ln)}] \\')
         else:
-            lines.append(f'#text(size: BODY)[{typ_esc(ln)}]')
+            lines.append(f'#text(size: BODY)[{typ_esc(ln)}] \\')
     lines.append('#v(0.45cm)')
     n, prev_g = 0, None
     ordered = {}                      # 题号 -> [该题的块(含续块)]
@@ -1371,7 +1378,12 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
             lines.append(f"= {gname}")          # 大题标题: 黑体(空/未命名不显示)
         for it in gitems:
             g = it.get("group") or ""
-            if g and g == prev_g:
+            t0 = (it.get("title") or "").strip()
+            if t0.startswith("§"):
+                # § 前缀 = 卷面分节块(大题标题/阅读材料), 黑体整行, 不参与编号
+                lines.append(f'#text(font: F_HEI, size: BODY, weight: "bold")'
+                             f'[{typ_esc(t0[1:].strip())}] \\')
+            elif g and g == prev_g:
                 lines.append('#text(font: F_KAI, size: BODY)[(续)] \\')
             else:
                 n += 1
@@ -1398,7 +1410,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     flush_opts()
                     body = " \\\n".join(para_buf)
                     if para_mode == "poem":
-                        lines.append("#align(center)[#set par(justify: false, "
+                        lines.append("#align(center)[#set par(justify: false, first-line-indent: 0em, "
                                      "leading: 1.7em, spacing: 1.7em)\n" + body + "\n]")
                         lines.append("#v(0.2cm)")
                     else:                    # quote: 阅读材料/引文
@@ -1578,7 +1590,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                             first_ln = False
                         else:
                             flush_opts()
-                            lines.append(out + ("" if first_ln else " \\"))
+                            lines.append(out + " \\")
                             first_ln = False
                 flush_para()
                 flush_opts()
@@ -1638,7 +1650,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
     except Exception as e:
         return JSONResponse({"ok": False,
                             "msg": "PDF生成失败: " + str(e)[:200]}, status_code=500)
-    return {"ok": True, "url": f"/files/.tmp/{pdf_path.name}", "count": n}
+    return {"ok": True, "url": f"/files/.tmp/{pdf_path.name}", "count": len(items)}
 
 
 # ---------- AI 视觉识别 (公式 -> LaTeX, 走大模型 API 不吃本地内存) ----------

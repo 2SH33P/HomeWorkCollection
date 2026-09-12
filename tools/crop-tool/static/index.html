@@ -874,6 +874,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <input type="text" id="phTitle" placeholder="错题重组试卷"></label>
         <label class="fld"><span>科目名（留空则自动取题目科目）</span>
           <input type="text" id="phSubject" placeholder="如：数　学"></label>
+        <label class="fld"><span>副标题（可留空；显示在科目名下方，如适用省份/考试时间）</span>
+          <input type="text" id="phSubtitle" placeholder="如：（适用省份：山东、浙江、江苏…）"></label>
         <label class="fld"><span>注意事项（第一行为黑体标题，其余每行一条）</span>
           <textarea id="phNotice" rows="4" placeholder="注意事项：&#10;1．本试卷由错题收集工具生成，请在答题纸上作答；&#10;2．解答应写出文字说明、证明过程或演算步骤。"></textarea></label>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -883,6 +885,11 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
               <option value="11">小四偏小 11pt</option>
               <option value="12">小四 12pt（语文常用）</option>
               <option value="14">四号 14pt</option>
+            </select></label>
+          <label class="fld" style="flex:1;min-width:150px"><span>段落首行缩进</span>
+            <select id="phIndent">
+              <option value="0">不缩进（数学/理综）</option>
+              <option value="2">缩进 2 字符（语文常用）</option>
             </select></label>
           <label class="fld" style="flex:1;min-width:150px"><span>行距</span>
             <select id="phLeading">
@@ -1083,6 +1090,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
     </div>
     <div class="add-body">
       <div class="hint">科目：<b id="addSubject"></b>　<span class="hint">（保存后编号自动分配）</span></div>
+      <label class="chk" style="margin:0 0 8px"><input type="checkbox" id="addSection">
+        作为<b>分节块</b>（不编号；用于「一、现代文阅读」这类大题标题或整段阅读材料）</label>
       <span class="chap-wrap">
         <input type="text" id="addChapter" placeholder="大题归类（如 三、解答题）">
         <button type="button" class="chap-pick" id="addChapterPick" title="选择预设大题">▾</button>
@@ -3082,9 +3091,11 @@ $("pdfBtn").onclick = async () => {
       header: $("paperHeader").value || "",
       title: $("phTitle").value || "",
       subject_line: $("phSubject").value || "",
+      subtitle: $("phSubtitle").value || "",
       notice: $("phNotice").value || "",
       body_size: $("phBodySize").value || "",
-      leading: $("phLeading").value || "" });
+      leading: $("phLeading").value || "",
+      first_indent: $("phIndent").value || "" });
     const d = await api("/api/paper/pdf?" + q.toString());
     window.open(d.url, "_blank");
     toast(`已生成 ${d.count} 题的 PDF`, "ok");
@@ -3100,7 +3111,9 @@ function savePaperHead() {
     localStorage.setItem("paperHead", JSON.stringify({
       title: $("phTitle").value, subject: $("phSubject").value,
       notice: $("phNotice").value, header: $("paperHeader").value,
-      bodySize: $("phBodySize").value, leading: $("phLeading").value }));
+      subtitle: $("phSubtitle").value,
+      bodySize: $("phBodySize").value, leading: $("phLeading").value,
+      indent: $("phIndent").value }));
   } catch (e) { }
 }
 function loadPaperHead() {
@@ -3111,8 +3124,10 @@ function loadPaperHead() {
     $("phNotice").value = d.notice ||
       "注意事项：\n1．本试卷由错题收集工具生成，请在答题纸上作答；\n2．解答应写出文字说明、证明过程或演算步骤。";
     $("paperHeader").value = d.header || "";
+    $("phSubtitle").value = d.subtitle || "";
     $("phBodySize").value = d.bodySize || "10.5";
     $("phLeading").value = d.leading || "0.95";
+    $("phIndent").value = d.indent || "0";
   } catch (e) { }
 }
 
@@ -3460,6 +3475,7 @@ $("addSave").onclick = async () => {
   btn.querySelector("span").textContent = "保存中…";
   const fd = new FormData();
   fd.append("subject", addSubject);
+  fd.append("title", $("addSection").checked ? "§" : "");
   fd.append("chapter", $("addChapter").value);
   fd.append("keywords", $("addKeywords").value);
   fd.append("note", note);
