@@ -387,6 +387,69 @@ def source_version():
     return h.hexdigest()[:12]
 
 
+UPDATE_CFG = ROOT / ".update_config.json"
+
+
+def load_update_cfg():
+    try:
+        return json.loads(UPDATE_CFG.read_text("utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def save_update_cfg(d):
+    UPDATE_CFG.write_text(json.dumps(d, ensure_ascii=False, indent=2), "utf-8")
+
+
+def _git_run(args, timeout=150):
+    """带代理执行 git。代理来自 .update_config.json 的 proxy(国内网络拉 GitHub 常用)。"""
+    import subprocess
+    proxy = (load_update_cfg().get("proxy") or "").strip()
+    cmd = ["git", "-C", str(ROOT)]
+    if proxy:                                   # 显式给 git 指定代理, 不依赖进程环境变量
+        cmd += ["-c", f"http.proxy={proxy}", "-c", f"https.proxy={proxy}"]
+    cmd += args
+    env = dict(os.environ)
+    if proxy:
+        env["HTTP_PROXY"] = env["HTTPS_PROXY"] = proxy
+        env["http_proxy"] = env["https_proxy"] = proxy
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+
+
+@app.get("/api/update/config")
+def get_update_cfg():
+    return {"ok": True, "proxy": load_update_cfg().get("proxy", "")}
+
+
+@app.post("/api/update/config")
+def set_update_cfg(payload: dict = None):
+    payload = payload or {}
+    proxy = str(payload.get("proxy") or "").strip()
+    save_update_cfg({"proxy": proxy})
+    return {"ok": True, "proxy": proxy}
+
+
+@app.post("/api/update/test")
+def test_update_conn():
+    """测试能否连上远程仓库(带代理)。"""
+    if not (ROOT / ".git").exists():
+        return JSONResponse({"ok": False, "msg": "当前目录不是 git 仓库，无法自动更新"},
+                            status_code=400)
+    if shutil.which("git") is None:
+        return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令"}, status_code=400)
+    proxy = (load_update_cfg().get("proxy") or "").strip()
+    try:
+        r = _git_run(["ls-remote", "--heads", "origin"], timeout=40)
+    except Exception as e:
+        return JSONResponse({"ok": False, "msg": "连接失败: " + str(e)[:120]}, status_code=500)
+    if r.returncode != 0:
+        return JSONResponse({"ok": False,
+                             "msg": ("连接仓库失败" + ("（代理 " + proxy + "）" if proxy else "（未设代理）")
+                                     + ": " + ((r.stderr or "").strip()[-180:]))}, status_code=502)
+    log_ai("测试更新源", "-", True, 0, (proxy or "直连"))
+    return {"ok": True, "msg": "连接正常" + ("（走代理 " + proxy + "）" if proxy else "（直连）")}
+
+
 @app.post("/api/self-update")
 def self_update():
     """界面点「立即更新」: 从远程仓库拉取最新代码, 再以退出码 3 结束进程,
@@ -399,8 +462,7 @@ def self_update():
     if shutil.which("git") is None:
         return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令，请手动更新"}, status_code=400)
     try:
-        r = subprocess.run(["git", "-C", root, "pull", "--ff-only"],
-                           capture_output=True, text=True, timeout=150)
+        r = _git_run(["pull", "--ff-only"], timeout=150)
     except Exception as e:
         return JSONResponse({"ok": False, "msg": "执行 git pull 失败: " + str(e)[:120]},
                             status_code=500)
