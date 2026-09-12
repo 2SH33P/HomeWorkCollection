@@ -1247,7 +1247,7 @@ def render_simple(txt, it, lines):
 
     def md(t):
         out = ""
-        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+|\^[^\^]+?\^)", t):
+        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+|\^[^\^\s]{1,6}\^)", t):
             if not seg:
                 continue
             if seg.startswith("^") and seg.endswith("^") and len(seg) > 2:
@@ -1472,7 +1472,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     """字体标记(中文均无 Bold 变体, 加粗用描边合成):
                     *楷体*  **黑体**  ***楷体加粗***  ==宋体加粗==  ++黑体加粗++"""
                     out = ""
-                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+|\^[^\^]+?\^)", s):
+                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+|\^[^\^\s]{1,6}\^)", s):
                         if not seg:
                             continue
                         if seg.startswith("^") and seg.endswith("^") and len(seg) > 2:
