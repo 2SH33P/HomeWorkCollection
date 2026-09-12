@@ -891,6 +891,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <button class="ct-ic" id="ctRedo" title="重做 (Ctrl+Shift+Z)" disabled><svg class="ic"><use href="#ic-redo"/></svg></button>
           </div>
           <div class="ct-right">
+            <button class="btn ghost btn-sm" id="ctAiSplit"
+                    title="让 AI 自动框出这一页的每道题（框完可手动微调）"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 自动框题</span></button>
             <button class="btn ghost btn-sm" id="ctCropFig" title="对当前选中的题目框裁图"><svg class="ic"><use href="#ic-cfig"/></svg><span>裁图</span></button>
             <button class="btn btn-sm" id="cropOk" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>确认</span></button>
             <button class="btn ghost btn-sm" id="cropCancel" style="display:none"><svg class="ic"><use href="#ic-x"/></svg><span>取消</span></button>
@@ -2313,6 +2315,48 @@ $("canvasWrap").addEventListener("click", e => {          // 点击锁定遮罩�
     enterPageEdit();
   }
 }, true);
+/* AI 自动框题: 让模型返回每道题的框, 填入框选列表(可撤销、可微调) */
+$("ctAiSplit").onclick = async () => {
+  if (!curPage) return toast("先选一页照片", "err");
+  const btn = $("ctAiSplit"), label = btn.querySelector("span");
+  const before = snap();
+  const existing = boxes.length;
+  if (existing) {                       // 已有框: 让用户选用哪种方式
+    openPickMenu(btn, ["追加到现有框", "覆盖现有框"], async (pick) => {
+      if (pick) await runAiSplit(pick === "覆盖现有框", before);
+    });
+    return;
+  }
+  await runAiSplit(false, before);
+};
+
+async function runAiSplit(overwrite, before) {
+  const btn = $("ctAiSplit"), label = btn.querySelector("span");
+  const old = label.textContent;
+  btn.disabled = true; label.textContent = "识别中…";
+  try {
+    const d = await api("/api/split/ai", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page: curPage }) });
+    const made = (d.boxes || []).map(b => ({
+      id: uid(), x: b.x, y: b.y, w: b.w, h: b.h,
+      subject: (typeof curSubject === "string" && curSubject) || "其他",
+      chapter: "", title: "", note: "", group: "", figures: [],
+    }));
+    if (!made.length) throw new Error("没识别到题目");
+    boxes = overwrite ? made : boxes.concat(made);
+    saveBoxes();
+    renderCanvas();
+    renderBoxList();
+    pushHistory(before);
+    toast(`AI 已框出 ${made.length} 道题${overwrite ? "（覆盖原框）" : "（追加到列表）"}，` +
+          "请拖动边框微调后保存", "ok");
+  } catch (err) {
+    toast("AI 框题失败: " + err.message, "err");
+  }
+  btn.disabled = false; label.textContent = old;
+}
+
 $("ctCropFig").onclick = () => {
   if (cropMode) return toast("已在裁图模式", "err");
   if (!activeBoxId) return toast("请先在「框题」模式点选一个题目框", "err");
