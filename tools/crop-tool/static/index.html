@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- build: 2026-09-12 16:53:24 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -1172,6 +1173,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       <div style="display:flex;align-items:center;gap:10px;margin:4px 0 2px">
           <button class="btn ghost btn-sm" id="chkUpd">检查更新</button>
           <span class="hint" id="updInfo"></span>
+          <span class="hint" id="pageVer"></span>
           <button class="btn btn-sm" id="doUpd">立即更新</button>
         </div>
         <div style="display:flex;align-items:center;gap:10px;margin:6px 0 2px;flex-wrap:wrap">
@@ -4581,6 +4583,10 @@ $("addSave").onclick = async () => {
 
 /* ---------- 客户端热更新: 轮询版本号, 变了就提示/自动刷新 ---------- */
 const LOADED_VERSION = window.APP_VERSION || "";
+document.addEventListener("DOMContentLoaded", function () {
+  const el = document.getElementById("pageVer");
+  if (el) el.textContent = "当前页面版本 " + (LOADED_VERSION || "未知");
+});
 
 function updateBar() {
   if (document.getElementById("updBar")) return;
