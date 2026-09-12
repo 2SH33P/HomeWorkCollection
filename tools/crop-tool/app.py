@@ -1129,6 +1129,7 @@ def call_ai_vision(img_rgb):
         prompt += ('9. 标注原题的视觉强调，只用两种标记(不要用其他符号)：\n'
                    '   - 比正文更粗更黑的文字(黑体、加粗的宋体等) -> **文字**\n'
                    '   - 楷体或斜体的文字 -> *文字*\n'
+                   '   - 注释序号等上标 -> ^①^ ^②^ ^[注]^ 这样用尖括号包起来\n'
                    '   普通宋体正文不加任何标记；只标确实能分辨的印刷体，'
                    '不确定或手写内容不要标记，宁可漏标不要标错；\n')
     prompt += ('输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
@@ -1236,10 +1237,12 @@ def render_simple(txt, it, lines):
 
     def md(t):
         out = ""
-        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+)", t):
+        for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+|\^[^\^]+?\^)", t):
             if not seg:
                 continue
-            if seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
+            if seg.startswith("^") and seg.endswith("^") and len(seg) > 2:
+                out += "#super[" + esc1(seg[1:-1]) + "]"
+            elif seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
                 out += "#kb[" + esc1(seg[3:-3]) + "]"
             elif seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
                 out += "*" + esc1(seg[2:-2]) + "*"
@@ -1459,10 +1462,12 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     """字体标记(中文均无 Bold 变体, 加粗用描边合成):
                     *楷体*  **黑体**  ***楷体加粗***  ==宋体加粗==  ++黑体加粗++"""
                     out = ""
-                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+)", s):
+                    for seg in re.split(r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*]+?\*|==.+?==|\+\+.+?\+\+|\^[^\^]+?\^)", s):
                         if not seg:
                             continue
-                        if seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
+                        if seg.startswith("^") and seg.endswith("^") and len(seg) > 2:
+                            out += "#super[" + esc_one(seg[1:-1]) + "]"        # 上标角标(注释序号①/[注])
+                        elif seg.startswith("***") and seg.endswith("***") and len(seg) > 6:
                             out += "#kb[" + esc_one(seg[3:-3]) + "]"           # 楷体加粗
                         elif seg.startswith("**") and seg.endswith("**") and len(seg) > 4:
                             out += "*" + esc_one(seg[2:-2]) + "*"              # 黑体
