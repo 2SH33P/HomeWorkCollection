@@ -1346,7 +1346,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         '#let hbk(body) = text(font: F_HEI, stroke: 0.03em, body)',   # 黑体加粗
         '#let __unused_hb = 0',    # 黑体加粗(同上)                        # LaTeX 公式支持
         f'#set text(font: F_SONG, size: {size_pt}pt, lang: "zh")',    # 英文 Times 新罗马 / 中文宋体
-        f'#set par(justify: true, leading: {lead_em}em, spacing: {lead_em}em, first-line-indent: {indent_em}em)',
+        f'#set par(justify: true, leading: {lead_em}em, spacing: {lead_em}em, first-line-indent: 0em)',
         '#let BODY = ' + f'{size_pt}pt',
         '#show heading: set text(font: F_HEI, size: 12pt)',           # 大题标题: 小四黑体(西文 Times-Bold)
         '#show heading: set par(leading: 0.7em)',
@@ -1399,6 +1399,33 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                 placed = False
                 fig_tokens = []
                 opt_buf = []
+                FLUSH_PREFIX = ("阅读下面", "材料一", "材料二", "材料三", "材料四",
+                                "材料五", "[注]", "（一）", "（二）", "（三）", "（四）", "（五）")
+
+                def keep_flush(t):
+                    """原卷规则: 材料标签/题号/选项/注释/指示语/大题标题 不参与首行缩进。
+                    注意: "2025 年…" 这种以数字开头的正文段仍要缩进, 故题号须带 ．、)） 才算。"""
+                    t = (t or "").strip().lstrip("*=+")     # 先剥掉 **粗体** ==加粗== 等标记
+                    if not t:
+                        return False
+                    if t[0] in "（(":                       # （1） （一） 之类小问/层级标号
+                        j = 1
+                        while j < len(t) and (t[j].isdigit() or t[j] in "一二三四五六七八九十"):
+                            j += 1
+                        if j > 1 and j < len(t) and t[j] in "）)":
+                            return True
+                    else:
+                        j = 0
+                        while j < len(t) and t[j].isdigit():
+                            j += 1
+                        if 0 < j <= 2 and j < len(t) and t[j] in "．.、)）":     # 1． 17、
+                            return True
+                        if len(t) > 1 and t[0] in "ABCD" and t[1] in "．.、)）":  # 选项行
+                            return True
+                        if len(t) > 1 and t[0] in "一二三四五六七八九十" and t[1] == "、":
+                            return True
+                    return t.startswith(FLUSH_PREFIX)
+
                 first_ln = True      # 题号后的第一个文本行, 与题号同行(不加换行符)
                 para_mode = None     # ::: poem / ::: quote 整段样式
                 para_buf = []
@@ -1590,7 +1617,13 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                             first_ln = False
                         else:
                             flush_opts()
-                            lines.append(out + " \\")
+                            if indent_em > 0:
+                                # 段落化(空行分隔), 并对散文段落显式加 2 字符首行缩进
+                                if not keep_flush(ln2):
+                                    out = f"#h({indent_em}em)" + out
+                                lines.append(out + chr(10))
+                            else:
+                                lines.append(out + " \\")
                             first_ln = False
                 flush_para()
                 flush_opts()
