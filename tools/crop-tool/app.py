@@ -559,6 +559,24 @@ def ai_recognize_one(it, force=False):
     return updated
 
 
+def extract_ai_figs(text):
+    """把 AI 输出的图形坐标标记换成 [图N], 返回 (新文本, [{n,x,y,w,h}])。
+    兼容三种写法: [图@l,t,w,h] / 图@l,t,w,h / AI 照抄的占位符(非数字, 直接丢弃)。"""
+    text = text or ""
+    figs = []
+    pat = re.compile(r"\[?\s*图@\s*(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)\s*\]?")
+
+    def _rep(m):
+        figs.append({"n": len(figs) + 1, "x": int(m.group(1)), "y": int(m.group(2)),
+                     "w": int(m.group(3)), "h": int(m.group(4))})
+        return f"[图{figs[-1]['n']}]"
+
+    text = pat.sub(_rep, text)
+    text = re.sub(r"\[图@[^\]]*\]", " ", text)            # 残留的带括号无效标记
+    text = re.sub(r"图@[^\d\n]*", " ", text)                # 残留的 图@占位符(含后面的非数字部分)
+    return re.sub(r"\n{3,}", "\n\n", text).strip(), figs
+
+
 def _auto_ai_bg(saved_items):
     """后台线程池并发 AI 识别(A 策略: 已有内容不覆盖)。"""
     from concurrent.futures import ThreadPoolExecutor
@@ -1129,9 +1147,12 @@ def call_ai_vision(img_rgb):
               '6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / '
               'D．选项内容（用全角句点．）；\n'
               '7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n'
-              '8. 不要输出任何图形位置标记（不要写 [图@x,y,w,h] 这类坐标）。图形位置由用户在'
-              '「裁图」里手动框选确定，你只负责把文字识别准确；题干里遇到图形时，'
-              '按上下文正常接续文字即可，不要为图形留占位符。\n')
+              '8. 题目内嵌的图形/示意图要标出位置：用方括号包一个图形标记，里面写「图@」加四个'
+              '0-1000 的比例整数，依次是框的左边缘、上边缘、宽度、高度，之间用英文逗号分隔。'
+              '例如图形位于整图左上角、占宽高各两成时，标记形如 图@0,0,200,200。'
+              '上面的数字只是说明格式，必须填写你自己量出的真实数值，绝不能原样照抄示例。'
+              '框要贴合图形本身（含外框线、坐标轴、图注），不要包含题干文字、选项或大片空白；'
+              '图片里没有图形就不要输出任何图形标记。\n')
     if ai_config().get("font_marks", True):
         prompt += ('9. 标注原题的视觉强调，只用两种标记(不要用其他符号)：\n'
                    '   - 比正文更粗更黑的文字(黑体、加粗的宋体等) -> **文字**\n'
@@ -2209,11 +2230,24 @@ def ocr_ai(payload: dict):
             return JSONResponse({"ok": False, "msg": "请先框选题目"}, status_code=400)
         img = np.array(open_photo(srcs[0]))[y:y + h, x:x + w]
     try:
-        text = call_ai_vision(img)
-        return {"ok": True, "text": text}
+        text = clean_ai_text(call_ai_vision(img))
     except Exception as e:
         return JSONResponse({"ok": False, "msg": "AI 识别失败: " + str(e)[:200]},
                             status_code=502)
+    text, figs = extract_ai_figs(text)          # [图@..] -> [图N] + 图形列表
+    # 立刻把每个图形裁出来给前端看(坐标相对题图 0-1000)
+    FH, FW = img.shape[:2]
+    for f in figs:
+        x0 = max(0, int(f["x"] / 1000 * FW)); y0 = max(0, int(f["y"] / 1000 * FH))
+        w0 = min(FW - x0, max(20, int(f["w"] / 1000 * FW)))
+        h0 = min(FH - y0, max(20, int(f["h"] / 1000 * FH)))
+        piece = trim_blank(img[y0:y0 + h0, x0:x0 + w0])
+        if piece.shape[0] < 10 or piece.shape[1] < 10:
+            piece = img[y0:y0 + h0, x0:x0 + w0]
+        fp = TMP_DIR / f"aifig_{int(time.time() * 1000)}_{f['n']}.jpg"
+        if imwrite_u(fp, cv2.cvtColor(piece, cv2.COLOR_RGB2BGR)):
+            f["preview"] = f"/files/.tmp/{fp.name}"
+    return {"ok": True, "text": text, "figures": figs}
 
 
 @app.post("/api/item/{item_id}/ai")

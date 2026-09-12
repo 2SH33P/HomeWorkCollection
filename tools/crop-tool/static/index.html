@@ -363,6 +363,18 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* 框选卡片: AI 识别 + 裁出的图形 */
+.b-figs { margin: 2px 0 6px; }
+.b-fig-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.b-fig-strip figure { margin: 0; text-align: center; }
+.b-fig-strip img { max-width: 108px; max-height: 76px; background: #fff; border-radius: 8px;
+                   box-shadow: var(--shadow); display: block; }
+.b-fig-ph { display: inline-flex; align-items: center; justify-content: center; min-width: 60px;
+            height: 40px; background: var(--elev); border-radius: 8px; font-size: 12px; color: var(--t3); }
+.b-fig-strip figcaption { font-size: 11px; color: var(--t3); margin-top: 2px; }
+.b-ai { color: #248a3d !important; font-weight: 600; }
+.b-ai[disabled] { opacity: .5; }
+
 /* AI 框题: 保留模式操作条 */
 .keep-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
             padding: 8px 12px; margin: 0 0 8px; border-radius: var(--r-md);
@@ -2093,7 +2105,17 @@ function boxCardHTML(b, i, pid) {
         <textarea data-f="note" rows="4" placeholder="题干与选项（AI 自动识别，可编辑；[图1] 表示图块）">${esc(b.note)}</textarea>
         <textarea data-f="answer" rows="2" placeholder="答案（可选）">${esc(b.answer)}</textarea>
         <textarea data-f="analysis" rows="2" placeholder="解析（可选，支持 *楷体* **黑体** 与 [图1]）">${esc(b.analysis)}</textarea>
+        ${(b.figures || []).length ? `<div class="b-figs">
+          <span class="hint">AI 裁出的图形（保存后写入题内图形）：</span>
+          <div class="b-fig-strip">${(b.figures || []).map(f =>
+            `<figure title="[图${f.n}]">
+               ${f.preview ? `<img src="${esc(f.preview)}?t=${Date.now()}" loading="lazy">`
+                           : `<span class="b-fig-ph">[图${f.n}]</span>`}
+               <figcaption>[图${f.n}]</figcaption>
+             </figure>`).join("")}</div>
+        </div>` : ""}
         <div class="brow">
+          <button class="mini b-ai" data-id="${b.id}" title="识别题干并把图形裁出来（题干静默填入）">AI 识别</button>
           <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
         </div>
       </div>
@@ -2136,6 +2158,42 @@ function renderBoxList() {
     const id = btn.dataset.id;
     openBoxes.has(id) ? openBoxes.delete(id) : openBoxes.add(id);
     renderBoxList();
+  });
+  el.querySelectorAll(".b-ai").forEach(btn => btn.onclick = async () => {
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const bs = loadBoxes(pid);
+    const box = bs.find(x => x.id === bid);
+    if (!box) return;
+    if (pid !== curPage) {                          // 在别的页: 先切过去(识别要用该页原图)
+      const th = document.querySelector('.page-thumb[data-page="' + pid + '"]');
+      if (th) th.click();
+      setTimeout(() => { btn.disabled = false; toast("请在该页再点一次「AI 识别」", "ok"); }, 900);
+      return;
+    }
+    if ((box.note || "").trim() && !confirm("该题已有识别内容，重新识别会覆盖，继续？")) return;
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = "识别中…";
+    try {
+      const d = await api("/api/ocr/ai", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page: pid, box: { x: Math.round(box.x), y: Math.round(box.y),
+                                                 w: Math.round(box.w), h: Math.round(box.h) } }) });
+      const bs2 = loadBoxes(pid);
+      const b2 = bs2.find(x => x.id === bid);
+      if (b2) {
+        b2.note = d.text || "";                      // 题干静默填入
+        b2.figures = (d.figures || []).map(f => ({ n: f.n, x: f.x, y: f.y, w: f.w, h: f.h,
+                                                   preview: f.preview || "" }));
+        saveBoxesFor(pid, bs2);
+        if (pid === curPage) { boxes = bs2; }
+      }
+      renderBoxList();
+      const k = (d.figures || []).length;
+      toast(k ? ("识别完成：题干已填入，裁出 " + k + " 个图") : "识别完成：题干已填入（本题无图形）", "ok");
+    } catch (err) {
+      toast("AI 识别失败: " + err.message, "err");
+      btn.disabled = false; btn.textContent = old;
+    }
   });
   el.querySelectorAll(".del").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
