@@ -1353,7 +1353,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <button class="btn ghost" id="pvReframe" title="查看该题在原图上的取景框，可拖动后重新裁剪">
             <svg class="ic"><use href="#ic-crop"/></svg><span>原图取景</span></button>
           <button class="btn ghost" id="pvViewImg"><svg class="ic"><use href="#ic-image"/></svg><span>浏览图片</span></button>
-          <button class="btn ghost" id="pvCropOk" style="display:none">确认裁剪</button>
+          <button class="btn" id="pvCropOk" style="display:none">确认裁剪</button>
           <button class="btn ghost" id="pvCropCancel" style="display:none">取消</button>
           <button class="btn" id="pvSave">保存</button>
           <button class="btn ghost" id="pvToggle">加入组卷</button>
@@ -3521,13 +3521,43 @@ pvcv.addEventListener("pointerdown", e => {
   if (!pvCropOn) return;
   pvResizeCv();                         // 每次框选前对齐 canvas 与图片实际显示尺寸
   const p = pvPos(e);
-  pvDrag = { x0: p.x, y0: p.y }; pvRect = null; pvcv.setPointerCapture(e.pointerId);
+  const T = 16;                         // 命中容差(屏幕像素)
+  if (pvRect) {                         // 已有框: 先判断是否要拖动/缩放它
+    const L = Math.abs(p.x - pvRect.x) <= T, R = Math.abs(p.x - (pvRect.x + pvRect.w)) <= T;
+    const TT = Math.abs(p.y - pvRect.y) <= T, BB = Math.abs(p.y - (pvRect.y + pvRect.h)) <= T;
+    const inside = p.x >= pvRect.x - T && p.x <= pvRect.x + pvRect.w + T &&
+                   p.y >= pvRect.y - T && p.y <= pvRect.y + pvRect.h + T;
+    if (inside) {
+      if (L && TT) pvDrag = { m: "nw" }; else if (R && TT) pvDrag = { m: "ne" };
+      else if (L && BB) pvDrag = { m: "sw" }; else if (R && BB) pvDrag = { m: "se" };
+      else if (L || R) pvDrag = { m: L ? "w" : "e" };
+      else if (TT || BB) pvDrag = { m: TT ? "n" : "s" };
+      else pvDrag = { m: "move", dx: p.x - pvRect.x, dy: p.y - pvRect.y };
+      pvcv.setPointerCapture(e.pointerId);
+      return;
+    }
+  }
+  pvDrag = { x0: p.x, y0: p.y, m: "new" }; pvRect = null;   // 否则拖一个新框
+  pvcv.setPointerCapture(e.pointerId);
 });
 pvcv.addEventListener("pointermove", e => {
   if (!pvCropOn || !pvDrag) return;
   const p = pvPos(e);
-  pvRect = { x: Math.min(pvDrag.x0, p.x), y: Math.min(pvDrag.y0, p.y),
-             w: Math.abs(p.x - pvDrag.x0), h: Math.abs(p.y - pvDrag.y0) };
+  if (pvDrag.m === "new") {
+    pvRect = { x: Math.min(pvDrag.x0, p.x), y: Math.min(pvDrag.y0, p.y),
+               w: Math.abs(p.x - pvDrag.x0), h: Math.abs(p.y - pvDrag.y0) };
+  } else if (pvRect) {
+    const MIN = 16, W = pvcv.clientWidth, H = pvcv.clientHeight;
+    if (pvDrag.m === "move") {
+      pvRect.x = Math.max(0, Math.min(W - pvRect.w, p.x - pvDrag.dx));
+      pvRect.y = Math.max(0, Math.min(H - pvRect.h, p.y - pvDrag.dy));
+    } else {
+      if (pvDrag.m.indexOf("e") >= 0) pvRect.w = Math.max(MIN, Math.min(W - pvRect.x, p.x - pvRect.x));
+      if (pvDrag.m.indexOf("s") >= 0) pvRect.h = Math.max(MIN, Math.min(H - pvRect.y, p.y - pvRect.y));
+      if (pvDrag.m.indexOf("w") >= 0) { const nx = Math.max(0, Math.min(p.x, pvRect.x + pvRect.w - MIN)); pvRect.w += pvRect.x - nx; pvRect.x = nx; }
+      if (pvDrag.m.indexOf("n") >= 0) { const ny = Math.max(0, Math.min(p.y, pvRect.y + pvRect.h - MIN)); pvRect.h += pvRect.y - ny; pvRect.y = ny; }
+    }
+  }
   pvDraw();
 });
 pvcv.addEventListener("pointerup", () => { pvDrag = null; });
@@ -3560,14 +3590,22 @@ $("pvCropBtn").onclick = () => {
   $("pvCropOk").style.display = pvCropOn ? "" : "none";
   $("pvCropCancel").style.display = pvCropOn ? "" : "none";
   $("pvCropHint").style.display = pvCropOn ? "block" : "none";
+  const lbl = $("pvCropBtn").querySelector("span") || $("pvCropBtn");
+  if (lbl) lbl.textContent = pvCropOn ? "结束裁图" : "裁图";
   if (pvCropOn) {
+    setPvCropHint("拖框选出图形区域（可连续裁多个）；拖动已画的框可微调；点「确认裁剪」存为附件");
     const im = $("pvImg");
     const start = () => { pvResizeCv(); pvRect = null; pvDraw(); };
     if (im.complete && im.naturalWidth) start();
     else { im.onload = start; }        // 图片加载完再对齐, 避免坐标偏移
   } else { pvctx.clearRect(0, 0, pvcv.width, pvcv.height); }
 };
-$("pvCropCancel").onclick = () => { $("pvCropBtn").click(); };
+$("pvCropCancel").onclick = () => { $("pvCropBtn").click(); };     // 取消 = 退出裁图模式
+
+function setPvCropHint(txt) {
+  const h = $("pvCropHint");
+  if (h) { h.textContent = txt; h.style.display = "block"; }
+}
 $("pvCropOk").onclick = async () => {
   if (!pvRect || pvRect.w < 20 || pvRect.h < 20) return toast("先拖拽框选图形区域", "err");
   if (!pvItem || !pvItem.image) return toast("该题没有图片，无法裁图", "err");
@@ -3591,14 +3629,18 @@ $("pvCropOk").onclick = async () => {
     renderPvFigs(pvItem);
     if (replacing) {
       toast("图 " + d.n + " 已按新框重新裁剪", "ok");
+      $("pvCropBtn").click();                 // 重裁是一次性操作 -> 退出
     } else {
       const tag = "[图" + d.n + "]";
       const note = $("pvNote").value.trim();
       $("pvNote").value = note ? note + "\n[图" + d.n + "]" : tag;
-      toast("已裁好图 " + d.n + "（存为图片附件，正文里用 [图" + d.n + "] 引用）", "ok");
+      const total = (pvItem.figures || []).length;
+      pvRect = null; pvDraw();                // 清掉方框, 继续裁下一个
+      setPvCropHint("已裁好图 " + d.n + "（共 " + total + " 个）—— 继续拖框可再裁，点「结束裁图」完成");
+      toast("已裁好图 " + d.n + "，可继续框选下一个", "ok");
     }
   } catch (err) { toast("裁图失败: " + err.message, "err"); }
-  $("pvCropBtn").click();          // 关闭裁图模式
+  if (replacing) { /* 已在上面退出 */ }
 };
 
 /* ---------- 组卷列表(选图顺序 = 题号顺序) ---------- */
