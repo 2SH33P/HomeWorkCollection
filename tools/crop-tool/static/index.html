@@ -356,6 +356,10 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .ag-head .ag-ch { flex: 1; min-width: 130px; }
 .ag-count { font-size: 13px; color: var(--t2); white-space: nowrap; }
 .ag-count input { width: 56px; }
+.ag-mv { border: 1px solid var(--sep); background: var(--elev); color: var(--t2); cursor: pointer;
+          width: 26px; height: 26px; border-radius: 7px; font-size: 13px; line-height: 1;
+          display: flex; align-items: center; justify-content: center; padding: 0; }
+.ag-mv:hover { color: var(--accent); border-color: var(--accent); }
 .ag-del { border: none; background: transparent; color: var(--t3); cursor: pointer;
           width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 .ag-del:hover { background: rgba(255,59,48,.14); color: var(--danger); }
@@ -930,7 +934,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="autoKw">同份卷内关键字不重复</label>
             <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="autoAvoid">避开上次用过的题</label>
           </div>
-          <div class="hint" style="margin:8px 0">每个大题填题量与该星级的最少/最多（留空=不限）。卷内自动按星级从低到高排列。</div>
+          <div class="hint" style="margin:8px 0">每个大题填题量与该星级的最少/最多（留空=不限）；
+            用 <b>↑↓</b> 调整大题顺序（决定卷内先后）；每个大题内部自动按星级从低到高排列。</div>
           <div id="autoGroups"></div>
           <div class="actions" style="margin-top:10px">
             <button class="btn ghost btn-sm" id="autoAddGroup"><svg class="ic"><use href="#ic-plus"/></svg><span>添加大题</span></button>
@@ -3152,9 +3157,19 @@ function autoSubjects() {
 }
 
 function autoChapters(subj) {
-  const chs = library.filter(x => (x.subject || "") === subj && !(x.title || "").trim().startsWith("§"))
-                     .map(x => x.chapter || "").filter(Boolean);
-  return [...new Set([...chs, ...(TPLS[subj] || [])])];
+  const rows = library.filter(x => (x.subject || "") === subj && !(x.title || "").trim().startsWith("§"));
+  const seen = [];
+  for (let i = rows.length - 1; i >= 0; i--) {        // library 是最新在前 -> 反序得到创建顺序
+    const c = rows[i].chapter || "";
+    if (c && !seen.includes(c)) seen.push(c);
+  }
+  (TPLS[subj] || []).forEach(c => { if (c && !seen.includes(c)) seen.push(c); });
+  const ord = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+  const key = c => {                                   // 带序号的大题(一、选择题)按序号排在前面
+    const m = (c || "").match(/^[（(]?([一二三四五六七八九十]+)[）)、．.]/);
+    return m ? ord.indexOf(m[1].charAt(0)) : 99;
+  };
+  return seen.slice().sort((a, b) => key(a) - key(b));  // sort 稳定: 无序号者保持创建顺序
 }
 
 function autoGroupRow(ch) {
@@ -3169,10 +3184,20 @@ function autoGroupRow(ch) {
   el.innerHTML = `<div class="ag-head">
       <select class="ag-ch">${opts}</select>
       <span class="ag-count">题量 <input type="number" min="0" max="99" value="0" class="ag-num"></span>
+      <button class="ag-mv" data-mv="up" title="上移（决定卷内大题顺序）">↑</button>
+      <button class="ag-mv" data-mv="down" title="下移">↓</button>
       <button class="ag-del" title="删除该大题"><svg class="ic"><use href="#ic-x"/></svg></button>
     </div>
     <div class="ag-stars">${stars}</div>`;
   el.querySelector(".ag-del").onclick = () => el.remove();
+  el.querySelector('[data-mv="up"]').onclick = () => {
+    const prev = el.previousElementSibling;
+    if (prev) el.parentNode.insertBefore(el, prev);
+  };
+  el.querySelector('[data-mv="down"]').onclick = () => {
+    const next = el.nextElementSibling;
+    if (next) el.parentNode.insertBefore(next, el);
+  };
   return el;
 }
 
@@ -3229,9 +3254,12 @@ function renderAutoResult() {
         <button class="btn ghost btn-sm" data-pdf="${i}">导出 PDF</button></div>${rows}</div>`;
   }).join("");
   box.querySelectorAll("[data-load]").forEach(b => b.onclick = () => {
-    selected = new Set(autoPapers[+b.dataset.load].items.map(x => x.id));
+    const idx = +b.dataset.load;
+    selected = new Set(autoPapers[idx].items.map(x => x.id));
     renderSelected();
-    toast("已载入第 " + (+b.dataset.load + 1) + " 份，可在下方「已选题目」微调后导出", "ok");
+    renderPaperList();                       // 关键: 重画「已选题目」列表
+    updateSelCount();
+    toast("已载入第 " + (idx + 1) + " 份（" + selected.size + " 题），可在下方「已选题目」微调", "ok");
     const pl = $("paperList");
     if (pl) pl.scrollIntoView({ behavior: "smooth", block: "center" });
   });
