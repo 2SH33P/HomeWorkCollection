@@ -1112,7 +1112,8 @@ def call_ai_vision(img_rgb):
     b64 = base64.b64encode(buf).decode()
     prompt = ('你是试卷题目识别工具。识别图片中的题目，注意：\n'
               '1. 忽略图片中所有手写笔迹、批注、涂改痕迹，只识别印刷体题目内容；\n'
-              '2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；\n'
+              '2. 不要输出题号（如 1. 2. 3.、①②、第1题 等），直接从题目内容开始；'
+              '但英语完形填空、语法填空等每小题的编号（如 41. 61.）是题目内容的一部分，必须保留；\n'
               '3. 忽略与题目无关的内容：页眉页脚、页码、水印、练习册名称、出题人/审题人署名；'
               '但题目自带的提示语、注意事项、说明文字要保留；\n'
               '4. 第一行输出【题干】，后跟题干文字；\n'
@@ -1141,6 +1142,11 @@ def call_ai_vision(img_rgb):
                '摘编与删改说明（“（摘编自…）”“（有删改）”“（周扬、谢素台译，有删改）”）、'
                '资料卡片、命题说明；\n'
                '   - 大题层级标题（如“（一）现代文阅读 I（本题共 5 小题，19 分）”）：用 **加粗** 单独一行\n'
+               '   - 表格：用 Markdown 管道表，第一行表头、第二行分隔（如 | --- | :--: |），'
+               '之后每行一条记录，单元格内不要换行、不要用竖线以外的分隔符\n'
+               '11. 英语试卷：题目文字保持英文原样，不要翻译；选项逐行输出 A．… B．… ；'
+               '填空的空格用 ______ 表示，括号中的提示词原样保留；'
+               '选项超过 4 个（如七选五 A．… G．…）也逐行输出；\n'
                '输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
                '只输出识别结果，不要解释。')
     body = {
@@ -1193,33 +1199,76 @@ def clean_ai_text(text):
             "", ln, count=1)
         break
     text = "\n".join(lines)
-    # 2. 删答案标注: 括号内的 A-D 组合(含多字母/未闭合), 如（A）（D C）（AC）
-    text = re.sub(r"[（(]\s*(?:[A-D]\s*)+[)）]?", "", text)
-    text = re.sub(r"[（(]\s*[)）]", "", text)
-    # 3. 删答案行
-    text = re.sub(r"^\s*答案[:：]?\s*[A-D]\s*$", "", text, flags=re.M)
-    # 4. 删选项行尾的对勾/叉号(答案标记)
-    text = re.sub(r"[√×✓✗]\s*$", "", text, flags=re.M)
-    # 5. 选项句点统一为全角
-    text = re.sub(r"^([A-D])[.、)]", r"\1．", text, flags=re.M)
-    # 6. 一行多选项拆成每行一个(A．x B．y C．z D．w)
-    lines = text.split("\n")
+    # 2-6. 逐行清洗(表格行原样保留, 避免误删单元格内容)
     out = []
-    for ln in lines:
-        s = ln.strip()
-        if not s:
+    for ln in text.split("\n"):
+        st = ln.strip()
+        if st.startswith("|"):                      # 表格行不参与答案/选项清洗
+            out.append(st)
             continue
-        parts = re.split(r"(?=[A-D][．.、)）])", s)
-        opts = [p for p in parts if re.match(r"^[A-D][．.、)）]", p)]
+        if not st:
+            continue
+        # 删答案标注: 括号内的 A-G 组合(含多字母/未闭合), 如（A）（D C）（AC）
+        st = re.sub(r"[（(]\s*(?:[A-G]\s*)+[)）]?", "", st)
+        st = re.sub(r"[（(]\s*[)）]", "", st)
+        if re.fullmatch(r"答案[:：]?\s*[A-G]", st):   # 纯答案行
+            continue
+        st = re.sub(r"[√×✓✗]\s*$", "", st)          # 选项行尾的对勾/叉号
+        st = re.sub(r"^([A-G])[.、)]", r"\1．", st)   # 选项句点统一全角
+        parts = re.split(r"(?=[A-G][．.、)）])", st)   # 一行多选项 -> 每行一个
+        opts = [x for x in parts if re.match(r"^[A-G][．.、)）]", x)]
         if len(opts) > 1:
-            head = s
-            for p in opts:
-                head = head.replace(p, "", 1)
-            if head.strip():
-                out.append(head.strip())
-            out.extend(p.strip() for p in opts)
+            head = st
+            for x in opts:
+                head = head.replace(x, "", 1)
+            head = head.strip()
+            if re.fullmatch(r"\d{1,2}[.、．)）]", head):
+                opts[0] = head + " " + opts[0]        # 完形填空/语法填空: 小题号跟着第一个选项
+            elif head:
+                out.append(head)
+            out.extend(x.strip() for x in opts)
         else:
-            out.append(s)
+            out.append(st)
+    return "\n".join(out)
+
+
+def md_table_typst(rows, esc_cell):
+    """Markdown 管道表 -> Typst 三线表(居中, 自动列数)。
+    rows: 以 | 开头的连续行; esc_cell: 单元格转义函数(支持 $公式$ / **粗体** / 上标)。
+    第二行若是 |---|:--:| 这类分隔行, 则其上一行视为表头, 并按分隔行决定各列对齐。"""
+    if not rows:
+        return ""
+    body, aligns, header_rows = [], [], 0
+    for r in rows:
+        c = r.strip()
+        c = c[1:] if c.startswith("|") else c
+        c = c[:-1] if c.endswith("|") else c
+        cells = [x.strip() for x in c.split("|")]
+        if cells and all(re.fullmatch(r":?-{2,}:?", x) for x in cells):
+            aligns = [("center" if x.startswith(":") and x.endswith(":") else
+                       "right" if x.endswith(":") else
+                       "left" if x.startswith(":") else "center") for x in cells]
+            header_rows = len(body)
+            continue
+        body.append(cells)
+    if not body:
+        return ""
+    ncol = max(len(r) for r in body)
+    body = [r + [""] * (ncol - len(r)) for r in body]
+    al = ", ".join((aligns[i] if i < len(aligns) else "center") + " + horizon"
+                   for i in range(ncol))
+    out = ["#align(center)[#table(",
+           "  columns: " + str(ncol) + ",",
+           "  stroke: none,",
+           "  inset: (x: 6pt, y: 3pt),",
+           "  align: (" + al + "),",
+           "  table.hline(stroke: 1pt),"]
+    for ri, r in enumerate(body):
+        out.append("  " + ", ".join("[" + esc_cell(x) + "]" for x in r) + ",")
+        if header_rows and ri == header_rows - 1:
+            out.append("  table.hline(stroke: 0.5pt),")
+    out.append("  table.hline(stroke: 1pt),")
+    out.append(")]")
     return "\n".join(out)
 
 
@@ -1266,10 +1315,19 @@ def render_simple(txt, it, lines):
                 out += esc1(seg)
         return out
 
+    tbl_buf2 = []
     for ln in txt.split("\n"):
         ln = ln.strip()
         if not ln:
             continue
+        if ln.startswith("|"):                        # 附录页表格
+            tbl_buf2.append(ln)
+            continue
+        if tbl_buf2:
+            t2 = md_table_typst(tbl_buf2, md)
+            tbl_buf2.clear()
+            if t2:
+                lines.append(t2)
         if ln.startswith("::: "):
             align_mode = ln[4:].strip() or None
             continue
@@ -1442,6 +1500,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                 first_ln = True      # 题号后的第一个文本行, 与题号同行(不加换行符)
                 para_mode = None     # ::: poem / ::: quote 整段样式
                 para_buf = []
+                tbl_buf = []         # 连续收集的 | 表格行
 
                 def flush_para():
                     """输出 ::: poem(诗歌: 居中+大行距) / ::: quote(材料: 缩进+中行距) 整段。"""
@@ -1595,12 +1654,22 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                             para_mode = None
                         align_mode = None
                         continue
-                    om = re.match(r"^([A-D])[．.、)）]\s*(.*)$", ln)
+                    om = re.match(r"^(\d{1,2}[.、．)）]\s*)?([A-G])[．.、)）]\s*(.*)$", ln)
                     if om:                                # 选项行: 收集后 grid 对齐
                         if len(opt_buf) >= 4:
                             flush_opts()
-                        opt_buf.append(ln)
+                        opt_buf.append((om.group(1) or "") + om.group(2) + "．" + om.group(3))
                         continue
+                    if ln.strip().startswith("|"):       # 表格行: 连续收集后整体输出
+                        flush_opts()
+                        tbl_buf.append(ln.strip())
+                        continue
+                    if tbl_buf:
+                        t = md_table_typst(tbl_buf, esc_ln)
+                        tbl_buf.clear()
+                        if t:
+                            lines.append(t)
+                            lines.append("#v(0.15cm)")
                     ln2, infos = scan_figs(ln)
                     if para_mode:                        # 整段样式: 收集纯文本行(图仍走通用分支)
                         if not infos:
@@ -1641,6 +1710,11 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                                 lines.append(out + " \\")
                             first_ln = False
                 flush_para()
+                if tbl_buf:                          # 收尾: 题末仍是表格
+                    t = md_table_typst(tbl_buf, esc_ln)
+                    tbl_buf.clear()
+                    if t:
+                        lines.append(t)
                 flush_opts()
             else:
                 # 未识别出文字: 保留原图(手动添加的纯文字题无图, 跳过)
