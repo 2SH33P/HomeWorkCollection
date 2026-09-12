@@ -3170,8 +3170,9 @@ $("pvCropBtn").onclick = () => {
   } else { pvctx.clearRect(0, 0, pvcv.width, pvcv.height); }
 };
 $("pvCropCancel").onclick = () => { $("pvCropBtn").click(); };
-$("pvCropOk").onclick = () => {
+$("pvCropOk").onclick = async () => {
   if (!pvRect || pvRect.w < 20 || pvRect.h < 20) return toast("先拖拽框选图形区域", "err");
+  if (!pvItem || !pvItem.image) return toast("该题没有图片，无法裁图", "err");
   pvResizeCv();                         // 用最新图片尺寸做比例换算
   const dispW = parseFloat(pvcv.style.width) || 1;
   const dispH = parseFloat(pvcv.style.height) || 1;
@@ -3179,10 +3180,19 @@ $("pvCropOk").onclick = () => {
   const y = Math.round(pvRect.y / dispH * 1000);
   const w = Math.round(pvRect.w / dispW * 1000);
   const h = Math.round(pvRect.h / dispH * 1000);
-  const tag = `[图@${Math.max(0, x)},${Math.max(0, y)},${Math.min(1000, w)},${Math.min(1000, h)}]`;
-  const note = $("pvNote").value.trim();
-  $("pvNote").value = note ? note + "\n" + tag : tag;
-  toast("图形位置已标记，保存后生成 PDF 时自动裁剪插入", "ok");
+  try {
+    // 当场裁好并存为图片附件(不再写成 [图@坐标] 拖到渲染时裁, 图片被改动后就不会错位)
+    const d = await api(`/api/item/${pvItem.id}/figure/crop`, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: Math.max(0, x), y: Math.max(0, y),
+                             w: Math.min(1000, w), h: Math.min(1000, h) }) });
+    pvItem.figures = d.figures;
+    renderPvFigs(pvItem);
+    const tag = "[图" + d.n + "]";
+    const note = $("pvNote").value.trim();
+    $("pvNote").value = note ? note + "\n[图" + d.n + "]" : tag;
+    toast("已裁好图 " + d.n + "（存为图片附件，正文里用 [图" + d.n + "] 引用）", "ok");
+  } catch (err) { toast("裁图失败: " + err.message, "err"); }
   $("pvCropBtn").click();          // 关闭裁图模式
 };
 

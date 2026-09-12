@@ -2477,6 +2477,48 @@ def undo_last_write():
             "count": len(db.get("items", []))}
 
 
+@app.post("/api/item/{item_id}/figure/crop")
+def crop_item_figure(item_id: str, payload: dict = None):
+    """在题目图上按 0-1000 相对坐标当场裁出图块并存为附件(不再拖到渲染时裁)。
+    返回 {n, figures}: n 为该图块编号(用于在正文里写 [图N])。
+    payload: {x, y, w, h}"""
+    payload = payload or {}
+    with DB_LOCK:
+        db = load_db()
+        it = next((x for x in db["items"] if x["id"] == item_id), None)
+        if it is None or not it.get("image"):
+            return JSONResponse({"ok": False, "msg": "题目不存在或无图片"}, status_code=404)
+        src = ROOT / it["image"]
+        if not src.exists():
+            return JSONResponse({"ok": False, "msg": "图片文件不存在"}, status_code=404)
+        img = np.array(open_photo(src))
+        FH, FW = img.shape[:2]
+        try:
+            fx, fy = int(payload.get("x", 0)), int(payload.get("y", 0))
+            fw, fh = int(payload.get("w", 0)), int(payload.get("h", 0))
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "msg": "坐标无效"}, status_code=400)
+        x0 = max(0, int(fx / 1000 * FW))
+        y0 = max(0, int(fy / 1000 * FH))
+        w0 = min(FW - x0, max(10, int(fw / 1000 * FW)))
+        h0 = min(FH - y0, max(10, int(fh / 1000 * FH)))
+        if x0 >= FW or y0 >= FH or w0 < 10 or h0 < 10:
+            return JSONResponse({"ok": False, "msg": "框选区域超出图片范围"}, status_code=400)
+        fig = trim_blank(img[y0:y0 + h0, x0:x0 + w0])
+        if fig.shape[0] < 8 or fig.shape[1] < 8:
+            fig = img[y0:y0 + h0, x0:x0 + w0]
+        figs = list(it.get("figures") or [])
+        n = max([int(f.get("n", 0) or 0) for f in figs] + [0]) + 1
+        rel = f"{it['image'][:-4]}_fig{n}.jpg"
+        if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
+            return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
+        figs.append({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh})
+        it["figures"] = figs
+        save_db(db)
+    log_ai("裁图块", "-", True, 0, f"{item_id} 第{n}块")
+    return {"ok": True, "n": n, "figures": figs}
+
+
 @app.get("/api/paper", response_class=HTMLResponse)
 def make_paper(ids: str = ""):
     """ids: 逗号分隔, 顺序即试卷顺序。生成可打印的试卷页面。"""
