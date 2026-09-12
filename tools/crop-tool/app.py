@@ -416,6 +416,52 @@ def _git_run(args, timeout=150):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 
 
+ZIP_URL = "https://codeload.github.com/2SH33P/HomeWorkCollection/zip/refs/heads/main"
+# ZIP 安装(无 .git)时允许被覆盖的代码路径; 题库/图片/配置等用户数据一律不动
+CODE_DIRS = ("tools", "typst-packages", "fonts")
+CODE_FILES = ("start.bat", "start.sh", "build.bat", "README.md", "README-Windows.txt",
+              "update.bat", "update.py", ".gitignore", ".gitattributes")
+
+
+def _http_get(url, proxy="", timeout=180):
+    """带代理下载(国内拉 GitHub 需要)。"""
+    handlers = []
+    if proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    opener = urllib.request.build_opener(*handlers)
+    req = urllib.request.Request(url, headers={"User-Agent": "HomeWorkCollection-updater"})
+    return opener.open(req, timeout=timeout).read()
+
+
+def _zip_update(proxy="", dest=None):
+    """下载最新 ZIP 并覆盖代码文件, 返回覆盖的文件数。dest 仅供测试指定临时目录。"""
+    import zipfile
+    root = Path(dest) if dest else ROOT
+    data = _http_get(ZIP_URL, proxy)
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    changed = 0
+    for name in zf.namelist():
+        parts = name.split("/")
+        if len(parts) < 2:
+            continue
+        top = parts[1]
+        rel = "/".join(parts[1:])
+        if not rel:
+            continue
+        allowed = top in CODE_DIRS or (len(parts) == 2 and top in CODE_FILES)
+        if not allowed:                      # 跳过用户数据与未列出的路径
+            continue
+        dst = root / rel
+        if name.endswith("/"):
+            dst.mkdir(parents=True, exist_ok=True)
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(name) as src, open(dst, "wb") as out:
+            out.write(src.read())
+        changed += 1
+    return changed
+
+
 @app.get("/api/update/config")
 def get_update_cfg():
     return {"ok": True, "proxy": load_update_cfg().get("proxy", "")}
@@ -432,12 +478,20 @@ def set_update_cfg(payload: dict = None):
 @app.post("/api/update/test")
 def test_update_conn():
     """测试能否连上远程仓库(带代理)。"""
-    if not (ROOT / ".git").exists():
-        return JSONResponse({"ok": False, "msg": "当前目录不是 git 仓库，无法自动更新"},
-                            status_code=400)
+    proxy = (load_update_cfg().get("proxy") or "").strip()
+    if not (ROOT / ".git").exists():            # ZIP 安装: 探测能否下载更新包
+        try:
+            handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
+            req = urllib.request.Request(ZIP_URL, method="HEAD",
+                                         headers={"User-Agent": "HomeWorkCollection-updater"})
+            urllib.request.build_opener(*handlers).open(req, timeout=30)
+        except Exception as e:
+            return JSONResponse({"ok": False, "msg": "无法连接更新源"
+                                + ("（代理 " + proxy + "）" if proxy else "（未设代理）")
+                                + ": " + str(e)[:140]}, status_code=502)
+        return {"ok": True, "msg": "连接正常" + ("（走代理 " + proxy + "）" if proxy else "（直连）")}
     if shutil.which("git") is None:
         return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令"}, status_code=400)
-    proxy = (load_update_cfg().get("proxy") or "").strip()
     try:
         r = _git_run(["ls-remote", "--heads", "origin"], timeout=40)
     except Exception as e:
@@ -456,9 +510,18 @@ def self_update():
     由启动脚本(start.sh / start.bat 的循环)自动用新代码重启。"""
     import subprocess
     root = str(ROOT)
-    if not (ROOT / ".git").exists():
-        return JSONResponse({"ok": False, "msg": "当前目录不是 git 仓库（可能是下载的 ZIP 包），"
-                                                "请手动下载新版覆盖"}, status_code=400)
+    if not (ROOT / ".git").exists():            # ZIP 安装: 下载最新包, 只覆盖代码文件
+        proxy = (load_update_cfg().get("proxy") or "").strip()
+        try:
+            changed = _zip_update(proxy)
+        except Exception as e:
+            return JSONResponse({"ok": False, "msg": "下载更新包失败"
+                                + ("（代理 " + proxy + "）" if proxy else "（未设代理）")
+                                + ": " + str(e)[:160]}, status_code=500)
+        log_ai("自动更新", "-", True, 0, f"ZIP 覆盖 {changed} 个代码文件")
+        threading.Timer(1.2, lambda: os._exit(3)).start()
+        return {"ok": True, "updated": True,
+                "msg": f"已更新 {changed} 个代码文件（题库/图片/配置未改动），服务正在自动重启…"}
     if shutil.which("git") is None:
         return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令，请手动更新"}, status_code=400)
     try:
