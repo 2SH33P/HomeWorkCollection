@@ -470,15 +470,25 @@ def to_trash(path):
         except Exception:
             pass
 TPL_PATH = ROOT / "chapter_templates.json"
+# 各科默认大题模板(首次运行/未自定义时使用; 可在「组卷」页修改)
+DEFAULT_TPL = {
+    "语文": ["一、实用类文本阅读", "二、现代文阅读", "三、文言文阅读", "四、古诗文阅读",
+             "五、语言文字运用", "六、作文"],
+    "数学": ["一、单项选择题", "二、多选题", "三、填空题", "四、解答题"],
+    "物理": ["一、单项选择题", "二、多选题", "三、实验题", "四、计算题"],
+    "化学": ["一、单项选择题", "二、简答题"],
+    "生物": ["一、单项选择题", "二、简答题"],
+    "英语": ["A篇", "B篇", "C篇", "D篇", "七选五", "完形填空", "语法填空", "作文"],
+}
 
 
 @app.get("/api/chapter-tpl")
 def get_tpl():
     """按科目配置的大题模板。"""
-    d = {}
+    d = dict(DEFAULT_TPL)
     if TPL_PATH.exists():
-        try:
-            d = json.loads(TPL_PATH.read_text("utf-8"))
+        try:                                   # 用户改过的以文件为准(按科目覆盖)
+            d.update(json.loads(TPL_PATH.read_text("utf-8")))
         except Exception:
             pass
     return {"ok": True, "templates": d}
