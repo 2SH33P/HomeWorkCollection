@@ -373,190 +373,6 @@ def safe_name(name: str) -> str:
     return "".join(c for c in name if c not in '\\/:*?"<>|').strip() or "未命名"
 
 
-# ---------- 版本号与热更新 ----------
-def source_version():
-    """源码版本: 取关键文件的 mtime+大小做摘要, 任一文件变化 => 版本变化。"""
-    import hashlib
-    h = hashlib.md5()
-    for f in (Path(__file__), STATIC_DIR / "index.html"):
-        try:
-            st = f.stat()
-            h.update(f"{f.name}:{int(st.st_mtime)}:{st.st_size}".encode())
-        except OSError:
-            pass
-    return h.hexdigest()[:12]
-
-
-UPDATE_CFG = ROOT / ".update_config.json"
-
-
-def load_update_cfg():
-    try:
-        return json.loads(UPDATE_CFG.read_text("utf-8")) or {}
-    except Exception:
-        return {}
-
-
-def save_update_cfg(d):
-    UPDATE_CFG.write_text(json.dumps(d, ensure_ascii=False, indent=2), "utf-8")
-
-
-def _git_run(args, timeout=150):
-    """带代理执行 git。代理来自 .update_config.json 的 proxy(国内网络拉 GitHub 常用)。"""
-    import subprocess
-    proxy = (load_update_cfg().get("proxy") or "").strip()
-    cmd = ["git", "-C", str(ROOT)]
-    if proxy:                                   # 显式给 git 指定代理, 不依赖进程环境变量
-        cmd += ["-c", f"http.proxy={proxy}", "-c", f"https.proxy={proxy}"]
-    cmd += args
-    env = dict(os.environ)
-    if proxy:
-        env["HTTP_PROXY"] = env["HTTPS_PROXY"] = proxy
-        env["http_proxy"] = env["https_proxy"] = proxy
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
-
-
-ZIP_URL = "https://codeload.github.com/2SH33P/HomeWorkCollection/zip/refs/heads/main"
-# ZIP 安装(无 .git)时允许被覆盖的代码路径; 题库/图片/配置等用户数据一律不动
-CODE_DIRS = ("tools", "typst-packages", "fonts")
-CODE_FILES = ("start.bat", "start.sh", "build.bat", "README.md", "README-Windows.txt",
-              "update.bat", "update.py", ".gitignore", ".gitattributes")
-
-
-def _http_get(url, proxy="", timeout=180):
-    """带代理下载(国内拉 GitHub 需要)。"""
-    handlers = []
-    if proxy:
-        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urllib.request.build_opener(*handlers)
-    req = urllib.request.Request(url, headers={"User-Agent": "HomeWorkCollection-updater"})
-    return opener.open(req, timeout=timeout).read()
-
-
-def _zip_update(proxy="", dest=None):
-    """下载最新 ZIP 并覆盖代码文件, 返回覆盖的文件数。dest 仅供测试指定临时目录。"""
-    import zipfile
-    root = Path(dest) if dest else ROOT
-    data = _http_get(ZIP_URL, proxy)
-    zf = zipfile.ZipFile(io.BytesIO(data))
-    changed = 0
-    for name in zf.namelist():
-        parts = name.split("/")
-        if len(parts) < 2:
-            continue
-        top = parts[1]
-        rel = "/".join(parts[1:])
-        if not rel:
-            continue
-        allowed = top in CODE_DIRS or (len(parts) == 2 and top in CODE_FILES)
-        if not allowed:                      # 跳过用户数据与未列出的路径
-            continue
-        dst = root / rel
-        if name.endswith("/"):
-            dst.mkdir(parents=True, exist_ok=True)
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(name) as src, open(dst, "wb") as out:
-            out.write(src.read())
-        changed += 1
-    return changed
-
-
-@app.get("/api/update/config")
-def get_update_cfg():
-    return {"ok": True, "proxy": load_update_cfg().get("proxy", "")}
-
-
-@app.post("/api/update/config")
-def set_update_cfg(payload: dict = None):
-    payload = payload or {}
-    proxy = str(payload.get("proxy") or "").strip()
-    save_update_cfg({"proxy": proxy})
-    return {"ok": True, "proxy": proxy}
-
-
-@app.post("/api/update/test")
-def test_update_conn():
-    """测试能否连上远程仓库(带代理)。"""
-    proxy = (load_update_cfg().get("proxy") or "").strip()
-    if not (ROOT / ".git").exists():            # ZIP 安装: 探测能否下载更新包
-        try:
-            handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
-            req = urllib.request.Request(ZIP_URL, method="HEAD",
-                                         headers={"User-Agent": "HomeWorkCollection-updater"})
-            urllib.request.build_opener(*handlers).open(req, timeout=30)
-        except Exception as e:
-            return JSONResponse({"ok": False, "msg": "无法连接更新源"
-                                + ("（代理 " + proxy + "）" if proxy else "（未设代理）")
-                                + ": " + str(e)[:140]}, status_code=502)
-        return {"ok": True, "msg": "连接正常" + ("（走代理 " + proxy + "）" if proxy else "（直连）")}
-    if shutil.which("git") is None:
-        return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令"}, status_code=400)
-    try:
-        r = _git_run(["ls-remote", "--heads", "origin"], timeout=40)
-    except Exception as e:
-        return JSONResponse({"ok": False, "msg": "连接失败: " + str(e)[:120]}, status_code=500)
-    if r.returncode != 0:
-        return JSONResponse({"ok": False,
-                             "msg": ("连接仓库失败" + ("（代理 " + proxy + "）" if proxy else "（未设代理）")
-                                     + ": " + ((r.stderr or "").strip()[-180:]))}, status_code=502)
-    log_ai("测试更新源", "-", True, 0, (proxy or "直连"))
-    return {"ok": True, "msg": "连接正常" + ("（走代理 " + proxy + "）" if proxy else "（直连）")}
-
-
-@app.post("/api/self-update")
-def self_update():
-    """界面点「立即更新」: 从远程仓库拉取最新代码, 再以退出码 3 结束进程,
-    由启动脚本(start.sh / start.bat 的循环)自动用新代码重启。"""
-    import subprocess
-    root = str(ROOT)
-    if not (ROOT / ".git").exists():            # ZIP 安装: 下载最新包, 只覆盖代码文件
-        proxy = (load_update_cfg().get("proxy") or "").strip()
-        try:
-            changed = _zip_update(proxy)
-        except Exception as e:
-            return JSONResponse({"ok": False, "msg": "下载更新包失败"
-                                + ("（代理 " + proxy + "）" if proxy else "（未设代理）")
-                                + ": " + str(e)[:160]}, status_code=500)
-        log_ai("自动更新", "-", True, 0, f"ZIP 覆盖 {changed} 个代码文件")
-        threading.Timer(1.2, lambda: os._exit(3)).start()
-        return {"ok": True, "updated": True,
-                "msg": f"已更新 {changed} 个代码文件（题库/图片/配置未改动），服务正在自动重启…"}
-    if shutil.which("git") is None:
-        return JSONResponse({"ok": False, "msg": "系统里找不到 git 命令，请手动更新"}, status_code=400)
-    try:
-        r = _git_run(["pull", "--ff-only"], timeout=150)
-    except Exception as e:
-        return JSONResponse({"ok": False, "msg": "执行 git pull 失败: " + str(e)[:120]},
-                            status_code=500)
-    out = ((r.stdout or "") + (r.stderr or "")).strip()
-    if r.returncode != 0:
-        return JSONResponse({"ok": False,
-                             "msg": "更新失败（本地有未提交改动或连不上仓库）: " + out[-200:]},
-                            status_code=500)
-    if ("Already up to date" in out) or ("已经是最新" in out):
-        log_ai("检查更新", "-", True, 0, "已是最新")
-        return {"ok": True, "updated": False, "msg": "已经是最新版本", "log": out[-200:]}
-    log_ai("自动更新", "-", True, 0, "已拉取新代码, 即将重启")
-    threading.Timer(1.2, lambda: os._exit(3)).start()      # -> 启动脚本自动拉起新代码
-    return {"ok": True, "updated": True, "msg": "已拉取新代码，服务正在自动重启…", "log": out[-200:]}
-
-
-@app.get("/api/version")
-def get_version():
-    return {"ok": True, "version": source_version()}
-
-
-def _watch_sources(interval=2.0):
-    """后台监视源码变化: 变了就以退出码 3 结束进程, 由启动脚本自动拉起(热更新)。"""
-    base = source_version()
-    while True:
-        time.sleep(interval)
-        if source_version() != base:
-            print("\n[热更新] 检测到源码变化，正在自动重启…", flush=True)
-            os._exit(3)
-
-
 # ---------- 静态文件: 只开放 pages/ items/ .tmp/(避免 library.json、.ai_config.json 被下载) ----------
 FILES_ALLOWED = ("pages/", "items/", ".tmp/")
 
@@ -582,11 +398,9 @@ NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate",
 
 
 def _index_html():
-    """返回首页 HTML: 禁缓存 + 注入版本号(客户端据此自动热更新)。"""
-    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    stamp = f'<script>window.APP_VERSION="{source_version()}";</script>'
-    html = html.replace("</head>", stamp + "\n</head>", 1) if "</head>" in html else stamp + html
-    return HTMLResponse(html, headers=NO_CACHE_HEADERS)
+    """返回首页 HTML(强制禁用缓存, 改动后刷新即生效)。"""
+    return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"),
+                        headers=NO_CACHE_HEADERS)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2809,8 +2623,6 @@ if __name__ == "__main__":
     except OSError:
         pass
     print()
-    if os.environ.get("HOT_RELOAD", "0") == "1":        # 默认关闭: 手动重启即可
-        threading.Thread(target=_watch_sources, daemon=True).start()
     if host:
         uvicorn.run(app, host=host, port=8091, log_level="warning")
     else:

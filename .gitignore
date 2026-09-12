@@ -37,5 +37,3 @@ drafts.json
 # 本地协作规则(不推送)
 AGENT.md
 
-# 更新代理配置(本地)
-.update_config.json
