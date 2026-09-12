@@ -4448,9 +4448,10 @@ $("addSave").onclick = async () => {
   if (f) fd.append("file", f);
   try {
     const d = await api("/api/item", { method: "POST", body: fd });
-    toast(`已添加：${d.item.code}`, "ok");
+    toast(d.auto_ai ? `已添加：${d.item.code}（AI 正在识别文字…）` : `已添加：${d.item.code}`, "ok");
     closeAddItem();
     await loadLibrary();
+    if (d.auto_ai) setTimeout(loadLibrary, 8000);     // 后台识别完成后再刷新一次
   } catch (err) { toast("添加失败: " + err.message, "err"); }
   btn.disabled = false;
   btn.querySelector("span").textContent = "保存";

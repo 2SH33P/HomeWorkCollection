@@ -2281,7 +2281,11 @@ async def create_item(subject: str = Form("未分类"), chapter: str = Form(""),
     }
     db["items"].append(item)
     save_db(db)
-    return {"ok": True, "item": item}
+    # 手动添加若带了图片且题干为空 -> 后台 AI 识别(与框选保存一致)
+    auto = bool(img_rel) and not (note or "").strip()
+    if auto:
+        threading.Thread(target=_auto_ai_bg, args=([item],), daemon=True).start()
+    return {"ok": True, "item": item, "auto_ai": auto}
 
 
 @app.put("/api/item/{item_id}")
