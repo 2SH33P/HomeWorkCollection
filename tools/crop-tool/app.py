@@ -12,6 +12,7 @@ import io
 import json
 import zipfile
 import os
+import random
 import re
 import shutil
 import sys
@@ -333,7 +334,7 @@ def imread_u(path):
             data = np.frombuffer(f.read(), dtype=np.uint8)
         return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
     except Exception as e:
-        log_ai("读图失败", f"{path}: {e}")
+        log_ai("读图失败", "-", False, 0, f"{path}: {e}")
         return None
 
 
@@ -348,7 +349,7 @@ def imwrite_u(path, img, ext=None, params=None) -> bool:
             f.write(buf.tobytes())
         return True
     except Exception as e:
-        log_ai("写图失败", f"{path}: {e}")
+        log_ai("写图失败", "-", False, 0, f"{path}: {e}")
         return False
 
 
@@ -383,7 +384,7 @@ def serve_file(path: str):
         return JSONResponse({"ok": False, "msg": "forbidden"}, status_code=403)
     fp = ROOT / rel
     if not fp.is_file():
-        log_ai("文件缺失", f"/files/{rel} → {fp}")
+        log_ai("文件缺失", "-", False, 0, f"/files/{rel} → {fp}")
         return JSONResponse({"ok": False, "msg": "not found"}, status_code=404)
     return FileResponse(fp)
 
@@ -509,7 +510,7 @@ def ai_recognize_one(it, force=False):
     try:
         text = call_ai_vision(np.array(open_photo(f)))
     except Exception as e:
-        log_ai("识别失败", f"{it.get('code')}: {str(e)[:120]}")
+        log_ai("识别失败", "-", False, 0, f"{it.get('code')}: {str(e)[:120]}")
         return None
     if not text:
         return None
@@ -1362,6 +1363,271 @@ def render_simple(txt, it, lines):
             out = out.replace(f"@@F{i}@@", f'#image("{fp}", width: {w})')
         if out.strip():
             lines.append(f"#align({align_mode})[{out}]" if align_mode else out + " \\")
+
+
+# ---------- 自动组卷 ----------
+AUTO_LAST_FILE = ROOT / "auto_last.json"
+
+
+def load_auto_last():
+    try:
+        return list(json.loads(AUTO_LAST_FILE.read_text("utf-8")) or [])
+    except Exception:
+        return []
+
+
+def save_auto_last(ids):
+    try:
+        AUTO_LAST_FILE.write_text(json.dumps(list(ids)[:5000]), "utf-8")
+    except Exception:
+        pass
+
+
+def _star(it):
+    try:
+        return max(0, min(5, int(it.get("star") or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _kwset(it):
+    raw = (it.get("keywords") or "").replace("，", ",").replace("、", ",")
+    return {k.strip().lower() for k in raw.split(",") if k.strip()}
+
+
+def _bounds(spec, star):
+    """返回某星级的 (最少, 最多); 最多为 None 表示不限。spec: {"2": [2,4], "3": [3,null]}"""
+    b = (spec or {}).get(str(star))
+    if b is None:
+        b = (spec or {}).get(star)
+    if b is None:
+        return 0, None
+    if isinstance(b, (int, float)):
+        return int(b), None
+    lo = int(b[0] or 0) if len(b) > 0 else 0
+    hi = b[1] if len(b) > 1 else None
+    hi = None if hi in (None, "") else int(hi)
+    return max(0, lo), hi
+
+
+def auto_pool(items, groups, subject="", exclude_ids=None):
+    """按大题分组筛出候选题目(排除分节块 §、可选排除指定 id)。"""
+    ex = set(exclude_ids or [])
+    pool = {}
+    for g in groups:
+        ch = g.get("chapter") or ""
+        pool[ch] = [it for it in items
+                    if (it.get("chapter") or "") == ch
+                    and (not subject or (it.get("subject") or "") == subject)
+                    and it.get("id") not in ex
+                    and not (it.get("title") or "").strip().startswith("§")]
+    return pool
+
+
+def _alloc_star_counts(group, avail, P):
+    """把"某大题各星级可用数"分摊到 P 份卷子: 返回 P×6 的数量矩阵, 或 (None, 原因)。
+    约束: 每份总量 = count, 各星级 lo ≤ n ≤ hi(hi=None 不限), 且各份合计不超过可用数。"""
+    C = int(group.get("count") or 0)
+    if C <= 0:
+        return [[0] * 6 for _ in range(P)], None
+    spec = group.get("stars") or {}
+    lo, hi = {}, {}
+    for st in range(6):
+        lo[st], hi[st] = _bounds(spec, st)
+    base = sum(lo.values())
+    if base > C:
+        return None, f"各星级「最少」之和 {base} 道已超过题量 {C} 道"
+    n = [[lo[st] for st in range(6)] for _ in range(P)]
+    R = {st: avail.get(st, 0) - P * lo[st] for st in range(6)}   # 各星级还能再分几道
+    for st, v in R.items():
+        if v < 0:
+            return None, (f"{st} 星题目不足：{P} 份共需至少 {P * lo[st]} 道，"
+                          f"库里只有 {avail.get(st, 0)} 道")
+    r = [C - base] * P                                          # 每份还差几道
+    total = sum(r)
+    while total > 0:
+        pi = max(range(P), key=lambda i: r[i])                  # 先补缺口最大的那份
+        if r[pi] <= 0:
+            break
+        cand = [st for st in range(6) if R[st] > 0 and (hi[st] is None or n[pi][st] < hi[st])]
+        if not cand:
+            return None, (f"题目不足：受星级「最多」限制，每份最多只能排 "
+                          f"{C - r[pi]} 道 / 需要 {C} 道")
+        st = max(cand, key=lambda x: (R[x], -n[pi][x]))         # 先消耗最富余的星级
+        n[pi][st] += 1
+        R[st] -= 1
+        r[pi] -= 1
+        total -= 1
+    return n, None
+
+
+def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
+              exclude_ids=None, seed=None, max_probe=50):
+    """自动组卷: 先算全局配额(每份各星级拿几道), 再发牌。
+    返回 (卷子列表, 诊断); 卷子内按大题顺序、大题内按星级升序。"""
+    rnd = random.Random(seed)
+    base = auto_pool(items, groups, subject, exclude_ids)
+    diag = {"max_papers": 0, "per_group": [], "msg": ""}
+    for g in groups:
+        ch = g.get("chapter") or ""
+        diag["per_group"].append({"chapter": ch, "available": len(base.get(ch) or []),
+                                  "count": int(g.get("count") or 0)})
+    avail = {ch: collections.Counter(_star(x) for x in v) for ch, v in base.items()}
+    live = [g for g in groups if int(g.get("count") or 0) > 0]
+    if not live:
+        return [], {**diag, "ok": False, "msg": "请先填写各大题的题量"}
+    # 最多能出几份: 逐份试探(配额分配是纯计算, 很快)
+    ups = [len(base.get(g.get("chapter") or "", [])) // int(g["count"]) for g in live]
+    upper = min(min(ups) if ups else 0, max_probe)
+    for P in range(1, upper + 1):
+        bad = None
+        for g in live:
+            _, err = _alloc_star_counts(g, avail.get(g.get("chapter") or "", collections.Counter()), P)
+            if err:
+                bad = err
+                break
+        if bad:
+            diag["msg"] = f"再出第 {P} 份时不够：{bad}"
+            break
+        diag["max_papers"] = P
+    if diag["max_papers"] == upper and diag["max_papers"] > 0:
+        for g in live:                      # 已到总量上限: 再试一份, 报告卡在哪
+            _, err2 = _alloc_star_counts(g, avail.get(g.get("chapter") or "",
+                                                      collections.Counter()), diag["max_papers"] + 1)
+            if err2:
+                diag["msg"] = f"再出第 {diag['max_papers'] + 1} 份时不够：{err2}"
+                break
+    if diag["max_papers"] == 0:
+        return [], {**diag, "ok": False, "msg": diag["msg"] or "题目不足，无法组卷"}
+    want = max(1, int(papers or 1))
+    if want > diag["max_papers"]:
+        return [], {**diag, "ok": False,
+                    "msg": f"按当前约束最多只能出 {diag['max_papers']} 份（{diag['msg']}）"}
+    # 发牌: 每个大题各星级洗牌后, 按配额分给各份
+    for attempt in range(4):                # 关键字去重可能因发牌顺序失败 -> 重试几次
+        papers_items, kw_used, fail = [[] for _ in range(want)], [set() for _ in range(want)], None
+        for g in live:
+            ch = g.get("chapter") or ""
+            n, err = _alloc_star_counts(g, avail.get(ch, collections.Counter()), want)
+            if err:
+                fail = err
+                break
+            buckets = {}
+            for x in base.get(ch, []):
+                buckets.setdefault(_star(x), []).append(x)
+            for v in buckets.values():
+                rnd.shuffle(v)
+            for pi in range(want):
+                for st in range(6):
+                    for _ in range(n[pi][st]):
+                        got = None
+                        while buckets.get(st):
+                            x = buckets[st].pop()
+                            if unique_keywords and (_kwset(x) & kw_used[pi]):
+                                continue
+                            got = x
+                            break
+                        if got is None:
+                            fail = (f"「{ch}」{st} 星题目不够分配"
+                                    + ("（关键字去重要求下，可关闭该选项）" if unique_keywords else ""))
+                            break
+                        papers_items[pi].append(got)
+                        kw_used[pi] |= _kwset(got)
+                    if fail:
+                        break
+                if fail:
+                    break
+            if fail:
+                break
+        if not fail:
+            break
+    else:
+        return [], {**diag, "ok": False, "msg": fail or "题目分配失败"}
+    order = {(g.get("chapter") or ""): i for i, g in enumerate(groups)}
+    out = []
+    for pi in range(want):
+        seg = sorted(papers_items[pi], key=lambda x: (order.get(x.get("chapter") or "", 99), _star(x)))
+        out.append(seg)
+    return out, {**diag, "ok": True,
+                 "msg": f"已生成 {want} 份（当前题库与约束最多可出 {diag['max_papers']} 份）"}
+
+
+@app.post("/api/auto/plan")
+def auto_plan_api(payload: dict = None):
+    """自动组卷预检: 不生成, 只报告最多可出几份与每个大题的可用题量。"""
+    payload = payload or {}
+    groups = payload.get("groups") or []
+    if not groups:
+        return JSONResponse({"ok": False, "msg": "请先设置各大题的题量与星级限制"}, status_code=400)
+    ex = set(load_auto_last()) if payload.get("avoid_last") else set()
+    _, diag = auto_plan(load_db()["items"], groups, payload.get("subject") or "",
+                        papers=1, exclude_ids=ex, seed=payload.get("seed"))
+    mx = diag.get("max_papers", 0)
+    msg = (f"最多可出 {mx} 份（{diag.get('msg', '')}）" if diag.get("ok") else diag.get("msg", ""))
+    return {"ok": bool(diag.get("ok")), "max_papers": mx,
+            "per_group": diag.get("per_group", []), "msg": msg}
+
+
+@app.post("/api/auto/build")
+def auto_build_api(payload: dict = None):
+    """自动组卷: 生成 N 份互不重复的卷子, 返回每份的题目列表(卷内已按星级升序)。"""
+    payload = payload or {}
+    groups = payload.get("groups") or []
+    if not groups:
+        return JSONResponse({"ok": False, "msg": "请先设置各大题的题量与星级限制"}, status_code=400)
+    ex = set(load_auto_last()) if payload.get("avoid_last") else set()
+    papers, diag = auto_plan(load_db()["items"], groups, payload.get("subject") or "",
+                             papers=int(payload.get("papers") or 1),
+                             unique_keywords=bool(payload.get("unique_keywords")),
+                             exclude_ids=ex, seed=payload.get("seed"))
+    if not diag.get("ok"):
+        return JSONResponse({"ok": False, "msg": diag.get("msg", "组卷失败"),
+                             "max_papers": diag.get("max_papers", 0),
+                             "built": diag.get("built", 0)}, status_code=400)
+    save_auto_last([x["id"] for p in papers for x in p])
+    out = [{"index": i,
+            "items": [{"id": x["id"], "code": x.get("code"), "star": _star(x),
+                       "chapter": x.get("chapter") or ""} for x in p]}
+           for i, p in enumerate(papers, start=1)]
+    log_ai("自动组卷", "-", True, 0, f"{payload.get('subject', '')} {len(papers)} 份")
+    return {"ok": True, "papers": out, "msg": diag.get("msg", "")}
+
+
+@app.post("/api/auto/export")
+def auto_export(payload: dict = None):
+    """把多份卷子渲染为 PDF 并打包 ZIP。payload: {papers:[{ids:[...], title:...}], 卷头参数…}"""
+    payload = payload or {}
+    papers = payload.get("papers") or []
+    if not papers:
+        return JSONResponse({"ok": False, "msg": "没有可导出的卷子"}, status_code=400)
+    import zipfile
+    zpath = TMP_DIR / f"papers_{int(time.time() * 1000)}.zip"
+    made = 0
+    try:
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            for i, pp in enumerate(papers, start=1):
+                ids = pp.get("ids") or []
+                if not ids:
+                    continue
+                d = paper_pdf(ids=",".join(ids), attach=payload.get("attach") or "",
+                              index=payload.get("index") or "", header=payload.get("header") or "",
+                              title=pp.get("title") or payload.get("title") or "",
+                              subject_line=payload.get("subject_line") or "",
+                              notice=payload.get("notice") or "",
+                              body_size=payload.get("body_size") or "",
+                              leading=payload.get("leading") or "",
+                              subtitle=payload.get("subtitle") or "",
+                              first_indent=payload.get("first_indent") or "")
+                if isinstance(d, dict) and d.get("ok"):
+                    f = ROOT / str(d["url"]).lstrip("/").replace("files/", "", 1)
+                    if f.exists():
+                        z.write(f, arcname=f"paper-{i:02d}.pdf")
+                        made += 1
+    except Exception as e:
+        return JSONResponse({"ok": False, "msg": "导出失败: " + str(e)[:150]}, status_code=500)
+    if not made:
+        return JSONResponse({"ok": False, "msg": "没有生成任何 PDF"}, status_code=500)
+    return {"ok": True, "url": f"/files/.tmp/{zpath.name}", "count": made}
 
 
 @app.get("/api/paper/pdf")

@@ -350,6 +350,24 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* 自动组卷 */
+.auto-group { border: 1px solid var(--sep); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+.ag-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ag-head .ag-ch { flex: 1; min-width: 130px; }
+.ag-count { font-size: 13px; color: var(--t2); white-space: nowrap; }
+.ag-count input { width: 56px; }
+.ag-del { border: none; background: transparent; color: var(--t3); cursor: pointer;
+          width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.ag-del:hover { background: rgba(255,59,48,.14); color: var(--danger); }
+.ag-stars { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 7px; font-size: 12px; color: var(--t3); }
+.ag-star { display: flex; align-items: center; gap: 3px; }
+.ag-star b { font-weight: 600; color: var(--t2); }
+.ag-star input { width: 38px; padding: 3px 5px; font-size: 12px; }
+.auto-paper { border: 1px solid var(--sep); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; }
+.ap-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.ar-ch { font-size: 13px; color: var(--t2); line-height: 1.9; }
+.ar-ch sub { color: var(--t3); font-size: 10px; }
+
 /* 大题预设选择 */
 .chap-wrap { position: relative; display: block; }
 .chap-wrap input { padding-right: 34px; }
@@ -901,6 +919,28 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
         </div>
         <label class="fld"><span>页眉文字（可留空；显示在每页顶部）</span>
           <input type="text" id="paperHeader" placeholder="如：错题重组试卷 · 内部资料"></label>
+      </details>
+      <details class="paper-head-set" id="autoPanel" style="margin-top:12px">
+        <summary>自动组卷（按大题与星级自动抽题；一次生成多份，互不重复）</summary>
+        <div style="margin-top:10px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <label class="fld" style="min-width:120px"><span>科目</span><select id="autoSubject"></select></label>
+            <label class="fld" style="min-width:88px"><span>份数</span>
+              <input type="number" id="autoPapers" value="3" min="1" max="50"></label>
+            <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="autoKw">同份卷内关键字不重复</label>
+            <label class="chk" style="margin-bottom:8px"><input type="checkbox" id="autoAvoid">避开上次用过的题</label>
+          </div>
+          <div class="hint" style="margin:8px 0">每个大题填题量与该星级的最少/最多（留空=不限）。卷内自动按星级从低到高排列。</div>
+          <div id="autoGroups"></div>
+          <div class="actions" style="margin-top:10px">
+            <button class="btn ghost btn-sm" id="autoAddGroup"><svg class="ic"><use href="#ic-plus"/></svg><span>添加大题</span></button>
+            <button class="btn ghost btn-sm" id="autoCheck"><svg class="ic"><use href="#ic-search"/></svg><span>预检可行性</span></button>
+            <button class="btn" id="autoBuild">生成</button>
+            <button class="btn ghost btn-sm" id="autoExportAll" style="display:none">全部导出 ZIP</button>
+          </div>
+          <div class="hint" id="autoMsg" style="margin-top:8px;line-height:1.8"></div>
+          <div id="autoResult" style="margin-top:10px"></div>
+        </div>
       </details>
       <div class="paper-attach" style="margin-top:12px">
         <label class="fl"><span>文末附加</span>
@@ -3101,6 +3141,180 @@ $("pdfBtn").onclick = async () => {
     toast(`已生成 ${d.count} 题的 PDF`, "ok");
   } catch (err) { toast("生成失败: " + err.message, "err"); }
   btn.disabled = false; btn.querySelector("span").textContent = "生成 PDF（Typst）";
+};
+
+/* ---------- 自动组卷 ---------- */
+let autoPapers = [];
+
+function autoSubjects() {
+  const subs = [...new Set(library.map(x => x.subject || "").filter(s => s && s !== "未分类"))];
+  return subs.length ? subs : SUBJECTS;
+}
+
+function autoChapters(subj) {
+  const chs = library.filter(x => (x.subject || "") === subj && !(x.title || "").trim().startsWith("§"))
+                     .map(x => x.chapter || "").filter(Boolean);
+  return [...new Set([...chs, ...(TPLS[subj] || [])])];
+}
+
+function autoGroupRow(ch) {
+  const chs = autoChapters($("autoSubject").value);
+  const opts = chs.map(c => `<option value="${esc(c)}"${c === ch ? " selected" : ""}>${esc(c)}</option>`).join("")
+               || '<option value="">（该科目暂无大题归类，先给题目填「大题归类」）</option>';
+  const stars = [1, 2, 3, 4, 5].map(n => `<span class="ag-star"><b>${n}星</b>
+      <input type="number" min="0" max="99" placeholder="少" data-star="${n}" data-bound="min">
+      <input type="number" min="0" max="99" placeholder="多" data-star="${n}" data-bound="max"></span>`).join("");
+  const el = document.createElement("div");
+  el.className = "auto-group";
+  el.innerHTML = `<div class="ag-head">
+      <select class="ag-ch">${opts}</select>
+      <span class="ag-count">题量 <input type="number" min="0" max="99" value="0" class="ag-num"></span>
+      <button class="ag-del" title="删除该大题"><svg class="ic"><use href="#ic-x"/></svg></button>
+    </div>
+    <div class="ag-stars">${stars}</div>`;
+  el.querySelector(".ag-del").onclick = () => el.remove();
+  return el;
+}
+
+function autoInitGroups(force) {
+  const box = $("autoGroups");
+  if (!force && box.children.length) return;
+  box.innerHTML = "";
+  const chs = autoChapters($("autoSubject").value);
+  if (!chs.length) box.appendChild(autoGroupRow(""));
+  else chs.forEach(c => box.appendChild(autoGroupRow(c)));
+}
+
+function autoCollect() {
+  const groups = [];
+  document.querySelectorAll("#autoGroups .auto-group").forEach(el => {
+    const ch = el.querySelector(".ag-ch").value;
+    const count = +el.querySelector(".ag-num").value || 0;
+    if (!ch || count <= 0) return;
+    const stars = {};
+    [1, 2, 3, 4, 5].forEach(n => {
+      const lo = el.querySelector('input[data-star="' + n + '"][data-bound="min"]').value.trim();
+      const hi = el.querySelector('input[data-star="' + n + '"][data-bound="max"]').value.trim();
+      if (lo !== "" || hi !== "") stars[n] = [lo === "" ? 0 : +lo, hi === "" ? null : +hi];
+    });
+    groups.push({ chapter: ch, count: count, stars: stars });
+  });
+  return groups;
+}
+
+function autoBody(extra) {
+  return JSON.stringify(Object.assign({
+    subject: $("autoSubject").value,
+    papers: +$("autoPapers").value || 1,
+    unique_keywords: $("autoKw").checked,
+    avoid_last: $("autoAvoid").checked,
+    groups: autoCollect(),
+  }, extra || {}));
+}
+
+function renderAutoResult() {
+  const box = $("autoResult");
+  $("autoExportAll").style.display = autoPapers.length ? "" : "none";
+  if (!autoPapers.length) { box.innerHTML = ""; return; }
+  box.innerHTML = autoPapers.map((p, i) => {
+    const byCh = {};
+    p.items.forEach(it => { (byCh[it.chapter || "未分类"] = byCh[it.chapter || "未分类"] || []).push(it); });
+    const rows = Object.entries(byCh).map(([ch, list]) =>
+      `<div class="ar-ch">${esc(ch)}（${list.length}）：` +
+      list.map(x => `${esc(x.code)}<sub>${x.star}★</sub>`).join("　") + "</div>").join("");
+    return `<div class="auto-paper">
+      <div class="ap-head"><b>第 ${i + 1} 份</b><span class="hint">${p.items.length} 题</span>
+        <span style="flex:1"></span>
+        <button class="btn ghost btn-sm" data-load="${i}">载入到组卷</button>
+        <button class="btn ghost btn-sm" data-pdf="${i}">导出 PDF</button></div>${rows}</div>`;
+  }).join("");
+  box.querySelectorAll("[data-load]").forEach(b => b.onclick = () => {
+    selected = new Set(autoPapers[+b.dataset.load].items.map(x => x.id));
+    renderSelected();
+    toast("已载入第 " + (+b.dataset.load + 1) + " 份，可在下方「已选题目」微调后导出", "ok");
+    const pl = $("paperList");
+    if (pl) pl.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  box.querySelectorAll("[data-pdf]").forEach(b => b.onclick = () => autoPdf(+b.dataset.pdf));
+}
+
+function paperHeadQuery(ids, titleOverride) {
+  savePaperHead();
+  return new URLSearchParams({
+    ids: ids.join(","), attach: $("paperAttach").value || "",
+    index: $("paperIndex").checked ? "1" : "", header: $("paperHeader").value || "",
+    title: titleOverride || $("phTitle").value || "",
+    subject_line: $("phSubject").value || "", subtitle: $("phSubtitle").value || "",
+    notice: $("phNotice").value || "", body_size: $("phBodySize").value || "",
+    leading: $("phLeading").value || "", first_indent: $("phIndent").value || "" });
+}
+
+async function autoPdf(i) {
+  const p = autoPapers[i];
+  if (!p) return;
+  const t = ($("phTitle").value || "错题重组试卷") + "（第 " + (i + 1) + " 份）";
+  try {
+    const d = await api("/api/paper/pdf?" + paperHeadQuery(p.items.map(x => x.id), t).toString());
+    window.open(d.url, "_blank");
+  } catch (err) { toast("导出失败: " + err.message, "err"); }
+}
+
+$("autoSubject").onchange = () => autoInitGroups(true);
+$("autoAddGroup").onclick = () => $("autoGroups").appendChild(autoGroupRow(""));
+$("autoPanel").ontoggle = () => {
+  const sel = $("autoSubject");
+  if (!sel.options.length) {
+    sel.innerHTML = autoSubjects().map(s => `<option>${esc(s)}</option>`).join("");
+    if (typeof curSubject === "string" && autoSubjects().includes(curSubject)) sel.value = curSubject;
+  }
+  autoInitGroups(false);
+};
+$("autoCheck").onclick = async () => {
+  const groups = autoCollect();
+  if (!groups.length) return toast("请先填写至少一个大题的题量", "err");
+  try {
+    const d = await api("/api/auto/plan", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: autoBody() });
+    const per = (d.per_group || []).map(g => `${esc(g.chapter)}：库中 ${g.available} 道 / 需要 ${g.count} 道`).join("　");
+    $("autoMsg").innerHTML = (d.ok ? "✓ " : "✗ ") + esc(d.msg) + (per ? "<br>" + per : "");
+  } catch (err) { $("autoMsg").textContent = "预检失败: " + err.message; }
+};
+$("autoBuild").onclick = async () => {
+  const groups = autoCollect();
+  if (!groups.length) return toast("请先填写至少一个大题的题量", "err");
+  const btn = $("autoBuild");
+  btn.disabled = true; btn.textContent = "生成中…";
+  try {
+    const d = await api("/api/auto/build", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: autoBody() });
+    autoPapers = d.papers || [];
+    renderAutoResult();
+    $("autoMsg").innerHTML = "✓ " + esc(d.msg || "");
+    toast("已生成 " + autoPapers.length + " 份", "ok");
+  } catch (err) {
+    autoPapers = []; renderAutoResult();
+    $("autoMsg").innerHTML = "✗ " + esc(err.message);
+  }
+  btn.disabled = false; btn.textContent = "生成";
+};
+$("autoExportAll").onclick = async () => {
+  if (!autoPapers.length) return;
+  const base = $("phTitle").value || "错题重组试卷";
+  const papers = autoPapers.map((p, i) => ({ ids: p.items.map(x => x.id),
+                                             title: base + "（第 " + (i + 1) + " 份）" }));
+  const btn = $("autoExportAll");
+  btn.disabled = true; btn.textContent = "导出中…";
+  try {
+    const d = await api("/api/auto/export", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ papers: papers },
+        JSON.parse(autoBody({ groups: [] })))) });
+    window.open(d.url, "_blank");
+    toast("已导出 " + d.count + " 份 PDF（ZIP）", "ok");
+  } catch (err) { toast("导出失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = "全部导出 ZIP";
 };
 
 /* ---------- 大题模板(按科目) ---------- */

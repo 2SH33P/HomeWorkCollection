@@ -31,3 +31,4 @@ subjects.json
 
 # 示例图片与生成的样卷(含试卷内容, 默认不提交)
 img-example/
+auto_last.json
