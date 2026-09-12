@@ -48,7 +48,15 @@ echo 服务已启动，浏览器将自动打开...
 echo 关闭本窗口即停止服务
 echo.
 start "" cmd /c "ping -n 3 127.0.0.1 >nul && start http://localhost:8091"
+:serve
 ".venv\Scripts\python.exe" "tools\crop-tool\app.py"
+rem 退出码 3 = 检测到源码变化 -> 自动重启(热更新)
+if "%errorlevel%"=="3" (
+  echo.
+  echo [热更新] 检测到代码变化，正在自动重启...
+  timeout /t 1 >nul
+  goto serve
+)
 echo.
 echo 服务已停止。
 pause

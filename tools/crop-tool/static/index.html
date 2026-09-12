@@ -373,6 +373,14 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
               box-shadow: 0 10px 34px rgba(0,0,0,.28); border: 1px solid var(--sep); }
 .hover-prev img { display: block; max-width: 420px; max-height: 560px; border-radius: 8px; }
 
+/* 热更新提示条 */
+.upd-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 200;
+           display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 999px;
+           background: var(--t1); color: var(--bg); box-shadow: 0 10px 30px rgba(0,0,0,.3);
+           font-size: 14px; animation: fadeSlide .25s var(--motion); }
+.upd-bar button { border: none; border-radius: 999px; padding: 6px 14px; cursor: pointer;
+                  background: var(--accent); color: #fff; font-size: 13px; }
+
 /* 原图取景(核对/修正裁剪) */
 #rfPrev { display: block; margin: 0 auto; background: #fff; border-radius: 10px;
           box-shadow: var(--shadow); touch-action: none; cursor: move; max-width: 100%; }
@@ -1161,7 +1169,11 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h3 style="margin-bottom:6px">数据导入导出</h3>
+      <div style="display:flex;align-items:center;gap:10px;margin:4px 0 2px">
+          <button class="btn ghost btn-sm" id="chkUpd">检查更新</button>
+          <span class="hint" id="updInfo"></span>
+        </div>
+        <h3 style="margin-bottom:6px">数据导入导出</h3>
       <p class="hint" style="line-height:1.8;margin-bottom:12px">
         导出为 <b>ZIP 完整包</b>（含全部错题、图片、模板与编号设置），可直接用于备份或换电脑迁移。<br>
         导入时<b>全部重新编号</b>，不会覆盖或打乱现有数据；同名图片自动改名保留。
@@ -4558,6 +4570,41 @@ $("addSave").onclick = async () => {
   btn.disabled = false;
   btn.querySelector("span").textContent = "保存";
 };
+
+/* ---------- 客户端热更新: 轮询版本号, 变了就提示/自动刷新 ---------- */
+const LOADED_VERSION = window.APP_VERSION || "";
+
+function updateBar() {
+  if (document.getElementById("updBar")) return;
+  const bar = document.createElement("div");
+  bar.id = "updBar";
+  bar.className = "upd-bar";
+  bar.innerHTML = "<span>代码已更新</span><button id=\"updNow\">刷新页面</button>" +
+                  "<button id=\"updLater\" style=\"background:transparent;color:var(--t3)\">稍后</button>";
+  document.body.appendChild(bar);
+  document.getElementById("updNow").onclick = () => location.reload();
+  document.getElementById("updLater").onclick = () => bar.remove();   // 手动更新: 不自动刷新
+}
+
+$("chkUpd").onclick = async () => {
+  try {
+    const d = await (await fetch("/api/version", { cache: "no-store" })).json();
+    if (!LOADED_VERSION) { $("updInfo").textContent = "当前版本 " + d.version; return; }
+    if (d.version === LOADED_VERSION) { $("updInfo").textContent = "已是最新（" + d.version + "）"; }
+    else { $("updInfo").textContent = "有新版本 " + d.version; updateBar(); }
+  } catch (e) { $("updInfo").textContent = "检查失败（服务可能未启动）"; }
+};
+
+async function checkVersion() {
+  try {
+    const r = await fetch("/api/version", { cache: "no-store" });
+    const d = await r.json();
+    if (LOADED_VERSION && d.version && d.version !== LOADED_VERSION) updateBar();
+  } catch (e) { /* 服务可能正在重启, 下次再试 */ }
+}
+setInterval(checkVersion, 30000);      // 只提示, 不自动刷新
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+window.addEventListener("focus", checkVersion);
 
 /* ---------- 运行日志 ---------- */
 async function loadLogs() {

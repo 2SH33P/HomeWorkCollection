@@ -373,6 +373,35 @@ def safe_name(name: str) -> str:
     return "".join(c for c in name if c not in '\\/:*?"<>|').strip() or "未命名"
 
 
+# ---------- 版本号与热更新 ----------
+def source_version():
+    """源码版本: 取关键文件的 mtime+大小做摘要, 任一文件变化 => 版本变化。"""
+    import hashlib
+    h = hashlib.md5()
+    for f in (Path(__file__), STATIC_DIR / "index.html"):
+        try:
+            st = f.stat()
+            h.update(f"{f.name}:{int(st.st_mtime)}:{st.st_size}".encode())
+        except OSError:
+            pass
+    return h.hexdigest()[:12]
+
+
+@app.get("/api/version")
+def get_version():
+    return {"ok": True, "version": source_version()}
+
+
+def _watch_sources(interval=2.0):
+    """后台监视源码变化: 变了就以退出码 3 结束进程, 由启动脚本自动拉起(热更新)。"""
+    base = source_version()
+    while True:
+        time.sleep(interval)
+        if source_version() != base:
+            print("\n[热更新] 检测到源码变化，正在自动重启…", flush=True)
+            os._exit(3)
+
+
 # ---------- 静态文件: 只开放 pages/ items/ .tmp/(避免 library.json、.ai_config.json 被下载) ----------
 FILES_ALLOWED = ("pages/", "items/", ".tmp/")
 
@@ -398,9 +427,11 @@ NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate",
 
 
 def _index_html():
-    """返回首页 HTML, 强制禁用浏览器缓存(否则改动后刷新仍是旧版)。"""
-    return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"),
-                        headers=NO_CACHE_HEADERS)
+    """返回首页 HTML: 禁缓存 + 注入版本号(客户端据此自动热更新)。"""
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    stamp = f'<script>window.APP_VERSION="{source_version()}";</script>'
+    html = html.replace("</head>", stamp + "\n</head>", 1) if "</head>" in html else stamp + html
+    return HTMLResponse(html, headers=NO_CACHE_HEADERS)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -2623,6 +2654,8 @@ if __name__ == "__main__":
     except OSError:
         pass
     print()
+    if os.environ.get("HOT_RELOAD", "0") == "1":        # 默认关闭: 手动重启即可
+        threading.Thread(target=_watch_sources, daemon=True).start()
     if host:
         uvicorn.run(app, host=host, port=8091, log_level="warning")
     else:

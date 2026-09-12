@@ -10,10 +10,12 @@ if [ ! -x "$VENV/bin/python" ]; then
   echo "[1/3] 首次运行，正在准备环境（约2分钟，仅一次）..."
   python3 -m venv "$VENV"
   "$VENV/bin/python" -m pip install -q --upgrade pip
-  "$VENV/bin/python" -m pip install -q fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy
+  "$VENV/bin/python" -m pip install -q fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
 fi
+"$VENV/bin/python" -c "import fastapi, uvicorn, cv2, PIL, numpy, typst" 2>/dev/null || \
+  "$VENV/bin/python" -m pip install -q fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless numpy typst
 
-echo "[2/3] 启动服务..."
+echo "[2/3] 启动服务（源码改动会自动重启）..."
 "$VENV/bin/python" "$APP" &
 SERVER_PID=$!
 sleep 2
@@ -23,4 +25,13 @@ echo "[3/3] 正在打开浏览器..."
 echo ""
 echo "  工具已启动: http://localhost:8091"
 echo "  关闭: 按 Ctrl+C"
-wait $SERVER_PID
+# 退出码 3 = 检测到源码变化 -> 自动重启(热更新)
+while true; do
+  wait $SERVER_PID
+  code=$?
+  if [ "$code" -ne 3 ]; then break; fi
+  echo "[热更新] 正在重启服务..."
+  "$VENV/bin/python" "$APP" &
+  SERVER_PID=$!
+  sleep 1
+done
