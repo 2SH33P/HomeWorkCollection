@@ -363,25 +363,40 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
-/* AI 框题: 选择保留面板 */
+/* AI 框题: 选择保留面板(左列表 + 右大图可调) */
 .ais-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 16px 14px; gap: 10px; }
 .ais-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ais-bar .btn-sm { height: 30px; padding: 0 10px; }
 .ais-bar .chk { min-height: 30px; font-size: 13px; }
-.ais-list { flex: 1; min-height: 0; overflow-y: auto; display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;
-            align-content: start; align-items: start;
-            -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-.ais-item { display: flex; gap: 9px; align-items: center; padding: 8px; border: 1.5px solid var(--sep);
-            border-radius: 10px; background: var(--card); cursor: pointer; opacity: .55;
-            transition: opacity .15s, border-color .15s, box-shadow .15s; }
-.ais-item.on { opacity: 1; border-color: var(--accent); box-shadow: 0 1px 6px rgba(0,122,255,.18); }
-.ais-item canvas { width: 84px; height: auto; background: #fff; border-radius: 8px; flex: none;
+.ais-main { flex: 1; min-height: 0; display: flex; gap: 12px; }
+.ais-list { flex: 1 1 44%; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+            -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-right: 2px; }
+.ais-item { display: flex; gap: 9px; align-items: center; padding: 7px 9px; border: 1.5px solid var(--sep);
+            border-radius: 10px; background: var(--card); cursor: pointer; opacity: .5;
+            transition: opacity .18s var(--motion), border-color .18s, box-shadow .18s, transform .12s; }
+.ais-item.on { opacity: 1; }
+.ais-item.focus { border-color: var(--accent); box-shadow: 0 1px 8px rgba(0,122,255,.22); }
+.ais-item canvas { width: 118px; height: auto; background: #fff; border-radius: 8px; flex: none;
                    box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.ais-item .ais-meta { min-width: 0; font-size: 12px; color: var(--t3); line-height: 1.5; }
+.ais-item .ais-meta { min-width: 0; font-size: 12px; color: var(--t3); line-height: 1.55; }
 .ais-item .ais-meta b { display: block; color: var(--t1); font-size: 13px; margin-bottom: 2px; }
+.ais-item .ais-keep { margin-left: auto; font-size: 18px; color: var(--t3); flex: none; }
+.ais-item.on .ais-keep { color: var(--success); }
+.ais-side { flex: 1 1 56%; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ais-side-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ais-side-head .btn-sm { height: 30px; padding: 0 10px; }
+#aisPrev { width: 100%; height: auto; background: #fff; border-radius: 10px; flex: none;
+           box-shadow: var(--shadow); touch-action: none; cursor: move; }
+.ais-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.ais-fields label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--t3); }
+.ais-fields input { width: 68px; padding: 4px 6px; font-size: 13px; }
 .ais-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; flex: none;
             border-top: 1px solid var(--sep); }
+@media (max-width: 760px) {
+  .ais-main { flex-direction: column; }
+  .ais-list { flex: none; max-height: 34vh; }
+  .ais-item canvas { width: 84px; }
+}
 
 /* 自动组卷面板(精简版) */
 .auto-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
@@ -1282,9 +1297,9 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 
 <!-- 题目全屏编辑窗口 -->
 <div class="modal-mask full" id="aiSplitMask">
-  <div class="bp-card" style="width:min(800px,100%)">
+  <div class="bp-card" style="width:min(1040px,100%)">
     <div class="bp-head">
-      <b>AI 框题结果 —— 勾选要保留的</b>
+      <b>AI 框题结果 —— 勾选保留，并可拖动微调</b>
       <button id="aisClose" title="关闭"><svg class="ic"><use href="#ic-x"/></svg></button>
     </div>
     <div class="ais-body">
@@ -1295,8 +1310,25 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
         <span style="flex:1"></span>
         <label class="chk" id="aisModeWrap"><input type="checkbox" id="aisAppend">追加到现有框</label>
       </div>
-      <div class="ais-list" id="aisList"></div>
-      <div class="hint">点方框切换保留/丢弃；不勾「追加」= 用选中的框替换本页原有框。保留后仍可拖动微调。</div>
+      <div class="ais-main">
+        <div class="ais-list" id="aisList"></div>
+        <div class="ais-side">
+          <div class="ais-side-head">
+            <b id="aisFocusTitle">第 1 个</b>
+            <span class="hint" id="aisFocusXY"></span>
+            <span style="flex:1"></span>
+            <button class="btn ghost btn-sm" id="aisFocusToggle">保留此项</button>
+          </div>
+          <canvas id="aisPrev"></canvas>
+          <div class="ais-fields">
+            <label>x<input type="number" id="aisX"></label>
+            <label>y<input type="number" id="aisY"></label>
+            <label>w<input type="number" id="aisW"></label>
+            <label>h<input type="number" id="aisH"></label>
+          </div>
+          <div class="hint">在大图上拖动方框可移动，拖边/角可改大小；也可直接改上面的数值。改动实时体现到左边缩略图。</div>
+        </div>
+      </div>
     </div>
     <div class="ais-foot">
       <button class="btn ghost" id="aisCancel">取消</button>
@@ -2359,49 +2391,114 @@ $("canvasWrap").addEventListener("click", e => {          // 点击锁定遮罩�
     enterPageEdit();
   }
 }, true);
-/* AI 自动框题: 先勾选要保留的框, 再填入 */
-let aiProposed = [], aiSplitBefore = null;
+/* AI 自动框题: 先勾选要保留的框(可在右侧大图拖动微调), 再填入 */
+let aiProposed = [], aiSplitBefore = null, aiFocus = 0;
 
 function openAiSplitPicker(list, before) {
-  aiProposed = list.map(function (b, i) { return Object.assign({ _on: true, _i: i }, b); });
+  aiProposed = list.map(function (b, i) {
+    return { _on: true, x: b.x, y: b.y, w: b.w, h: b.h };
+  });
   aiSplitBefore = before;
+  aiFocus = 0;
   const hasExisting = boxes.length > 0;
   $("aisAppend").checked = hasExisting;
   $("aisAppend").disabled = !hasExisting;
   $("aisModeWrap").style.opacity = hasExisting ? "" : ".5";
-  renderAiSplitList();
+  buildAiCards();
+  focusAiItem(0);
   $("aiSplitMask").classList.add("show");
 }
 
-function renderAiSplitList() {
+function buildAiCards() {                       // 只在打开时建一次 DOM
   const wrap = $("aisList");
   let html = "";
   aiProposed.forEach(function (b, i) {
-    html += '<div class="ais-item on" data-i="' + i + '">'
+    html += '<div class="ais-item" data-i="' + i + '">'
           + '<canvas data-cv="' + i + '"></canvas>'
           + '<div class="ais-meta"><b>第 ' + (i + 1) + ' 个</b>'
-          + Math.round(b.x) + ',' + Math.round(b.y) + '<br>'
-          + Math.round(b.w) + ' × ' + Math.round(b.h) + '</div></div>';
+          + '<span data-meta="' + i + '"></span></div>'
+          + '<span class="ais-keep">✓</span></div>';
   });
   wrap.innerHTML = html;
   aiProposed.forEach(function (b, i) {
-    const c = wrap.querySelector('canvas[data-cv="' + i + '"]');
-    if (!c || !img) return;
-    const CW = 84, CH = Math.max(26, Math.min(84, Math.round(84 * (b.h || 1) / (b.w || 1))));
-    c.width = CW; c.height = CH;                 // 按框的宽高比出图, 不留大片空白
-    const cx = c.getContext("2d");
-    cx.fillStyle = "#fff"; cx.fillRect(0, 0, CW, CH);
-    cx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, CW, CH);
-  });
-  wrap.querySelectorAll(".ais-item").forEach(function (el) {
-    el.onclick = function () {
-      const i = +el.dataset.i;
-      aiProposed[i]._on = !aiProposed[i]._on;
-      el.classList.toggle("on", aiProposed[i]._on);
-      updateAiSplitCount();
+    const el = wrap.querySelector('.ais-item[data-i="' + i + '"]');
+    el.classList.toggle("on", !!b._on);
+    el.onclick = function (e) {
+      if (e.shiftKey || e.target.closest(".ais-keep")) {   // 点右侧勾 -> 切换保留
+        b._on = !b._on;
+        el.classList.toggle("on", b._on);
+        updateAiSplitCount();
+        return;
+      }
+      focusAiItem(i);
     };
+    drawAiThumb(i);
   });
   updateAiSplitCount();
+}
+
+function drawAiThumb(i) {                       // 按框的宽高比画缩略图
+  const c = $("aisList").querySelector('canvas[data-cv="' + i + '"]');
+  const b = aiProposed[i];
+  if (!c || !b || !img) return;
+  const CW = (window.innerWidth <= 760 ? 84 : 118);
+  const CH = Math.max(24, Math.min(CW, Math.round(CW * (b.h || 1) / (b.w || 1))));
+  c.width = CW; c.height = CH;
+  const cx = c.getContext("2d");
+  cx.fillStyle = "#fff"; cx.fillRect(0, 0, CW, CH);
+  cx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, CW, CH);
+  const meta = $("aisList").querySelector('[data-meta="' + i + '"]');
+  if (meta) meta.textContent = Math.round(b.x) + "," + Math.round(b.y) + " · "
+                             + Math.round(b.w) + "×" + Math.round(b.h);
+}
+
+function focusAiItem(i) {
+  aiFocus = i;
+  $("aisList").querySelectorAll(".ais-item").forEach(function (el) {
+    el.classList.toggle("focus", +el.dataset.i === i);
+  });
+  syncAiFields();
+  drawAiPrev();
+}
+
+function syncAiFields() {
+  const b = aiProposed[aiFocus];
+  if (!b) return;
+  $("aisFocusTitle").textContent = "第 " + (aiFocus + 1) + " 个";
+  $("aisFocusXY").textContent = b._on ? "（将保留）" : "（将丢弃）";
+  $("aisFocusToggle").textContent = b._on ? "改为丢弃" : "改为保留";
+  $("aisX").value = Math.round(b.x); $("aisY").value = Math.round(b.y);
+  $("aisW").value = Math.round(b.w); $("aisH").value = Math.round(b.h);
+}
+
+let aiPrevScale = 1;
+function drawAiPrev() {                         // 右侧大图: 整页 + 所有框, 当前框高亮
+  const c = $("aisPrev"), b = aiProposed[aiFocus];
+  if (!c || !img || !imgW) return;
+  const maxW = Math.max(200, c.parentElement.clientWidth || 480);
+  const maxH = Math.max(160, Math.min(340, window.innerHeight * 0.34));
+  aiPrevScale = Math.min(maxW / imgW, maxH / imgH);
+  const w = Math.round(imgW * aiPrevScale), h = Math.round(imgH * aiPrevScale);
+  c.width = w; c.height = h;
+  const cx = c.getContext("2d");
+  cx.drawImage(img, 0, 0, w, h);
+  aiProposed.forEach(function (o, i) {           // 其他框: 保留=淡蓝, 丢弃=灰
+    cx.save();
+    cx.strokeStyle = i === aiFocus ? "#007AFF"
+                   : (o._on ? "rgba(0,122,255,.35)" : "rgba(120,120,128,.35)");
+    cx.lineWidth = i === aiFocus ? 2.5 : 1.2;
+    if (i === aiFocus) cx.setLineDash([7, 4]);
+    cx.strokeRect(o.x * aiPrevScale, o.y * aiPrevScale, o.w * aiPrevScale, o.h * aiPrevScale);
+    cx.restore();
+  });
+  if (b) {                                       // 当前框四角手柄
+    cx.fillStyle = "#007AFF";
+    [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]].forEach(function (p) {
+      cx.beginPath();
+      cx.arc(p[0] * aiPrevScale, p[1] * aiPrevScale, 4.5, 0, Math.PI * 2);
+      cx.fill();
+    });
+  }
 }
 
 function updateAiSplitCount() {
@@ -2409,17 +2506,112 @@ function updateAiSplitCount() {
   $("aisCount").textContent = "共 " + aiProposed.length + " 个，已选 " + k + " 个";
   $("aisApply").textContent = "保留选中的 " + k + " 个";
   $("aisApply").disabled = k === 0;
+  syncAiFields();
 }
 
-$("aisAll").onclick = function () { aiProposed.forEach(function (b) { b._on = true; }); renderAiSplitList(); };
-$("aisNone").onclick = function () { aiProposed.forEach(function (b) { b._on = false; }); renderAiSplitList(); };
+$("aisAll").onclick = function () {              // 只切类名(带动画), 不重建 DOM
+  aiProposed.forEach(function (b, i) {
+    b._on = true;
+    const el = $("aisList").querySelector('.ais-item[data-i="' + i + '"]');
+    if (el) el.classList.add("on");
+  });
+  updateAiSplitCount();
+};
+$("aisNone").onclick = function () {
+  aiProposed.forEach(function (b, i) {
+    b._on = false;
+    const el = $("aisList").querySelector('.ais-item[data-i="' + i + '"]');
+    if (el) el.classList.remove("on");
+  });
+  updateAiSplitCount();
+};
+$("aisFocusToggle").onclick = function () {
+  const b = aiProposed[aiFocus];
+  if (!b) return;
+  b._on = !b._on;
+  const el = $("aisList").querySelector('.ais-item[data-i="' + aiFocus + '"]');
+  if (el) el.classList.toggle("on", b._on);
+  updateAiSplitCount();
+};
 $("aisClose").onclick = $("aisCancel").onclick = function () { $("aiSplitMask").classList.remove("show"); };
 $("aiSplitMask").onclick = function (e) {
   if (e.target === $("aiSplitMask")) $("aiSplitMask").classList.remove("show");
 };
+
+/* 数值框 + 大图拖动: 改坐标后同步缩略图与大图 */
+function aiClampBox(b) {
+  b.w = Math.max(30, Math.min(imgW - b.x, b.w));
+  b.h = Math.max(30, Math.min(imgH - b.y, b.h));
+  b.x = Math.max(0, Math.min(imgW - b.w, b.x));
+  b.y = Math.max(0, Math.min(imgH - b.h, b.y));
+}
+["X", "Y", "W", "H"].forEach(function (k) {
+  $("ais" + k).oninput = function () {
+    const b = aiProposed[aiFocus];
+    if (!b) return;
+    const v = +$("ais" + k).value || 0;
+    b[k.toLowerCase()] = v;
+    aiClampBox(b);
+    drawAiThumb(aiFocus);
+    drawAiPrev();
+  };
+});
+
+(function () {
+  const c = $("aisPrev");
+  let drag = null;
+  const pos = function (e) {
+    const r = c.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / aiPrevScale, y: (e.clientY - r.top) / aiPrevScale };
+  };
+  c.addEventListener("pointerdown", function (e) {
+    const b = aiProposed[aiFocus];
+    if (!b) return;
+    const p = pos(e);
+    const T = 14 / aiPrevScale;
+    const L = Math.abs(p.x - b.x) <= T, R = Math.abs(p.x - (b.x + b.w)) <= T;
+    const TT = Math.abs(p.y - b.y) <= T, BB = Math.abs(p.y - (b.y + b.h)) <= T;
+    if (!(p.x >= b.x - T && p.x <= b.x + b.w + T && p.y >= b.y - T && p.y <= b.y + b.h + T)) return;
+    if (L && TT) drag = { m: "nw" };
+    else if (R && TT) drag = { m: "ne" };
+    else if (L && BB) drag = { m: "sw" };
+    else if (R && BB) drag = { m: "se" };
+    else if (L || R) drag = { m: L ? "w" : "e" };
+    else if (TT || BB) drag = { m: TT ? "n" : "s" };
+    else drag = { m: "move", dx: p.x - b.x, dy: p.y - b.y };
+    try { c.setPointerCapture(e.pointerId); } catch (err) { }
+  });
+  c.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    const b = aiProposed[aiFocus];
+    if (!b) return;
+    const p = pos(e), MIN = 30;
+    if (drag.m === "move") {
+      b.x = p.x - drag.dx; b.y = p.y - drag.dy;
+    } else {
+      if (drag.m.indexOf("e") >= 0) b.w = Math.max(MIN, p.x - b.x);
+      if (drag.m.indexOf("s") >= 0) b.h = Math.max(MIN, p.y - b.y);
+      if (drag.m.indexOf("w") >= 0) {
+        const nx = Math.min(p.x, b.x + b.w - MIN);
+        b.w += b.x - nx; b.x = nx;
+      }
+      if (drag.m.indexOf("n") >= 0) {
+        const ny = Math.min(p.y, b.y + b.h - MIN);
+        b.h += b.y - ny; b.y = ny;
+      }
+    }
+    aiClampBox(b);
+    syncAiFields();
+    drawAiThumb(aiFocus);
+    drawAiPrev();
+  });
+  c.addEventListener("pointerup", function () { drag = null; });
+})();
+
 $("aisApply").onclick = function () {
   const keep = aiProposed.filter(function (b) { return b._on; }).map(function (b) {
-    return { id: uid(), x: b.x, y: b.y, w: b.w, h: b.h,
+    return { id: uid(), x: Math.round(b.x), y: Math.round(b.y),
+             w: Math.round(b.w), h: Math.round(b.h),
              subject: (typeof curSubject === "string" && curSubject) || "其他",
              chapter: "", title: "", note: "", group: "", figures: [] };
   });
