@@ -1675,6 +1675,25 @@ function setDraftHint(txt) {
   if (el) el.textContent = txt;
 }
 
+function saveBoxesFor(pid, list) {
+  // 写某页框选数据: 本地 + 服务端草稿同步(否则下次打开该页会从服务器草稿把旧数据恢复回来)
+  localStorage.setItem("boxes_" + pid, JSON.stringify(list));
+  const at = new Date().toISOString();
+  localStorage.setItem("boxes_at_" + pid, at);
+  const clean = (list || []).map(function (b) {
+    const c = Object.assign({}, b); delete c._ai; delete c._keep; return c;
+  });
+  serverDrafts[pid] = { boxes: clean, at: at, count: clean.length };
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(function () {
+    api("/api/draft/" + encodeURIComponent(pid), { method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ boxes: clean }) }).then(function (d) {
+        if (pid === curPage) setDraftHint("草稿已自动保存 · " + (d.at || "").slice(11));
+      }).catch(function () { });
+  }, 400);
+}
+
 function loadBoxes(pid) {
   let local = [];
   try { local = JSON.parse(localStorage.getItem("boxes_" + pid)) || []; } catch (e) { local = []; }
@@ -2109,7 +2128,7 @@ function renderBoxList() {
     const b = bs.find(x => x.id === bid);
     if (!b) return;
     b.star = 0;
-    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    saveBoxesFor(pid, bs);
     if (popBox && popBox.id === bid) { popBox.star = 0; renderPopStars(0); }
     renderBoxList();
   });
@@ -2123,7 +2142,7 @@ function renderBoxList() {
     const before = (pid === curPage) ? snap() : null;   // 删除前快照(供撤销)
     if (before) setTimeout(() => pushHistory(before), 0);
     const bs = loadBoxes(pid).filter(x => x.id !== bid);
-    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    saveBoxesFor(pid, bs);
     if (pid === curPage) { boxes = bs; renderCanvas(); }
     renderBoxList();
   });
@@ -2135,7 +2154,7 @@ function renderBoxList() {
       const b = bs.find(x => x.id === bid);
       if (b) {
         b.chapter = v;
-        localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+        saveBoxesFor(pid, bs);
         if (pid === curPage) { boxes = bs; }
         renderBoxList();
       }
@@ -2158,7 +2177,7 @@ function renderBoxList() {
       if (b && !b.group) b.group = bid;  // 源框成为组首
       toast("已标记续块：接下来在任意页新框选的框将并入此题（可跨页）", "ok");
     }
-    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    saveBoxesFor(pid, bs);
     if (pid === curPage) { boxes = bs; renderCanvas(); }
     renderBoxList();
   });
@@ -2168,7 +2187,7 @@ function renderBoxList() {
     const b = bs.find(x => x.id === bid);
     if (!b) return;
     b.star = 0;
-    localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+    saveBoxesFor(pid, bs);
     renderBoxList();
   });
   el.querySelectorAll("input[data-f], select[data-f], textarea[data-f]").forEach(inp => {
@@ -2177,7 +2196,7 @@ function renderBoxList() {
       const bs = loadBoxes(pid);
       const b = bs.find(x => x.id === bid);
       if (b) b[inp.dataset.f] = inp.value;
-      localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+      saveBoxesFor(pid, bs);
       if (pid === curPage) { boxes = bs; renderCanvas(); }
     };
   });
@@ -2189,7 +2208,7 @@ function renderBoxList() {
       const b = bs.find(x => x.id === bid);
       if (!b) return;
       b.star = ((b.star || 0) === n) ? 0 : n;      // 再点同一星 -> 归零
-      localStorage.setItem("boxes_" + pid, JSON.stringify(bs));
+      saveBoxesFor(pid, bs);
       renderBoxList();
     });
   });
@@ -2757,13 +2776,12 @@ $("cropOk").onclick = () => {
     figs.push({ n, x: rx, y: ry, w: rw, h: rh });
     const note = (box.note || "").trim();
     box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
-    localStorage.setItem("boxes_" + b.pid, JSON.stringify(bs));
+    saveBoxesFor(b.pid, bs);
     toast(`已裁好图${n}，可继续框选下一个`, "ok");
   }
   cropRect = null;                       // 清掉图形框, 继续裁下一个(不退出裁图模式)
   renderCanvas();
   updateCropFigCount();
-  if (box) localStorage.setItem("boxes_" + b.pid, JSON.stringify(bs));
   renderBoxList();
   pushHistory(beforeCrop);            // 裁图 -> 可撤销
 };
