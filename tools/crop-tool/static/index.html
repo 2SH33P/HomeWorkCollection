@@ -2890,7 +2890,24 @@ $("clnSave").onclick = async () => {
 };
 function updateSelCount() { $("selCount").textContent = `已选 ${selected.size} 题`;
   $("selDel").style.display = selected.size ? "" : "none"; }
-$("selAll").onclick = () => { library.forEach(i => selected.add(i.id)); renderSelected(); };
+$("selAll").onclick = () => {
+  // 只选「当前页面上看得见」的题目(受科目/搜索/日期/星级筛选影响), 不再选整个题库
+  const ids = [];
+  document.querySelectorAll("#libGrid .q-row, #libGrid .card").forEach(el => {
+    if (el.dataset.id && !ids.includes(el.dataset.id)) ids.push(el.dataset.id);
+  });
+  if (ids.length) {
+    ids.forEach(id => selected.add(id));
+    toast(`已选中当前页面的 ${ids.length} 道题`, "ok");
+  } else {
+    // 科目文件夹层级(没有具体题目)时, 退化为"当前筛选结果"
+    const f = filteredItems();
+    if (!f.length) return toast("当前没有可选的题目", "err");
+    f.forEach(i => selected.add(i.id));
+    toast(`已选中当前筛选结果的 ${f.length} 道题（含所有科目）`, "ok");
+  }
+  renderSelected();
+};
 $("selNone").onclick = () => { selected.clear(); renderSelected(); };
 $("selDel").onclick = async () => {
   if (!selected.size) return;
