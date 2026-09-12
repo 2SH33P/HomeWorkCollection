@@ -61,11 +61,12 @@ body {
 button .ic + span, .btn .ic + span { margin-left: 6px; }
 
 /* ===== 顶栏 ===== */
-header { padding: 28px 24px 14px; }
+header { max-width: 1320px; margin: 0 auto; padding: 28px 32px 14px; }
 header h1 { font-size: clamp(22px, 4vw, 28px); font-weight: 700; letter-spacing: .02em; }
 header p { color: var(--t3); font-size: 13px; margin-top: 4px; }
-nav { display: flex; gap: 8px; padding: 4px 24px 14px; position: sticky; top: 0; z-index: 40;
+nav { display: flex; gap: 8px; padding: 4px 0 14px; position: sticky; top: 0; z-index: 40;
       background: linear-gradient(var(--bg) 82%, transparent); }
+.nav-inner { max-width: 1320px; margin: 0 auto; padding: 0 32px; width: 100%; }
 .seg { display: inline-flex; background: rgba(118,118,128,.14); border-radius: 10px; padding: 2px; }
 .seg button { border: none; background: none; padding: 8px 18px; min-height: 40px; border-radius: 8px;
               font-size: 14px; color: var(--t2); cursor: pointer; transition: all .2s var(--motion); }
@@ -90,7 +91,7 @@ html[data-route="library"] .tabbar button[data-tab="library"],
 html[data-route="paper"] .tabbar button[data-tab="paper"],
 html[data-route="settings"] .tabbar button[data-tab="settings"] { color: var(--accent); font-weight: 600; }
 
-main { max-width: 1560px; margin: 0 auto; padding: 8px 24px 90px; }
+main { max-width: 1320px; margin: 0 auto; padding: 8px 32px 90px; }
 section { display: none; }
 section.active,
 html[data-route="editor"] #tab-editor,
@@ -101,7 +102,7 @@ html[data-route="settings"] #tab-settings { display: block; animation: fadeSlide
 /* 设置页: 宽屏下多列铺满(窄屏/手机仍单列) */
 @media (min-width: 1100px) {
   #tab-settings.active, html[data-route="settings"] #tab-settings {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(376px, 1fr));
     gap: 14px; align-items: start; }
   #tab-settings > .card { margin-top: 0 !important; }
   #tab-settings > .card:last-child { grid-column: 1 / -1; }   /* 运行日志占满整行 */
@@ -758,6 +759,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
   nav { display: none; }
   .tabbar { display: flex; }
   main { padding: 6px 16px 96px; }
+  header { padding: 20px 16px 10px; }
+  .nav-inner { padding: 0 16px; }
   .editor { flex-direction: column; height: auto; min-height: 0; }
   .side { width: 100%; max-height: none; position: static; }
   .card .rm { opacity: 1; }
@@ -808,11 +811,13 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 </header>
 
 <nav>
+  <div class="nav-inner">
   <div class="seg">
     <button data-tab="editor"><svg class="ic"><use href="#ic-crop"/></svg><span>整页框选</span></button>
     <button data-tab="library"><svg class="ic"><use href="#ic-books"/></svg><span>错题库</span></button>
     <button data-tab="paper"><svg class="ic"><use href="#ic-doc"/></svg><span>组卷打印</span></button>
     <button data-tab="settings"><svg class="ic"><use href="#ic-gear"/></svg><span>设置</span></button>
+  </div>
   </div>
 </nav>
 
