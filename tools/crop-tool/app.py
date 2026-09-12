@@ -2387,6 +2387,83 @@ def delete_item(item_id: str):
     return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
 
 
+@app.post("/api/items/batch")
+def batch_items(payload: dict = None):
+    """批量修改或删除题目(整批只写库一次, 便于「撤销」整体回退)。
+    payload: {ids:[...], set:{chapter?,subject?,star?}, keywords_add?, delete?}"""
+    payload = payload or {}
+    ids = {str(x) for x in (payload.get("ids") or [])}
+    if not ids:
+        return JSONResponse({"ok": False, "msg": "没有选中题目"}, status_code=400)
+    sets = payload.get("set") or {}
+    kw_add = (payload.get("keywords_add") or "").strip()
+    do_del = bool(payload.get("delete"))
+    upd = dele = 0
+    with DB_LOCK:
+        db = load_db()
+        keep = []
+        for it in db["items"]:
+            if it.get("id") not in ids:
+                keep.append(it)
+                continue
+            if do_del:
+                if it.get("image"):
+                    to_trash(ROOT / it["image"])
+                for fg in it.get("figures") or []:
+                    to_trash(ROOT / str(fg.get("file", "")))
+                dele += 1
+                continue
+            if "chapter" in sets:
+                it["chapter"] = str(sets["chapter"] or "").strip()
+            if "subject" in sets and str(sets["subject"]).strip():
+                it["subject"] = str(sets["subject"]).strip()
+            if "star" in sets:
+                try:
+                    it["star"] = max(0, min(5, int(sets["star"])))
+                except (TypeError, ValueError):
+                    pass
+            if kw_add:
+                cur = [k.strip() for k in (it.get("keywords") or "").replace("，", ",").split(",") if k.strip()]
+                for k in kw_add.replace("，", ",").split(","):
+                    k = k.strip()
+                    if k and k not in cur:
+                        cur.append(k)
+                it["keywords"] = ",".join(cur)
+            keep.append(it)
+            upd += 1
+        db["items"] = keep
+        if upd or dele:
+            save_db(db)
+    log_ai("批量" + ("删除" if do_del else "修改"), "-", True, 0, f"{upd or dele} 题")
+    return {"ok": True, "updated": upd, "deleted": dele}
+
+
+@app.post("/api/undo")
+def undo_last_write():
+    """撤销上一次写库: 用 backups 里最新的一份覆盖当前库。
+    覆盖前先把当前状态另存为 undo_point_*, 所以撤销本身也能再撤回来。"""
+    # 注意: backup_db 用 copy2 会保留源文件 mtime, 故不能按 mtime 排序;
+    # 备份名 library_YYYYmmdd_HHMMSS.json 里的时间戳才是可靠的先后顺序
+    bks = sorted(BACKUP_DIR.glob("library_*.json"), key=lambda q: q.name)
+    if not bks:
+        return JSONResponse({"ok": False, "msg": "没有可回退的备份"}, status_code=400)
+    last = bks[-1]
+    with DB_LOCK:
+        try:
+            if DB_FILE.exists():
+                shutil.copy2(DB_FILE, BACKUP_DIR / f"undo_point_{time.strftime('%Y%m%d_%H%M%S')}.json")
+            shutil.copy2(last, DB_FILE)
+        except Exception as e:
+            return JSONResponse({"ok": False, "msg": "回退失败: " + str(e)[:120]}, status_code=500)
+        db = load_db()
+        pts = sorted(BACKUP_DIR.glob("undo_point_*.json"), key=lambda q: q.name)
+        for q in pts[:-10]:
+            q.unlink(missing_ok=True)
+    log_ai("撤销", "-", True, 0, last.name)
+    return {"ok": True, "msg": f"已回退到上一次修改前的状态（备份 {last.name}）",
+            "count": len(db.get("items", []))}
+
+
 @app.get("/api/paper", response_class=HTMLResponse)
 def make_paper(ids: str = ""):
     """ids: 逗号分隔, 顺序即试卷顺序。生成可打印的试卷页面。"""

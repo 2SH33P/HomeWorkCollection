@@ -350,6 +350,27 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
 
+/* 批量修改 + 行内大题编辑 */
+.batch-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+                margin: 0 0 12px; padding: 9px 12px; background: var(--elev);
+                border: 1px solid var(--sep); border-radius: var(--r-md); font-size: 13px; }
+.batch-fields .bf-label { color: var(--t2); }
+.batch-fields .bf-star { display: flex; align-items: center; gap: 5px; color: var(--t2); }
+.batch-fields select { padding: 3px 6px; font-size: 13px; }
+.batch-fields .bf-kw { display: flex; align-items: center; gap: 5px; }
+.batch-fields .bf-kw input { width: 150px; padding: 4px 8px; font-size: 13px; }
+.q-chapwrap { display: inline-flex; align-items: center; position: relative; flex: 0 1 132px; min-width: 88px; }
+.q-chap { width: 100%; padding: 3px 19px 3px 7px; font-size: 12px; border-radius: 6px;
+          border: 1px solid var(--sep); background: var(--card); color: var(--t1); }
+.q-chap:focus { border-color: var(--accent); outline: none; }
+.q-chap-pick { position: absolute; right: 0; top: 0; height: 100%; width: 19px;
+               border: none; background: transparent; color: var(--accent); cursor: pointer;
+               font-size: 11px; padding: 0; }
+.warn-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            margin: 0 0 12px; padding: 9px 12px; border-radius: var(--r-md);
+            background: rgba(255,159,10,.13); border: 1px solid rgba(255,159,10,.42);
+            color: var(--t1); font-size: 13px; }
+
 /* 自动组卷 */
 .auto-group { border: 1px solid var(--sep); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
 .ag-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -872,7 +893,24 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
       <button class="btn ghost" id="selAll"><svg class="ic"><use href="#ic-check"/></svg><span>全选</span></button>
       <button class="btn ghost" id="selNone"><svg class="ic"><use href="#ic-x"/></svg><span>清空选择</span></button>
       <button class="btn danger" id="selDel" style="display:none">删除选中</button>
+      <button class="btn ghost btn-sm" id="undoBtn"
+              title="回退上一次写库（批量修改/删除可整体撤销）">↩ 撤销上次修改</button>
       <span class="count" id="selCount">已选 0 题</span>
+    </div>
+    <div class="batch-fields" id="batchFields" style="display:none">
+      <span class="bf-label">批量修改选中题目：</span>
+      <button class="btn ghost btn-sm" id="batchChap">大题归类 ▾</button>
+      <button class="btn ghost btn-sm" id="batchSubj">科目 ▾</button>
+      <label class="bf-star"><span>星级</span>
+        <select id="batchStar">
+          <option value="">—</option>
+          <option value="0">未评</option>
+          <option value="1">★</option><option value="2">★★</option>
+          <option value="3">★★★</option><option value="4">★★★★</option>
+          <option value="5">★★★★★</option>
+        </select></label>
+      <span class="bf-kw"><input id="batchKw" placeholder="加关键字，逗号分隔" autocomplete="off">
+        <button class="btn ghost btn-sm" id="batchKwAdd">加入</button></span>
     </div>
     <div id="libGrid"></div>
   </section>
@@ -2443,6 +2481,10 @@ function renderList(subj) {
     <div class="lib-back" id="backBtn">‹ 科目</div>
     <button class="btn ghost btn-sm" id="addItemBtn"><svg class="ic"><use href="#ic-plus"/></svg><span>手动添加题目</span></button>
   </div>` : "";
+  const noChap = items.filter(it => !(it.chapter || "").trim()).length;
+  const noChapIds = items.filter(it => !(it.chapter || "").trim()).map(it => it.id);
+  html += noChap ? `<div class="warn-bar"><span>有 <b>${noChap}</b> 道题未填「大题归类」</span>
+      <button class="btn ghost btn-sm" id="selNoChap" data-ids="${noChapIds.join(",")}">选中这些题</button></div>` : "";
   html += items.length ? `<div class="q-list">` + items.map(it => {
     const star = it.star || 0;
     return `
@@ -2452,7 +2494,12 @@ function renderList(subj) {
         <span class="q-code" data-code="${it.id}" title="点题号打开编辑窗口">${esc(it.code || "")}</span>
         <span class="q-stars">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
         <span class="q-title" title="${esc((it.note || "").slice(0, 300))}">${esc(summaryOf(it))}</span>
-        <span class="q-meta">${esc(it.chapter || "未分类")}${it.fig_issue ? ' · <b style="color:var(--danger)">图未裁</b>' : ""}</span>
+        <span class="q-meta">${it.fig_issue ? '<b style="color:var(--danger)">图未裁</b>' : ""}</span>
+        <span class="q-chapwrap">
+          <input class="q-chap" data-id="${it.id}" value="${esc(it.chapter || "")}"
+                 placeholder="大题归类" title="直接改大题归类，失焦即保存" autocomplete="off">
+          <button class="q-chap-pick" data-id="${it.id}" title="选择预设大题">▾</button>
+        </span>
         <button class="q-toggle">展开</button>
       </div>
       <div class="q-full">
@@ -2477,7 +2524,8 @@ function renderList(subj) {
   if (addBtn) addBtn.onclick = () => openAddItem(subj);
   // 展开/收起(点题号不触发展开)
   $("libGrid").querySelectorAll(".q-head").forEach(h => h.onclick = e => {
-    if (e.target.classList.contains("q-sel") || e.target.classList.contains("q-code")) return;
+    if (e.target.classList.contains("q-sel") || e.target.classList.contains("q-code")
+        || e.target.classList.contains("q-chap") || e.target.classList.contains("q-chap-pick")) return;
     const row = h.closest(".q-row");
     row.classList.toggle("open");
     h.querySelector(".q-toggle").textContent = row.classList.contains("open") ? "收起" : "展开";
@@ -2493,11 +2541,41 @@ function renderList(subj) {
     e.stopPropagation();
     const id = b.dataset.id;
     selected.has(id) ? selected.delete(id) : selected.add(id);
-    b.classList.toggle("on", selected.has(id));
-    b.textContent = selected.has(id) ? [...selected].indexOf(id) + 1 : "";
-    updateSelCount();
+    renderSelected();            // 统一走 renderSelected: 角标 + 计数 + 批量条一次同步
   });
   // 操作
+  $("libGrid").querySelectorAll(".q-chap").forEach(inp => {
+    inp.onclick = e => e.stopPropagation();
+    inp.onchange = async () => {
+      const it = library.find(x => x.id === inp.dataset.id);
+      if (!it) return;
+      const v = (inp.value || "").trim();
+      if ((it.chapter || "") === v) return;
+      try {
+        await api("/api/item/" + it.id, { method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({}, it, { chapter: v })) });
+        it.chapter = v;
+        toast(`${it.code} 大题归类 → ${v || "（空）"}`, "ok");
+        renderLibrary();
+      } catch (err) { toast("保存失败: " + err.message, "err"); }
+    };
+  });
+  $("libGrid").querySelectorAll(".q-chap-pick").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    openChapMenu(b, v => {
+      const inp = b.parentNode.querySelector(".q-chap");
+      inp.value = v;
+      inp.onchange();
+    });
+  });
+  const nc = $("selNoChap");
+  if (nc) nc.onclick = () => {
+    const ids = (nc.dataset.ids || "").split(",").filter(Boolean);
+    selected = new Set(ids);
+    renderSelected();
+    toast(`已选中 ${ids.length} 道未归类题目，请用上方「大题归类」批量设置`, "ok");
+  };
   $("libGrid").querySelectorAll("[data-reai]").forEach(b => b.onclick = async e => {
     e.stopPropagation();
     const it = library.find(x => x.id === b.dataset.reai);
@@ -2785,6 +2863,7 @@ function renderSelected() {
     b.textContent = on ? [...selected].indexOf(b.dataset.id) + 1 : "";
   });
   updateSelCount();
+  updateBatchBar();
 }
 
 /* ---------- 题目预览/编辑 ---------- */
@@ -3146,6 +3225,84 @@ $("pdfBtn").onclick = async () => {
     toast(`已生成 ${d.count} 题的 PDF`, "ok");
   } catch (err) { toast("生成失败: " + err.message, "err"); }
   btn.disabled = false; btn.querySelector("span").textContent = "生成 PDF（Typst）";
+};
+
+/* ---------- 批量修改选中题目 ---------- */
+function updateBatchBar() {
+  const bar = $("batchFields");
+  if (bar) bar.style.display = selected.size ? "" : "none";
+  const del = $("selDel");
+  if (del) del.style.display = selected.size ? "" : "none";
+}
+
+function openPickMenu(anchor, items, onPick) {
+  const menu = $("chapMenu");
+  if (!items.length) return toast("没有可选项", "err");
+  menu.innerHTML = items.map((t, i) => `<div class="cm-item" data-i="${i}">${esc(t)}</div>`).join("");
+  menu.style.display = "";
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.max(6, Math.min(r.right - w, innerWidth - w - 6)) + "px";
+  menu.style.top = (r.bottom + h + 8 > innerHeight ? r.top - h - 4 : r.bottom + 4) + "px";
+  menu.querySelectorAll(".cm-item").forEach(el => el.onclick = () => {
+    onPick(items[+el.dataset.i]);
+    menu.style.display = "none";
+  });
+}
+
+async function batchApply(set, kwAdd) {
+  const ids = [...selected];
+  if (!ids.length) return toast("请先勾选题目", "err");
+  try {
+    const d = await api("/api/items/batch", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: ids, set: set || {}, keywords_add: kwAdd || "" }) });
+    toast(`已修改 ${d.updated} 题（可点「↩ 撤销上次修改」回退）`, "ok");
+    await loadLibrary();
+    renderSelected();
+  } catch (err) { toast("批量修改失败: " + err.message, "err"); }
+}
+
+$("batchChap").onclick = () => openChapMenu($("batchChap"), v => batchApply({ chapter: v }));
+$("batchSubj").onclick = () => openPickMenu($("batchSubj"), SUBJECTS, v => batchApply({ subject: v }));
+$("batchStar").onchange = () => {
+  const v = $("batchStar").value;
+  $("batchStar").value = "";
+  if (v !== "") batchApply({ star: +v });
+};
+$("batchKwAdd").onclick = () => {
+  const v = ($("batchKw").value || "").trim();
+  if (!v) return toast("请输入关键字", "err");
+  $("batchKw").value = "";
+  batchApply({}, v);
+};
+$("batchKw").addEventListener("keydown", e => { if (e.key === "Enter") $("batchKwAdd").click(); });
+$("selDel").onclick = async () => {
+  const n = selected.size;
+  if (!n) return;
+  if (!confirm(`删除选中的 ${n} 道题？（图片移入回收站，可点「↩ 撤销上次修改」整体回退）`)) return;
+  try {
+    const d = await api("/api/items/batch", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [...selected], delete: true }) });
+    selected.clear();
+    toast(`已删除 ${d.deleted} 题（可撤销）`, "ok");
+    await loadLibrary();
+    renderSelected();
+  } catch (err) { toast("删除失败: " + err.message, "err"); }
+};
+$("undoBtn").onclick = async () => {
+  if (!confirm("回退到上一次修改前的状态？（只回退一次；当前状态会先另存，仍可再撤回来）")) return;
+  const btn = $("undoBtn");
+  btn.disabled = true;
+  try {
+    const d = await api("/api/undo", { method: "POST" });
+    toast(d.msg || "已撤销", "ok");
+    selected.clear();
+    await loadLibrary();
+    renderSelected();
+  } catch (err) { toast("撤销失败: " + err.message, "err"); }
+  btn.disabled = false;
 };
 
 /* ---------- 自动组卷 ---------- */
