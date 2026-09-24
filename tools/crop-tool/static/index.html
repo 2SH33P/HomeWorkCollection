@@ -1853,9 +1853,14 @@ function renderCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.drawImage(img, 0, 0, dispW, dispH);
   const gi = groupInfo();                       // 题号/续块号(全局, 跨页一致)
+  let nextQ = gi.questions;                     // 正在拖的新框还没落盘: 顺延一个题号(否则显示 0)
+  const localNo = {};
+  boxes.forEach(b => { localNo[b.id] = gi.qnoOf[b.id] || (++nextQ); });
   boxes.forEach(b => {
     const x = b.x / scale, y = b.y / scale, w = b.w / scale, h = b.h / scale;
-    const isCont = !!gi.kOf[b.id];
+    const pendK = (b.id === "new" && pendingGroup) ? (gi.contsOf[pendingGroup] || []).length + 1 : 0;
+    const isCont = !!gi.kOf[b.id] || !!pendK;
+    const kSeq = gi.kOf[b.id] || pendK;
     ctx.fillStyle = isCont ? "rgba(255,149,0,.14)" : "rgba(0,122,255,.13)";
     ctx.strokeStyle = isCont ? "#FF9500" : "#007AFF";
     ctx.lineWidth = 2; ctx.setLineDash(isCont ? [7, 5] : []);
@@ -1868,8 +1873,8 @@ function renderCanvas() {
     }
     ctx.fillStyle = isCont ? "#FF9500" : "#007AFF";
     ctx.font = "bold 14px sans-serif";
-    const no = gi.qnoOf[b.id] || 0;
-    const label = (isCont ? no + "-续" + gi.kOf[b.id] : String(no)) + (b.title ? "·" + b.title : "");
+    const no = isCont ? (gi.qnoOf[b.id] || gi.qnoOf[pendingGroup] || localNo[b.id]) : localNo[b.id];
+    const label = (isCont ? no + "-续" + kSeq : String(no)) + (b.title ? "·" + b.title : "");
     const tw = ctx.measureText(label).width + 10;
     ctx.fillRect(x, y - 20, tw, 20);
     ctx.fillStyle = "#fff"; ctx.fillText(label, x + 5, y - 6);
