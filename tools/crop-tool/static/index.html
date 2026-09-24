@@ -378,6 +378,11 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
              padding: 0 2px; font-size: 11px; line-height: 1; }
 .b-fig-del:hover { color: var(--danger); }
 .b-fig-miss { color: var(--danger) !important; }
+/* 续块: 嵌套在首块卡片内部 */
+.b-conts { margin: 8px 0 2px; padding-left: 10px; border-left: 3px solid rgba(255,149,0,.55); }
+.b-conts-t { font-size: 12px; color: var(--warn); margin-bottom: 6px; }
+.box-card.cont-card { background: var(--elev); margin-bottom: 6px; padding: 6px 8px; }
+.box-card.cont-card .bno { color: var(--warn); }
 
 /* 框选卡片: AI 识别(仅文字) */
 .b-ai { color: #248a3d !important; font-weight: 600; }
@@ -1841,11 +1846,10 @@ function renderCanvas() {
   cv.width = dispW * dpr; cv.height = dispH * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.drawImage(img, 0, 0, dispW, dispH);
-  const firstOf = {}; // group -> 首个成员
-  boxes.forEach(b => { if (b.group && !(b.group in firstOf)) firstOf[b.group] = b.id; });
-  boxes.forEach((b, i) => {
+  const gi = groupInfo();                       // 题号/续块号(全局, 跨页一致)
+  boxes.forEach(b => {
     const x = b.x / scale, y = b.y / scale, w = b.w / scale, h = b.h / scale;
-    const isCont = b.group && firstOf[b.group] !== b.id;
+    const isCont = !!gi.kOf[b.id];
     ctx.fillStyle = isCont ? "rgba(255,149,0,.14)" : "rgba(0,122,255,.13)";
     ctx.strokeStyle = isCont ? "#FF9500" : "#007AFF";
     ctx.lineWidth = 2; ctx.setLineDash(isCont ? [7, 5] : []);
@@ -1858,7 +1862,8 @@ function renderCanvas() {
     }
     ctx.fillStyle = isCont ? "#FF9500" : "#007AFF";
     ctx.font = "bold 14px sans-serif";
-    const label = (isCont ? "续 " : "") + (i + 1) + (b.title ? "·" + b.title : "");
+    const no = gi.qnoOf[b.id] || 0;
+    const label = (isCont ? no + "-续" + gi.kOf[b.id] : String(no)) + (b.title ? "·" + b.title : "");
     const tw = ctx.measureText(label).width + 10;
     ctx.fillRect(x, y - 20, tw, 20);
     ctx.fillStyle = "#fff"; ctx.fillText(label, x + 5, y - 6);
@@ -2099,8 +2104,7 @@ cv.addEventListener("touchstart", e => {
 
 /* ---------- 框选列表(多页统一) + 续块分组 ---------- */
 let curSubject = localStorage.getItem("curSubject") || "数学";
-let pendingGroup = null;    // 跨页续块: 点某框「续块」后, 新框选自动并入该组
-let groupFirstIds = new Set(), groupCounts = {};   // 续块组显示用(renderBoxList 里算)
+let pendingGroup = null;    // 跨页续块: 点某框「续块」后, 下一个新框自动并入该组
 let openBoxes = new Set();  // 展开编辑的框 id
 $("curSubj").innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("") + "<option>未分类</option>";
 $("curSubj").value = curSubject;
@@ -2145,25 +2149,38 @@ function figPreview(pid, box, f) {
     .catch(() => "");
 }
 
-function boxCardHTML(b, i, pid) {
-  const other = pid !== curPage;
+/* 续块分组信息: 首块/续块、题号、续块序号(按页序 = 保存顺序) */
+function groupInfo() {
+  const flat = [];
+  allPageBoxes().forEach(g => g.boxes.forEach(b => flat.push({ pid: g.pid, b })));
+  const seen = {};
+  const headOf = {}, contsOf = {}, qnoOf = {}, kOf = {}, pidOf = {};
+  let q = 0;
+  flat.forEach(({ pid, b }) => {
+    pidOf[b.id] = pid;
+    const gid = (b.group || "").trim();
+    if (!gid) { qnoOf[b.id] = ++q; headOf[b.id] = b.id; return; }
+    if (!(gid in seen)) {                       // 组内第一块 = 首块
+      seen[gid] = b.id; headOf[b.id] = b.id; qnoOf[b.id] = ++q; contsOf[b.id] = [];
+    } else {
+      const head = seen[gid];
+      headOf[b.id] = head;
+      kOf[b.id] = contsOf[head].length + 1;
+      contsOf[head].push({ pid, b });
+    }
+  });
+  return { headOf, contsOf, qnoOf, kOf, pidOf, questions: q };
+}
+
+function boxSummary(b) {
+  return (b.note || "").replace(/\[图\d+\]/g, "[图]").replace(/【题干】/g, "")
+    .replace(/\s+/g, " ").trim().slice(0, 26);
+}
+
+/* 卡片主体(首块与续块共用) */
+function boxBodyHTML(b, isCont) {
   const star = b.star || 0;
-  const open = openBoxes.has(b.id);
-  const summary = (b.note || "").replace(/\[图\d+\]/g, "[图]").replace(/\s+/g, " ").slice(0, 26);
   return `
-    <div class="box-card ${other ? "dim" : ""} ${open ? "open" : ""}" data-id="${b.id}" data-pid="${pid}">
-      <div class="bhead">
-        <span class="bno">#${i + 1}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
-        <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
-        <span class="b-sum">${esc(b.chapter || "未分类")}${summary ? " · " + esc(summary) : ""}</span>
-        ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
-        ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
-        ${b.group && (groupCounts[b.group] || 0) > 1
-            ? (groupFirstIds.has(b.id) ? '<span class="badge">含续块</span>' : '<span class="badge">续块</span>') : ""}
-        <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
-        <button class="del" data-id="${b.id}">删</button>
-      </div>
-      <div class="bbody">
         <span class="chap-wrap">
           <input type="text" data-f="chapter" value="${esc(b.chapter)}" placeholder="大题归类">
           <button type="button" class="chap-pick chap-pick-card" data-id="${b.id}" title="选择预设大题">▾</button>
@@ -2192,10 +2209,58 @@ function boxCardHTML(b, i, pid) {
         <div class="brow">
           <button class="mini b-ai" data-id="${b.id}" title="识别题干文字（静默填入；图形请在卡片里点「裁图」手动框选）">AI 识别</button>
           <button type="button" class="mini b-cfig" data-id="${b.id}" title="在题目框内框选图形，可连续裁多个">裁图</button>
-          <button type="button" class="mini cont ${pendingGroup && (pendingGroup === b.id || b.group === pendingGroup) ? "on" : ""}" data-id="${b.id}"
-            title="并入上一题 / 开启续块：点一下把本块接到上一题，之后新框选的块也会并入同一题；首块再点=结束续块">${pendingGroup === b.id ? "结束续块" : "续块"}</button>
-        </div>
+          ${isCont
+            ? `<button type="button" class="mini bc-unlink" data-id="${b.id}" title="取消续块：本块变回独立题目">取消续块</button>`
+            : `<button type="button" class="mini cont ${pendingGroup && (pendingGroup === b.id || b.group === pendingGroup) ? "on" : ""}" data-id="${b.id}"
+            title="并入上一题 / 开启续块：点一下把本块接到上一题；首块再点=结束「自动接下一框」">${pendingGroup === b.id ? "结束续块" : "续块"}</button>`}
+        </div>`;
+}
+
+/* 首块/独立题卡片: 续块嵌套在它下面 */
+function boxCardHTML(b, qno, pid, gi) {
+  const other = pid !== curPage;
+  const star = b.star || 0;
+  const open = openBoxes.has(b.id);
+  const conts = (gi && gi.contsOf[b.id]) || [];
+  const sum = boxSummary(b);
+  return `
+    <div class="box-card ${other ? "dim" : ""} ${open ? "open" : ""}" data-id="${b.id}" data-pid="${pid}">
+      <div class="bhead">
+        <span class="bno">#${qno}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
+        <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
+        <span class="b-sum">${esc(b.chapter || "未分类")}${sum ? " · " + esc(sum) : ""}</span>
+        ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
+        ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
+        ${conts.length ? `<span class="badge">含 ${conts.length} 个续块</span>` : ""}
+        <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
+        <button class="del" data-id="${b.id}">删</button>
       </div>
+      <div class="bbody">${boxBodyHTML(b, false)}</div>
+      ${conts.length ? `<div class="b-conts">
+        <div class="b-conts-t">续块（${conts.length}）：同一道题，保存时会并入本题</div>
+        ${conts.map(({ pid: cp, b: c }) => contCardHTML(c, cp, gi)).join("")}
+      </div>` : ""}
+    </div>`;
+}
+
+/* 续块卡片(嵌套在首块里, 字段照样可编辑) */
+function contCardHTML(b, pid, gi) {
+  const other = pid !== curPage;
+  const star = b.star || 0;
+  const open = openBoxes.has(b.id);
+  const sum = boxSummary(b);
+  return `
+    <div class="box-card cont-card ${other ? "dim" : ""} ${open ? "open" : ""}" data-id="${b.id}" data-pid="${pid}">
+      <div class="bhead">
+        <span class="bno">续 ${gi.kOf[b.id] || 1}</span>
+        <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
+        <span class="b-sum">${other ? pageNo(pid) + " · " : ""}${esc(b.chapter || "未分类")}${sum ? " · " + esc(sum) : ""}</span>
+        ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
+        ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
+        <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
+        <button class="del" data-id="${b.id}">删</button>
+      </div>
+      <div class="bbody">${boxBodyHTML(b, true)}</div>
     </div>`;
 }
 
@@ -2211,21 +2276,17 @@ function renderBoxList() {
   const el = $("boxList");
   const keepScrollTop = el.scrollTop;                 // 记住滚动位置(重建后恢复)
   const groups = allPageBoxes();
-  groupFirstIds = new Set(); groupCounts = {};
-  groups.forEach(gp => {                       // 续块组: 首块/成员数(用于卡片标签)
-    const seen = {};
-    gp.boxes.forEach(b => {
-      if (!b.group) return;
-      groupCounts[b.group] = (groupCounts[b.group] || 0) + 1;
-      if (!(b.group in seen)) { seen[b.group] = b.id; groupFirstIds.add(b.id); }
-    });
-  });
+  const gi = groupInfo();
   let total = 0;
   el.innerHTML = groups.map(g => {
-    total += g.boxes.length;
+    // 续块不单列卡片: 它嵌套在首块卡片里(跨页的显示页号)
+    const cards = g.boxes.filter(b => gi.headOf[b.id] === b.id)
+                         .map(b => boxCardHTML(b, gi.qnoOf[b.id], g.pid, gi));
+    if (!cards.length) return "";
+    total += cards.length;
     return `<div class="pg-group">
-      <div class="pg-head">${pageNo(g.pid)} <span class="cnt">${g.boxes.length} 题</span></div>
-      ${g.boxes.map((b, i) => boxCardHTML(b, i, g.pid)).join("")}
+      <div class="pg-head">${pageNo(g.pid)} <span class="cnt">${cards.length} 题</span></div>
+      ${cards.join("")}
     </div>`;
   }).join("") || '<div class="hint">在下方整页图上拖拽框选题目</div>';
   $("boxCount").textContent = total;
@@ -2413,6 +2474,18 @@ function renderBoxList() {
   el.querySelectorAll(".b-fig-miss").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card");
     startBoxCrop(card.dataset.pid, card.dataset.id, +btn.dataset.n);
+  });
+  el.querySelectorAll(".bc-unlink").forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (!b) return;
+    b.group = "";
+    saveBoxesFor(pid, bs);
+    if (pid === curPage) { boxes = bs; renderCanvas(); }
+    renderBoxList();
+    toast("已取消续块：本块变回独立题目", "");
   });
   el.querySelectorAll(".b-cfig").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card");
@@ -2941,15 +3014,17 @@ $("clearBtn").onclick = () => {
 /* ---------- 保存裁剪(保存所有页的框选, 统一科目) ---------- */
 $("saveBtn").onclick = async () => {
   const groups = allPageBoxes();
-  const total = groups.reduce((n, g) => n + g.boxes.length, 0);
-  if (!total) return toast("还没有框选任何题目", "err");
+  const gi = groupInfo();
+  const conts = groups.reduce((n, g) => n + g.boxes.length, 0) - gi.questions;
+  if (!gi.questions) return toast("还没有框选任何题目", "err");
   // 保存前确认科目(避免科目选错入库)
   const subj = curSubject || "未分类";
-  const pagesInfo = groups.map(g => `  ${pageNo(g.pid)}：${g.boxes.length} 题`).join("\n");
+  const pagesInfo = groups.map(g => `  ${pageNo(g.pid)}：${g.boxes.filter(b => gi.headOf[b.id] === b.id).length} 题`).join("\n");
   const warn = (subj === "未分类")
     ? "\n\n注意：当前科目是「未分类」，建议先在左侧顶部选择科目。"
     : "";
-  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${total} 道题：\n${pagesInfo}${warn}`)) {
+  const contInfo = conts ? `（含 ${conts} 个续块，会并入对应题目）` : "";
+  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${gi.questions} 道题${contInfo}：\n${pagesInfo}${warn}`)) {
     toast("已取消保存，可在左侧顶部修改科目", "");
     return;
   }
