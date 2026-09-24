@@ -719,6 +719,30 @@ async def crop(payload: dict):
                       lambda m: f"[图{mapping.get(int(m.group(1)), int(m.group(1)))}{m.group(2)}]",
                       text or "")
 
+    def _crop_fig(box_img, fg):
+        """按 fg 的坐标裁出图块图。fg 带 px/py/pw/ph 时坐标相对**整页原图**(全页裁图),
+        否则相对题目图。返回 (PIL 图, 坐标字段) 或 None。"""
+        full = fg.get("px") is not None or fg.get("pw") is not None
+        keys = ("px", "py", "pw", "ph") if full else ("x", "y", "w", "h")
+        try:
+            fx, fy, fw, fh = (int(fg.get(k, 0) or 0) for k in keys)
+        except (TypeError, ValueError):
+            return None
+        base = img if full else box_img
+        W, H = base.size
+        x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
+        w0 = min(W - x0, max(20, int(fw / 1000 * W)))
+        h0 = min(H - y0, max(20, int(fh / 1000 * H)))
+        if x0 >= W or y0 >= H or w0 < 5 or h0 < 5:
+            return None
+        try:
+            im2 = trim_margins(base.crop((x0, y0, x0 + w0, y0 + h0)))
+        except Exception:
+            return None
+        if im2.size[0] < 3 or im2.size[1] < 3:
+            return None
+        return im2, {keys[0]: fx, keys[1]: fy, keys[2]: fw, keys[3]: fh}
+
     for b in boxes:
         x, y, w, h = (max(0, int(b.get(k, 0) * r)) for k in ("x", "y", "w", "h"))
         if w < 20 or h < 20:
@@ -745,20 +769,11 @@ async def crop(payload: dict):
                 return nxt[0]
 
             mapping = {}                            # 续块图号 -> 并题后的新图号
-            W, H = crop_img.size
             for fg in (b.get("figures") or []):
-                fx, fy, fw, fh = (int(fg.get(k, 0)) for k in ("x", "y", "w", "h"))
-                x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
-                w0 = min(W - x0, max(20, int(fw / 1000 * W)))
-                h0 = min(H - y0, max(20, int(fh / 1000 * H)))
-                if x0 >= W or y0 >= H or w0 < 5 or h0 < 5:
+                got = _crop_fig(crop_img, fg)
+                if not got:
                     continue
-                try:
-                    fimg = trim_margins(crop_img.crop((x0, y0, x0 + w0, y0 + h0)))
-                except Exception:
-                    continue
-                if fimg.size[0] < 3 or fimg.size[1] < 3:
-                    continue
+                fimg, coord = got
                 n_new = take()
                 fname = f"{head['id']}_fig{n_new}.jpg"
                 try:
@@ -767,9 +782,10 @@ async def crop(payload: dict):
                     nxt[0] -= 1
                     continue
                 mapping[int(fg.get("n", 0) or 0)] = n_new
-                hfigs.append({"n": n_new, "file": str((hdir / fname).relative_to(ROOT)),
-                              "x": fx, "y": fy, "w": fw, "h": fh,
-                              "t": int(time.time() * 1000)})
+                rec = {"n": n_new, "file": str((hdir / fname).relative_to(ROOT)),
+                       "t": int(time.time() * 1000)}
+                rec.update(coord)
+                hfigs.append(rec)
             # 文本里引用了但还没裁的图号也分配新号, 避免与首块撞号
             refs = str(b.get("note") or "") + " " + str(b.get("answer") or "") \
                    + " " + str(b.get("analysis") or "")
@@ -803,30 +819,23 @@ async def crop(payload: dict):
         img_name = f"{item_id}.jpg"
         img_path = subj_dir / img_name
         crop_img.save(img_path, "JPEG", quality=95)
-        # 图块: box.figures 里的相对坐标(0-1000) -> 裁出图块文件
+        # 图块: box.figures 里的相对坐标(0-1000) -> 裁出图块文件(支持整页坐标)
         figs = []
-        for fi, fg in enumerate(b.get("figures") or [], start=1):
-            fx, fy, fw, fh = (int(fg.get(k, 0)) for k in ("x", "y", "w", "h"))
-            W, H = crop_img.size
-            x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
-            w0 = min(W - x0, max(20, int(fw / 1000 * W)))
-            h0 = min(H - y0, max(20, int(fh / 1000 * H)))
-            if x0 >= W or y0 >= H or w0 < 5 or h0 < 5:
+        for fg in (b.get("figures") or []):
+            got = _crop_fig(crop_img, fg)
+            if not got:
                 continue                      # 坐标越界/太小: 跳过该图块, 不中断保存
-            try:
-                fimg = trim_margins(crop_img.crop((x0, y0, x0 + w0, y0 + h0)))
-            except Exception:
-                continue
-            if fimg.size[0] < 3 or fimg.size[1] < 3:
-                continue
-            fname = f"{item_id}_fig{len(figs) + 1}.jpg"
+            fimg, coord = got
+            n_new = len(figs) + 1
+            fname = f"{item_id}_fig{n_new}.jpg"
             try:
                 fimg.save(subj_dir / fname, "JPEG", quality=95)
             except Exception:
                 continue
-            figs.append({"n": len(figs) + 1, "file": f"items/{sd}/{fname}",
-                         "x": fx, "y": fy, "w": fw, "h": fh,
-                         "t": int(time.time() * 1000)})
+            rec = {"n": n_new, "file": f"items/{sd}/{fname}",
+                   "t": int(time.time() * 1000)}
+            rec.update(coord)
+            figs.append(rec)
         item = {
             "id": item_id,
             "code": next_code(db, subject),
@@ -2779,9 +2788,11 @@ def crop_item_figure(item_id: str, payload: dict = None):
         it = next((x for x in db["items"] if x["id"] == item_id), None)
         if it is None or not it.get("image"):
             return JSONResponse({"ok": False, "msg": "题目不存在或无图片"}, status_code=404)
-        src = ROOT / it["image"]
+        src = ROOT / str(((it.get("source_page") or "") if payload.get("from_page") else it["image"]) or "")
         if not src.exists():
-            return JSONResponse({"ok": False, "msg": "图片文件不存在"}, status_code=404)
+            return JSONResponse({"ok": False,
+                                 "msg": "来源图片不存在（这道题没有记录整页原图）" if payload.get("from_page")
+                                        else "图片文件不存在"}, status_code=404)
         img = np.array(open_photo(src))
         FH, FW = img.shape[:2]
         try:

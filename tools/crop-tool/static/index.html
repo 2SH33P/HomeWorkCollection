@@ -936,6 +936,10 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <button class="ct-ic" id="ctRedo" title="重做 (Ctrl+Shift+Z)" disabled><svg class="ic"><use href="#ic-redo"/></svg></button>
           </div>
           <div class="ct-right">
+            <span class="ct-seg ct-scope" id="cropScopeSeg" style="display:none">
+              <button type="button" data-scope="box" class="active" title="只在题目框内框选图形（默认）">题框内</button>
+              <button type="button" data-scope="page" title="可在整页任意位置框选，例如图形画在题框外、或题框画得太紧">全页</button>
+            </span>
             <button class="btn ghost btn-sm" id="ctCropFig" title="对当前选中的题目框裁图"><svg class="ic"><use href="#ic-cfig"/></svg><span>裁图</span></button>
             <span class="ct-val" id="cropFigCount" style="display:none"></span>
             <button class="btn btn-sm" id="cropOk" style="display:none"><svg class="ic"><use href="#ic-check"/></svg><span>确认</span></button>
@@ -1452,6 +1456,9 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
         <div class="prev-ops">
           <button class="btn ghost" id="pvAi"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 识别</span></button>
           <button class="btn ghost" id="pvCropBtn">裁图</button>
+          <label class="chk" id="pvFromPageWrap" style="display:none"
+                 title="从这张试卷的整页原图里裁（图形画在题目框外时用）">
+            <input type="checkbox" id="pvFromPage"> 从整页原图裁</label>
           <button class="btn ghost" id="pvReframe" title="查看该题在原图上的取景框，可拖动后重新裁剪">
             <svg class="ic"><use href="#ic-crop"/></svg><span>原图取景</span></button>
           <button class="btn ghost" id="pvViewImg"><svg class="ic"><use href="#ic-image"/></svg><span>浏览图片</span></button>
@@ -2133,20 +2140,43 @@ function boxMissingFigs(b) {
 
 /* 草稿阶段图块缩略图: 用 /api/crop/preview 现算一张(按坐标缓存, 不写草稿) */
 const figPreviewCache = new Map();
+const pageDimsCache = new Map();
+function pageDims(pid) {                       // 整页缩略图尺寸(全页图块的坐标基准)
+  if (pageDimsCache.has(pid)) return pageDimsCache.get(pid);
+  const p = new Promise(res => {
+    const pg = (pages || []).find(x => x.page === pid);
+    if (!pg) return res(null);
+    const im = new Image();
+    im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight });
+    im.onerror = () => res(null);
+    im.src = pg.web_url;
+  });
+  pageDimsCache.set(pid, p);
+  return p;
+}
 function figPreview(pid, box, f) {
-  const key = [pid, box.x, box.y, box.w, box.h, f.n, f.x, f.y, f.w, f.h].join("|");
+  const full = f.px !== undefined;
+  const key = [pid, box.x, box.y, box.w, box.h, f.n, full ? "p" : "b",
+               f.x, f.y, f.w, f.h, f.px, f.py, f.pw, f.ph].join("|");
   if (figPreviewCache.has(key)) return Promise.resolve(figPreviewCache.get(key));
-  const x = box.x + (f.x || 0) / 1000 * box.w;
-  const y = box.y + (f.y || 0) / 1000 * box.h;
-  const w = Math.max(20, (f.w || 0) / 1000 * box.w);
-  const h = Math.max(20, (f.h || 0) / 1000 * box.h);
-  return api("/api/crop/preview", { method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ page: pid, box: { x: Math.round(x), y: Math.round(y),
-                                             w: Math.round(w), h: Math.round(h) } }) })
-    .then(d => { const u = d.url ? (d.url + "?t=" + Date.now()) : "";
-                 figPreviewCache.set(key, u); return u; })
-    .catch(() => "");
+  const ask = (pc) => api("/api/crop/preview", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page: pid, box: pc }) })
+    .then(d => d.url ? (d.url + "?t=" + Date.now()) : "") .catch(() => "");
+  const p = full
+    ? pageDims(pid).then(d => {
+        if (!d) return "";
+        return ask({ x: Math.round((f.px || 0) / 1000 * d.w), y: Math.round((f.py || 0) / 1000 * d.h),
+                     w: Math.max(20, Math.round((f.pw || 0) / 1000 * d.w)),
+                     h: Math.max(20, Math.round((f.ph || 0) / 1000 * d.h)) });
+      })
+    : ask({ x: Math.round(box.x + (f.x || 0) / 1000 * box.w),
+            y: Math.round(box.y + (f.y || 0) / 1000 * box.h),
+            w: Math.max(20, Math.round((f.w || 0) / 1000 * box.w)),
+            h: Math.max(20, Math.round((f.h || 0) / 1000 * box.h)) });
+  const pr = p.then(u => { figPreviewCache.set(key, u); return u; });
+  figPreviewCache.set(key, pr);
+  return pr;
 }
 
 /* 续块分组信息: 首块/续块、题号、续块序号(按页序 = 保存顺序) */
@@ -2177,9 +2207,43 @@ function boxSummary(b) {
     .replace(/\s+/g, " ").trim().slice(0, 26);
 }
 
-/* 卡片主体(首块与续块共用) */
-function boxBodyHTML(b, isCont) {
+/* 图块区(首块与续块共用) */
+function figsHTML(b) {
+  return ((b.figures || []).length || boxMissingFigs(b).length) ? `
+        <div class="b-figs">
+          <span class="hint">图块（正文用 [图N] 引用；点图可插入引用）</span>
+          <div class="b-fig-strip">
+            ${(b.figures || []).map(f => `<figure class="b-fig" data-n="${f.n}">
+              <img data-fig="1" loading="lazy" alt="[图${f.n}]">
+              <figcaption>[图${f.n}]<button type="button" class="b-fig-del" data-n="${f.n}" title="删除这个图">✕</button></figcaption>
+            </figure>`).join("")}
+            ${boxMissingFigs(b).map(n => `<button type="button" class="mini b-fig-miss" data-n="${n}">裁图到 [图${n}]</button>`).join("")}
+          </div>
+        </div>` : "";
+}
+
+/* 卡片主体: 首块 = 完整字段; 续块 = 只提供图形与本块文字(其余全用首块的) */
+function boxBodyHTML(b, isCont, gi) {
   const star = b.star || 0;
+  const brow = `
+        <div class="brow">
+          <button class="mini b-ai" data-id="${b.id}" title="识别本块文字（静默填入；图形请在卡片里点「裁图」手动框选）">AI 识别</button>
+          <button type="button" class="mini b-cfig" data-id="${b.id}" title="框选图形（默认在题框内，可切「全页」不限范围）">裁图</button>
+          ${isCont
+            ? `<button type="button" class="mini bc-unlink" data-id="${b.id}" title="取消续块：本块变回独立题目">取消续块</button>`
+            : `<button type="button" class="mini cont ${pendingGroup && (pendingGroup === b.id || b.group === pendingGroup) ? "on" : ""}" data-id="${b.id}"
+            title="并入上一题 / 开启续块：点一下把本块接到上一题；首块再点=结束「自动接下一框」">${pendingGroup === b.id ? "结束续块" : "续块"}</button>`}
+        </div>`;
+  if (isCont) {                        // 续块: 题干/答案/解析/关键字/难度/大题 都算首块的
+    return `
+        <div class="hint" style="margin:2px 0 6px;line-height:1.7">
+          这道题的第 ${(gi && gi.kOf[b.id]) || 1} 块：题干 / 答案 / 解析 / 关键字 / 难度 / 大题 都用首块的，
+          这里只需裁出本块里的图形。保存时自动并入首块。
+        </div>
+        <textarea data-f="note" rows="2" placeholder="本块识别出的文字（可留空；保存时接到首块题干后面）">${esc(b.note)}</textarea>
+        ${figsHTML(b)}
+        ${brow}`;
+  }
   return `
         <span class="chap-wrap">
           <input type="text" data-f="chapter" value="${esc(b.chapter)}" placeholder="大题归类">
@@ -2195,25 +2259,8 @@ function boxBodyHTML(b, isCont) {
         <textarea data-f="note" rows="4" placeholder="题干与选项（AI 自动识别，可编辑；[图1] 表示图块）">${esc(b.note)}</textarea>
         <textarea data-f="answer" rows="2" placeholder="答案（可选）">${esc(b.answer)}</textarea>
         <textarea data-f="analysis" rows="2" placeholder="解析（可选，支持 *楷体* **黑体** 与 [图1]）">${esc(b.analysis)}</textarea>
-        ${((b.figures || []).length || boxMissingFigs(b).length) ? `
-        <div class="b-figs">
-          <span class="hint">图块（正文用 [图N] 引用；点图可插入引用）</span>
-          <div class="b-fig-strip">
-            ${(b.figures || []).map(f => `<figure class="b-fig" data-n="${f.n}">
-              <img data-fig="1" loading="lazy" alt="[图${f.n}]">
-              <figcaption>[图${f.n}]<button type="button" class="b-fig-del" data-n="${f.n}" title="删除这个图">✕</button></figcaption>
-            </figure>`).join("")}
-            ${boxMissingFigs(b).map(n => `<button type="button" class="mini b-fig-miss" data-n="${n}">裁图到 [图${n}]</button>`).join("")}
-          </div>
-        </div>` : ""}
-        <div class="brow">
-          <button class="mini b-ai" data-id="${b.id}" title="识别题干文字（静默填入；图形请在卡片里点「裁图」手动框选）">AI 识别</button>
-          <button type="button" class="mini b-cfig" data-id="${b.id}" title="在题目框内框选图形，可连续裁多个">裁图</button>
-          ${isCont
-            ? `<button type="button" class="mini bc-unlink" data-id="${b.id}" title="取消续块：本块变回独立题目">取消续块</button>`
-            : `<button type="button" class="mini cont ${pendingGroup && (pendingGroup === b.id || b.group === pendingGroup) ? "on" : ""}" data-id="${b.id}"
-            title="并入上一题 / 开启续块：点一下把本块接到上一题；首块再点=结束「自动接下一框」">${pendingGroup === b.id ? "结束续块" : "续块"}</button>`}
-        </div>`;
+        ${figsHTML(b)}
+        ${brow}`;
 }
 
 /* 首块/独立题卡片: 续块嵌套在它下面 */
@@ -2235,7 +2282,7 @@ function boxCardHTML(b, qno, pid, gi) {
         <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
         <button class="del" data-id="${b.id}">删</button>
       </div>
-      <div class="bbody">${boxBodyHTML(b, false)}</div>
+      <div class="bbody">${boxBodyHTML(b, false, gi)}</div>
       ${conts.length ? `<div class="b-conts">
         <div class="b-conts-t">续块（${conts.length}）：同一道题，保存时会并入本题</div>
         ${conts.map(({ pid: cp, b: c }) => contCardHTML(c, cp, gi)).join("")}
@@ -2260,7 +2307,7 @@ function contCardHTML(b, pid, gi) {
         <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
         <button class="del" data-id="${b.id}">删</button>
       </div>
-      <div class="bbody">${boxBodyHTML(b, true)}</div>
+      <div class="bbody">${boxBodyHTML(b, true, gi)}</div>
     </div>`;
 }
 
@@ -2494,6 +2541,16 @@ function renderBoxList() {
 }
 /* ---------- 裁图模式: 在原图画布上直接框选, 换算坐标 ---------- */
 let cropMode = null, cropRect = null, cropDrag = null;
+let cropScope = "box";       // 裁图范围: box=限制在题框内 / page=整页任意位置
+$("cropScopeSeg").querySelectorAll("button").forEach(b => b.onclick = () => {
+  cropScope = b.dataset.scope;
+  $("cropScopeSeg").querySelectorAll("button").forEach(x => x.classList.toggle("active", x === b));
+  if (cropRect) clampCropRect();
+  renderCanvas();
+  toast(cropScope === "page"
+    ? "全页裁图：可在页面任意位置框选，裁出的图仍然算作该题的图块"
+    : "已限制在题目框内裁图", "");
+});
 let cropTool = "zoom";        // frame(框题) | zoom | edit(点框弹编辑窗)
 let activeBoxId = null;       // 当前选中的题目框(裁图用)
 let cropBindN = 0;            // >0: 本次裁出的图绑定到该编号 [图N]
@@ -2728,6 +2785,7 @@ function updateBarUI() {
   const inCrop = !!cropMode;
   $("cropOk").style.display = inCrop ? "" : "none";
   $("cropCancel").style.display = inCrop ? "" : "none";
+  $("cropScopeSeg").style.display = inCrop ? "" : "none";
   $("pageEditDone").style.display = inCrop ? "none" : "";
 }
 
@@ -2961,14 +3019,27 @@ $("cropOk").onclick = () => {
   const beforeCrop = snap();
   const b = cropMode;
   clampCropRect();
-  // 画布(缩略图)坐标 -> 相对题图的 0-1000 坐标
-  const rx = Math.round(Math.max(0, Math.min(1000, (cropRect.x - b.x) / b.w * 1000)));
-  const ry = Math.round(Math.max(0, Math.min(1000, (cropRect.y - b.y) / b.h * 1000)));
-  let rw = Math.round(Math.max(20, Math.min(1000 - rx, cropRect.w / b.w * 1000)));
-  let rh = Math.round(Math.max(20, Math.min(1000 - ry, cropRect.h / b.h * 1000)));
-  if (rx + rw > 1000) rw = 1000 - rx;
-  if (ry + rh > 1000) rh = 1000 - ry;
-  if (rw < 20 || rh < 20) return toast("框选区域无效，请重新框选", "err");
+  let coord = null;                      // 图块坐标: 题框内(0-1000 相对题图) 或 全页(0-1000 相对整页)
+  if (cropScope === "page") {
+    const px = Math.round(Math.max(0, Math.min(1000, cropRect.x / imgW * 1000)));
+    const py = Math.round(Math.max(0, Math.min(1000, cropRect.y / imgH * 1000)));
+    let pw = Math.round(Math.max(20, Math.min(1000 - px, cropRect.w / imgW * 1000)));
+    let ph = Math.round(Math.max(20, Math.min(1000 - py, cropRect.h / imgH * 1000)));
+    if (px + pw > 1000) pw = 1000 - px;
+    if (py + ph > 1000) ph = 1000 - py;
+    if (pw < 20 || ph < 20) return toast("框选区域无效，请重新框选", "err");
+    coord = { px: px, py: py, pw: pw, ph: ph };
+  } else {
+    // 画布(缩略图)坐标 -> 相对题图的 0-1000 坐标
+    const rx = Math.round(Math.max(0, Math.min(1000, (cropRect.x - b.x) / b.w * 1000)));
+    const ry = Math.round(Math.max(0, Math.min(1000, (cropRect.y - b.y) / b.h * 1000)));
+    let rw = Math.round(Math.max(20, Math.min(1000 - rx, cropRect.w / b.w * 1000)));
+    let rh = Math.round(Math.max(20, Math.min(1000 - ry, cropRect.h / b.h * 1000)));
+    if (rx + rw > 1000) rw = 1000 - rx;
+    if (ry + rh > 1000) rh = 1000 - ry;
+    if (rw < 20 || rh < 20) return toast("框选区域无效，请重新框选", "err");
+    coord = { x: rx, y: ry, w: rw, h: rh };
+  }
   const bs = loadBoxes(b.pid);
   const box = bs.find(x => x.id === b.bid);
   if (box) {                                  // 图块一律手动裁; cropBindN>0 时绑定到该编号
@@ -2976,7 +3047,7 @@ $("cropOk").onclick = () => {
     const bind = cropBindN;
     const n = bind > 0 ? bind : (figs.reduce((m, x) => Math.max(m, +x.n || 0), 0) + 1);
     if (bind > 0) figs = box.figures = figs.filter(x => +x.n !== bind);   // 覆盖同编号旧图
-    figs.push({ n, x: rx, y: ry, w: rw, h: rh });
+    figs.push(Object.assign({ n: n }, coord));
     figs.sort((a, c) => (+a.n) - (+c.n));
     if (bind <= 0) {                          // 新编号才自动补引用; 绑定时正文里本来就有 [图N]
       const note = (box.note || "").trim();
@@ -2996,6 +3067,13 @@ $("cropOk").onclick = () => {
 function clampCropRect() {
   const L = cropMode;
   if (!L || !cropRect) return;
+  if (cropScope === "page") {                 // 全页: 只限制在页面范围内
+    cropRect.w = Math.max(20, Math.min(cropRect.w, imgW));
+    cropRect.h = Math.max(20, Math.min(cropRect.h, imgH));
+    cropRect.x = Math.max(0, Math.min(imgW - cropRect.w, cropRect.x));
+    cropRect.y = Math.max(0, Math.min(imgH - cropRect.h, cropRect.y));
+    return;
+  }
   cropRect.w = Math.max(20, Math.min(cropRect.w, L.w));
   cropRect.h = Math.max(20, Math.min(cropRect.h, L.h));
   cropRect.x = Math.max(L.x, Math.min(L.x + L.w - cropRect.w, cropRect.x));
@@ -3652,6 +3730,7 @@ $("pvSplit").addEventListener("pointerup", () => {
 function openPreview(it) {
   pvItem = it;
   pvCropOn = false; pvRect = null; pvDrag = null; pvCropReplace = 0; pvRebindCrop = 0;
+  pvFromPage = false; $("pvFromPage").checked = false; $("pvFromPageWrap").style.display = "none";
   pvcv.classList.remove("on"); $("pvCropBtn").classList.remove("on");
   $("pvCropOk").style.display = "none"; $("pvCropCancel").style.display = "none";
   $("pvCropHint").style.display = "none";
@@ -3831,6 +3910,7 @@ $("prevMask").onclick = e => { if (e.target === $("prevMask")) $("prevMask").cla
 
 /* ---------- 手动裁图: 在预览大图上框选图形区域 -> [图@x,y,w,h] ---------- */
 let pvCropOn = false, pvDrag = null, pvRect = null, pvScale = 1;
+let pvFromPage = false;                // 裁图来源: 整页原图(而不是题目图)
 let pvCropReplace = 0;                 // >0 表示这次裁剪是覆盖该编号的图块
 let pvRebindCrop = 0;                  // >0 表示这次裁剪绑定的编号 [图N]
 const pvcv = $("pvCv"), pvctx = pvcv.getContext("2d");
@@ -3938,6 +4018,11 @@ $("pvCropBtn").onclick = () => {
   $("pvCropOk").style.display = pvCropOn ? "" : "none";
   $("pvCropCancel").style.display = pvCropOn ? "" : "none";
   $("pvCropHint").style.display = pvCropOn ? "block" : "none";
+  $("pvFromPageWrap").style.display = (pvCropOn && pvItem && pvItem.source_page) ? "" : "none";
+  if (!pvCropOn) {                       // 退出裁图: 回到题目图
+    pvFromPage = false; $("pvFromPage").checked = false;
+    if (pvItem) $("pvImg").src = "/files/" + pvItem.image;
+  }
   const lbl = $("pvCropBtn").querySelector("span") || $("pvCropBtn");
   if (lbl) lbl.textContent = pvCropOn ? "结束裁图" : "裁图";
   if (pvCropOn) {
@@ -3949,6 +4034,19 @@ $("pvCropBtn").onclick = () => {
   } else { pvctx.clearRect(0, 0, pvcv.width, pvcv.height); }
 };
 $("pvCropCancel").onclick = () => { $("pvCropBtn").click(); };     // 取消 = 退出裁图模式
+
+$("pvFromPage").onchange = () => {          // 题目图 / 整页原图 之间切换
+  pvFromPage = $("pvFromPage").checked;
+  if (!pvItem) return;
+  const src = (pvFromPage && pvItem.source_page) ? pvItem.source_page : pvItem.image;
+  pvRect = null; pvDrag = null;
+  const im = $("pvImg");
+  im.onload = () => { pvResizeCv(); pvDraw(); };
+  im.src = "/files/" + src;
+  setPvCropHint(pvFromPage
+    ? "从整页原图裁：在整页图上拖拽框选图形（可连续裁多个）"
+    : "拖框选出图形区域（可连续裁多个）；拖动已画的框可微调；点「确认裁剪」存为附件");
+};
 
 function setPvCropHint(txt) {
   const h = $("pvCropHint");
@@ -3974,7 +4072,8 @@ $("pvCropOk").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ x: Math.max(0, x), y: Math.max(0, y),
                              w: Math.min(1000, w), h: Math.min(1000, h),
-                             replace: replacing || 0, bind: binding || 0 }) });
+                             replace: replacing || 0, bind: binding || 0,
+                             from_page: pvFromPage ? 1 : 0 }) });
     pvItem.figures = d.figures;
     renderPvFigs(pvItem);
     if (replacing) {
