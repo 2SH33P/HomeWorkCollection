@@ -86,7 +86,7 @@ eq(gi.qnoOf.c, 2, "独立题 c 是第 2 题");
 eq(gi.qnoOf.e, 3, "另一组首块 e 是第 3 题");
 
 // =========================================================
-console.log("\n[2] unlinkCont: 取消续块 = 并回首块（不得独立成题）");
+console.log("\n[2] unlinkCont: 移除续块（不得并入文字、不得变成新题）");
 DB = {
   P1: [{ id: "h", group: "h", chapter: "", star: 1, note: "A [图1]", answer: "ansA", analysis: "",
          keywords: "力", figures: [{ n: 1, file: "f1.jpg" }] },
@@ -98,13 +98,14 @@ pages = [{ page: "P1" }];
 curPage = "P1"; boxes = loadBoxesStub("P1"); pushed = 0;
 unlinkCont("P1", "c");
 eq(DB.P1.map(b => b.id), ["h"], "草稿里只剩首块（续块没有变成新题目）");
-eq(DB.P1[0].note, "A [图1]\nB [图2]", "续块文字接到首块后面，图号重排为 [图2]");
-eq(DB.P1[0].figures.map(f => f.n), [1, 2], "图块接到首块后面且不重号");
-eq(DB.P1[0].keywords, "力,电", "关键字取并集");
-eq([DB.P1[0].star, DB.P1[0].chapter], [3, "三、解答题"], "星级取高、大题回落");
+eq(DB.P1[0].note, "A [图1]", "首块题干没有被续块文字污染（上次报的 bug）");
+eq(DB.P1[0].answer, "ansA", "首块答案不被续块改动");
+eq(DB.P1[0].keywords, "力", "关键字不取续块的");
+eq(DB.P1[0].star, 1, "星级不取续块的");
+eq(DB.P1[0].figures.map(f => f.n), [1, 2], "已裁的图块并回首块且不重号");
 ok(pushed === 1, "压入撤销栈（可 Ctrl+Z 撤销）");
 
-console.log("\n[3] unlinkCont: 跨页续块 → 首块所在页也更新");
+console.log("\n[3] unlinkCont: 跳页续块 → 只搬图块，不动文字");
 DB = {
   P1: [{ id: "h", group: "h", note: "甲", keywords: "", figures: [{ n: 1 }] }],
   P2: [{ id: "c", group: "h", note: "乙 [图5]", keywords: "", figures: [{ n: 5, file: "x.jpg" }] }],
@@ -112,8 +113,9 @@ DB = {
 pages = [{ page: "P1" }, { page: "P2" }];
 curPage = "P1"; boxes = loadBoxesStub("P1");
 unlinkCont("P2", "c");
-eq(DB.P1[0].note, "甲\n乙 [图2]", "首块（另一页）拿到文字，图号重排");
-eq(DB.P2.length, 0, "续块页草稿被清空");
+eq(DB.P1[0].note, "甲", "首块（另一页）文字不被改动");
+eq(DB.P1[0].figures.map(f => f.n), [1, 2], "图块并回首块（重编号）");
+eq(DB.P2.length, 0, "续块页草稿被清掉");
 
 // =========================================================
 console.log("\n[4] 草稿时间戳: 旧字符串时间不能盖掉新的数字时间");

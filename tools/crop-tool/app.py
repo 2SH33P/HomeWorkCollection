@@ -713,12 +713,6 @@ async def crop(payload: dict):
     db = load_db()
     saved, merged = [], 0
 
-    def _remap_refs(text, mapping):
-        """文本里的 [图N|…] 按 mapping 重编号(mapping 里没有的不变)。"""
-        return re.sub(r"\[图(\d+)([^\]]*)\]",
-                      lambda m: f"[图{mapping.get(int(m.group(1)), int(m.group(1)))}{m.group(2)}]",
-                      text or "")
-
     def _crop_fig(box_img, fg):
         """按 fg 的坐标裁出图块图。fg 带 px/py/pw/ph 时坐标相对**整页原图**(全页裁图),
         否则相对题目图。返回 (PIL 图, 坐标字段) 或 None。"""
@@ -768,7 +762,7 @@ async def crop(payload: dict):
                 nxt[0] += 1
                 return nxt[0]
 
-            mapping = {}                            # 续块图号 -> 并题后的新图号
+            # 续块只提供图像: 文字一律不识别/不并入(续块没有自己的题干/答案/解析)
             for fg in (b.get("figures") or []):
                 got = _crop_fig(crop_img, fg)
                 if not got:
@@ -781,38 +775,17 @@ async def crop(payload: dict):
                 except Exception:
                     nxt[0] -= 1
                     continue
-                mapping[int(fg.get("n", 0) or 0)] = n_new
                 rec = {"n": n_new, "file": str((hdir / fname).relative_to(ROOT)),
                        "t": int(time.time() * 1000)}
                 rec.update(coord)
                 hfigs.append(rec)
-            # 文本里引用了但还没裁的图号也分配新号, 避免与首块撞号
-            refs = str(b.get("note") or "") + " " + str(b.get("answer") or "") \
-                   + " " + str(b.get("analysis") or "")
-            for _m in {int(v) for v in re.findall(r"\[图(\d+)", refs)}:
-                if _m not in mapping:
-                    mapping[_m] = take()
-            cnote = _remap_refs(b.get("note") or "", mapping).strip()
-            if cnote:
-                head["note"] = ((head.get("note") or "").rstrip() + "\n" + cnote).strip()
-            else:                                   # 续块没文字 -> 存成图块, 内容不丢
+            if not (b.get("figures") or []):        # 没有单独裁图 -> 把这块图整张并入为 [图N]
                 nn = take()
                 fname = f"{head['id']}_fig{nn}.jpg"
                 crop_img.save(hdir / fname, "JPEG", quality=95)
                 hfigs.append({"n": nn, "file": str((hdir / fname).relative_to(ROOT)),
                               "t": int(time.time() * 1000)})
                 head["note"] = ((head.get("note") or "").rstrip() + f"\n[图{nn}]").strip()
-            for k in ("answer", "analysis"):
-                add = _remap_refs(b.get(k) or "", mapping).strip()
-                if add:
-                    old = (head.get(k) or "").strip()
-                    head[k] = (old + "\n" + add) if old else add
-            head["keywords"] = ",".join(dict.fromkeys(
-                _kw_list(head.get("keywords")) + _kw_list(b.get("keywords"))))
-            head["star"] = max(int(head.get("star") or 0),
-                                max(0, min(5, int(b.get("star") or 0))))
-            if not (head.get("chapter") or "").strip():
-                head["chapter"] = chapter
             merged += 1
             continue
         item_id = f"q{int(time.time() * 1000)}{len(saved)}"

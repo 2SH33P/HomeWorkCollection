@@ -2275,8 +2275,9 @@ function figsHTML(b) {
         </div>` : "";
 }
 
-/* 取消续块 = 把这块并回首块(文字接在首块后面、图块重新编号后并入), 本块从草稿移除。
-   关键: 它不会变成一道新题目；误操作可用 Ctrl+Z 撤销。 */
+/* 取消续块 = 移除这一块(可回退)。
+   续块只是“同一道题的另一块图像”，所以: 不并任何文字(题干/答案/解析/关键字/星级一律不动),
+   只把它已经裁好的图块接到首块后面(不丢已裁的图)；没有图块就直接移除。 */
 function unlinkCont(pid, bid) {
   const gi = groupInfo();
   const headId = gi.headOf[bid];
@@ -2288,35 +2289,18 @@ function unlinkCont(pid, bid) {
   const cont = get(pid).find(x => x.id === bid);
   if (!head || !cont) return;
   const before = (pid === curPage || hpid === curPage) ? snap() : null;
-  // 图块: 续块的图块接到首块后面; 正文里的 [图N] 一律重编号(没裁的也分配新号, 避免撞号)
   let maxN = (head.figures || []).reduce((m, f) => Math.max(m, +f.n || 0), 0);
-  const map = {};
-  (cont.figures || []).forEach(f => {
+  (cont.figures || []).forEach(f => {                 // 只搬图块, 不搬文字
     const n = ++maxN;
-    map[+f.n] = n;
     (head.figures = head.figures || []).push(Object.assign({}, f, { n: n }));
   });
-  const txts = [cont.note || "", cont.answer || "", cont.analysis || ""];
-  new Set(txts.join(" ").match(/\[图(\d+)/g) || []).forEach(s => {
-    const n = +s.replace(/\D/g, "");
-    if (!map[n]) map[n] = ++maxN;
-  });
-  const rw = t => (t || "").replace(/\[图(\d+)([^\]]*)\]/g,
-    (m0, n, rest) => `[图${map[+n] || n}${rest}]`);
-  const add = (a, b) => [String(a || "").trim(), rw(b).trim()].filter(Boolean).join("\n");
-  head.note = add(head.note, cont.note);
-  head.answer = add(head.answer, cont.answer);
-  head.analysis = add(head.analysis, cont.analysis);
-  head.keywords = [...new Set([...kwList(head.keywords), ...kwList(cont.keywords)])].join(",");
-  head.star = Math.max(+head.star || 0, +cont.star || 0);
-  if (!(head.chapter || "").trim()) head.chapter = cont.chapter || "";
-  arrs[pid] = get(pid).filter(x => x.id !== bid);          // 续块从草稿里移除
+  arrs[pid] = get(pid).filter(x => x.id !== bid);      // 续块从草稿里移除
   saveBoxesFor(pid, arrs[pid]);
   if (hpid !== pid) saveBoxesFor(hpid, arrs[hpid]);
   boxes = loadBoxes(curPage) || boxes;
   renderBoxList(); renderCanvas();
   if (before) pushHistory(before);
-  toast("已取消续块：内容并回首块，本块已从草稿移除（不会单独成题）", "ok");
+  toast("已移除该续块（不改动首块的文字，已裁的图块已并回首块）", "ok");
 }
 function boxBodyHTML(b) {                // 首块卡片主体: 完整字段
   const star = b.star || 0;
@@ -2442,37 +2426,28 @@ function renderBoxList() {
   el.querySelectorAll(".b-ai").forEach(btn => btn.onclick = async () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
     const gi = groupInfo();
-    if (gi.headOf[bid] !== bid) return;                 // 续块没有独立识别入口
-    const blocks = [{ pid: pid, id: bid }]
-      .concat((gi.contsOf[bid] || []).map(x => ({ pid: x.pid, id: x.b.id })));
-    if (!loadBoxes(pid).find(x => x.id === bid)) return;
-    const hasText = blocks.some(bk => ((loadBoxes(bk.pid).find(x => x.id === bk.id) || {}).note || "").trim());
-    if (hasText && !confirm("该题已有识别内容，重新识别会覆盖，继续？")) return;
+    if (gi.headOf[bid] !== bid) return;                 // 续块没有识别入口
+    const box0 = loadBoxes(pid).find(x => x.id === bid);
+    if (!box0) return;
+    if ((box0.note || "").trim() && !confirm("该题已有识别内容，重新识别会覆盖，继续？")) return;
     const old = btn.textContent;
-    btn.disabled = true; btn.textContent = blocks.length > 1 ? `识别中 1/${blocks.length}…` : "识别中…";
-    try {                                               // 首块 + 它的续块依次识别(可跨页)
-      for (let k = 0; k < blocks.length; k++) {
-        const bk = blocks[k];
-        if (blocks.length > 1) btn.textContent = `识别中 ${k + 1}/${blocks.length}…`;
-        await flushDraftNow(bk.pid);                    // 先把草稿写实, 识别用的就是当前最新框位
-        const bx = loadBoxes(bk.pid).find(x => x.id === bk.id);
-        if (!bx) continue;
-        const d = await api("/api/ocr/ai", { method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ page: bk.pid, box: { x: Math.round(bx.x), y: Math.round(bx.y),
-                                                      w: Math.round(bx.w), h: Math.round(bx.h) } }) });
-        const bs2 = loadBoxes(bk.pid);
-        const b2 = bs2.find(x => x.id === bk.id);
-        if (b2) {
-          b2.note = d.text || "";                      // 静默填入(续块的文字保存时接到首块题干后)
-          saveBoxesFor(bk.pid, bs2);
-          if (bk.pid === curPage) boxes = bs2;
-        }
+    btn.disabled = true; btn.textContent = "识别中…";
+    try {                                               // 只识别这道题本身(续块不参与识别)
+      await flushDraftNow(pid);                        // 先把草稿写实, 识别用的就是当前最新框位
+      const bx = loadBoxes(pid).find(x => x.id === bid);
+      const d = await api("/api/ocr/ai", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page: pid, box: { x: Math.round(bx.x), y: Math.round(bx.y),
+                                                 w: Math.round(bx.w), h: Math.round(bx.h) } }) });
+      const bs2 = loadBoxes(pid);
+      const b2 = bs2.find(x => x.id === bid);
+      if (b2) {
+        b2.note = d.text || "";                        // 题干静默填入
+        saveBoxesFor(pid, bs2);
+        if (pid === curPage) boxes = bs2;
       }
       renderBoxList();
-      toast(blocks.length > 1
-        ? `识别完成：题干 + ${blocks.length - 1} 个续块已填入`
-        : "识别完成：题干已填入（图形请在卡片里点「裁图」框选）", "ok");
+      toast("识别完成：已按当前框位重新识别本题（续块不参与识别）", "ok");
     } catch (err) {
       toast("AI 识别失败: " + err.message, "err");
     }
@@ -2629,8 +2604,9 @@ function renderBoxList() {
   el.querySelectorAll(".bc-unlink").forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
     const pid = btn.dataset.pid || btn.closest("[data-pid]").dataset.pid, bid = btn.dataset.id;
-    if (!confirm("取消续块？\n\n本块的文字与图块会立即【并回首块】，并从草稿里移除；"
-               + "它不会单独变成一道新题。（误操作可用 Ctrl+Z 撤销）")) return;
+    if (!confirm("取消续块？\n\n只把这块已裁的图块并回首块，本块从草稿里移除；\n"
+               + "首块的文字不会被改动（续块本来就没有自己的题干/答案/解析）。\n"
+               + "（误操作可用 Ctrl+Z 撤销）")) return;
     unlinkCont(pid, bid);
   });
   el.querySelectorAll(".b-cfig").forEach(btn => btn.onclick = () => {
