@@ -221,6 +221,25 @@ eq((item.get("note") or "").count("自动识别文字"), 2, "首块与续块各�
 ok("[图1]" not in (item.get("note") or ""), "自动识别结果里的 [图N] 已被清掉")
 eq(rr["merged"], 1, "续块合并计数正确")
 
+print("\n[12] 重复录入不得并进老题目（批次隔离）")
+before = len(m.load_db()["items"])
+same = {"subject": "数学", "chapter": "三、解答题", "note": "题干", "group": "gdup",
+        "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}
+cont = {"subject": "数学", "chapter": "", "note": "选项", "group": "gdup",
+        "x": 40, "y": 520, "w": 300, "h": 300, "figures": []}
+r1 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-1", "boxes": [dict(same), dict(cont)]}))
+r2 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-2", "boxes": [dict(same), dict(cont)]}))
+eq(r2["count"], 1, "第二次保存仍然新建了一条题目")
+eq(r2["merged"], 1, "续块并进的是本次新建的首块")
+eq(len(m.load_db()["items"]) - before, 2, "两次保存 = 两条题目（不是并进同一条）")
+ok("选项" in (r2["items"][0].get("note") or ""), "第二条里带上续块文字")
+ok((r1["items"][0].get("note") or "").count("选项") == 1, "第一条没有被第二次保存重复追加")
+# 同一批次跨请求(跨页): 续块仍然并入同批次首块
+r3 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-3", "boxes": [dict(same)]}))
+r4 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-3", "boxes": [dict(cont)]}))
+eq(r4["count"], 0, "同批次第二页的续块不再新建题目")
+eq(r4["merged"], 1, "同批次跨请求仍能并入首块")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")

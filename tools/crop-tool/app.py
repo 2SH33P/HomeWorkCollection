@@ -713,6 +713,9 @@ async def crop(payload: dict):
     r = page_ratio(page) or 1.0
     db = load_db()
     saved, merged = [], 0
+    # 同一次保存的批次号: 续块只能并进"本次保存"刚创建的首块;
+    # 不带批次(老客户端/直接调接口)就用一次性随机值 —— 否则重复保存会一直并进上次那条老题目。
+    batch = str(payload.get("batch") or "").strip() or f"auto{time.time_ns()}"
 
     def _remap_refs(text, mapping):
         """文本里的 [图N|…] 按 mapping 重编号(mapping 里没有的保持不变)。"""
@@ -771,6 +774,7 @@ async def crop(payload: dict):
         gid = str(b.get("group") or "").strip()
         head = next((q for q in db["items"]
                      if gid and (q.get("group") or "") == gid
+                     and (q.get("batch") or "") == batch
                      and (q.get("subject") or "") == subject), None) if gid else None
         if head is not None:
             hdir = (ROOT / str(head.get("image") or "")).parent
@@ -865,6 +869,7 @@ async def crop(payload: dict):
             "star": max(0, min(5, int(b.get("star") or 0))),
             "figures": figs,
             "group": gid,                 # 续块分组: 同一组的多块合并为一道题
+            "batch": batch,               # 本次保存的批次(续块只并进同批次的首块)
             "source_page": f"pages/{srcs[0].name}",
             "box": {k: int(b.get(k, 0)) for k in ("x", "y", "w", "h")},   # 取景框(缩略图坐标)
             "created": time.strftime("%Y-%m-%d %H:%M"),

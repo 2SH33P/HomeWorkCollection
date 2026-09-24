@@ -3204,6 +3204,8 @@ $("saveBtn").onclick = async () => {
   }
   const btn = $("saveBtn"); btn.disabled = true;
   btn.querySelector("span").textContent = "保存中…";
+  // 本次保存的批次号: 续块只并进本次新建的首块(重复保存时不会并回上次的老题目)
+  const batch = "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   let saved = 0, merged = 0, failed = null;
   for (const g of groups) {
     const payload = g.boxes.map(b => ({
@@ -3217,7 +3219,7 @@ $("saveBtn").onclick = async () => {
     try {
       const d = await api("/api/crop", { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page: g.pid, boxes: payload }) });
+        body: JSON.stringify({ page: g.pid, boxes: payload, batch: batch }) });
       saved += d.count;
       merged += (d.merged || 0);
       markSaved(g.boxes, d.items);          // 仅用于显示“已入库 MA0012”，不再阻止重复保存
