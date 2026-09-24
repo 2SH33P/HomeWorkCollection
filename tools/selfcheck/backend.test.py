@@ -99,18 +99,18 @@ for f in it["figures"]:
     fp = m.ROOT / f["file"]
     ok(fp.exists() and dark_ratio(fp) > 0.2, f"图块 [图{f['n']}] 内容非空白（确实裁到了方块）")
 
-print("\n[3] /api/crop：续块只并入图像（文字不得进首块）")
+print("\n[3] /api/crop：续块并题（文字按块拼接 + 图号重排）")
 r2 = asyncio.run(m.crop({"page": "P1", "boxes": [
     {"subject": "数学", "chapter": "三、解答题", "note": "第一块 [图1] 求 $x^2$ 的值", "group": "gx",
      "x": 40, "y": 200, "w": 300, "h": 300, "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270}]},
-    {"subject": "数学", "chapter": "", "note": "续块文字不应出现 [图1]", "group": "gx",
-     "x": 40, "y": 520, "w": 300, "h": 300, "figures": []},
+    {"subject": "数学", "chapter": "", "note": "A．选项一 [图1] B．选项二", "group": "gx",
+     "x": 40, "y": 520, "w": 300, "h": 300, "figures": [{"n": 1, "px": 660, "py": 660, "pw": 200, "ph": 110}]},
 ] }))
 eq(r2["count"], 1, "续块没有单独入库（只 1 条新题）")
 eq(r2["merged"], 1, "合并了 1 个续块")
 merged = r2["items"][0]
-ok("续块文字" not in merged["note"], "续块文字没有进首块：" + merged["note"].replace("\n", " | "))
-ok("[图2]" in merged["note"], "续块图像作为 [图2] 接在首块后面")
+ok("选项一" in merged["note"], "续块的文字（选项）并入了同一道题：" + merged["note"].replace("\n", " | "))
+ok("[图1]" in merged["note"] and "[图2]" in merged["note"], "图号重排不撞号")
 nums = [f["n"] for f in merged["figures"]]
 eq(sorted(nums), sorted(set(nums)), "图块编号不重复：" + str(nums))
 ok(all((m.ROOT / f["file"]).exists() for f in merged["figures"]), "两个图块文件都落盘")

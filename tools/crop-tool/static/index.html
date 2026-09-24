@@ -2365,8 +2365,10 @@ function contRowHTML(b, pid, gi) {
       <span class="bc-pg">${pageNo(pid)}</span>
       <span class="bc-sum">${esc(b.chapter || "")}${sum ? " · " + esc(sum) : ""}</span>
       ${b.savedCode ? `<span class="badge ok">已入库</span>` : '<span class="badge miss">待入库</span>'}
-      ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>`
-                                 : '<span class="badge miss">无图</span>'}
+      ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
+      ${(b.note || "").trim()
+        ? `<span class="badge ok" title="${esc((b.note || "").slice(0, 300))}">文字 ${(b.note || "").trim().length} 字</span>`
+        : '<span class="badge miss">无文字</span>'}
       <span style="flex:1"></span>
       <button type="button" class="mini bc-unlink" data-id="${b.id}" data-pid="${pid}"
               title="取消续块：本块变回独立题目">取消续块</button>
@@ -2426,28 +2428,39 @@ function renderBoxList() {
   el.querySelectorAll(".b-ai").forEach(btn => btn.onclick = async () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
     const gi = groupInfo();
-    if (gi.headOf[bid] !== bid) return;                 // 续块没有识别入口
-    const box0 = loadBoxes(pid).find(x => x.id === bid);
-    if (!box0) return;
-    if ((box0.note || "").trim() && !confirm("该题已有识别内容，重新识别会覆盖，继续？")) return;
+    if (gi.headOf[bid] !== bid) return;                 // 续块没有单独的识别入口
+    // 这一道题 = 首块 + 它的续块（文字分别存在各自的块里，所以删掉某块，它的文字也随之消失）
+    const blocks = [{ pid: pid, id: bid }]
+      .concat((gi.contsOf[bid] || []).map(x => ({ pid: x.pid, id: x.b.id })));
+    if (!loadBoxes(pid).find(x => x.id === bid)) return;
+    const hasText = blocks.some(bk => ((loadBoxes(bk.pid).find(x => x.id === bk.id) || {}).note || "").trim());
+    if (hasText && !confirm("该题已有识别内容，重新识别会覆盖，继续？")) return;
     const old = btn.textContent;
-    btn.disabled = true; btn.textContent = "识别中…";
-    try {                                               // 只识别这道题本身(续块不参与识别)
-      await flushDraftNow(pid);                        // 先把草稿写实, 识别用的就是当前最新框位
-      const bx = loadBoxes(pid).find(x => x.id === bid);
-      const d = await api("/api/ocr/ai", { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page: pid, box: { x: Math.round(bx.x), y: Math.round(bx.y),
-                                                 w: Math.round(bx.w), h: Math.round(bx.h) } }) });
-      const bs2 = loadBoxes(pid);
-      const b2 = bs2.find(x => x.id === bid);
-      if (b2) {
-        b2.note = d.text || "";                        // 题干静默填入
-        saveBoxesFor(pid, bs2);
-        if (pid === curPage) boxes = bs2;
+    btn.disabled = true;
+    btn.textContent = blocks.length > 1 ? `识别中 1/${blocks.length}…` : "识别中…";
+    try {
+      for (let k = 0; k < blocks.length; k++) {
+        const bk = blocks[k];
+        if (blocks.length > 1) btn.textContent = `识别中 ${k + 1}/${blocks.length}…`;
+        await flushDraftNow(bk.pid);                    // 先把草稿写实, 识别用的就是当前最新框位
+        const bx = loadBoxes(bk.pid).find(x => x.id === bk.id);
+        if (!bx) continue;
+        const d = await api("/api/ocr/ai", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ page: bk.pid, box: { x: Math.round(bx.x), y: Math.round(bx.y),
+                                                      w: Math.round(bx.w), h: Math.round(bx.h) } }) });
+        const bs2 = loadBoxes(bk.pid);
+        const b2 = bs2.find(x => x.id === bk.id);
+        if (b2) {
+          b2.note = d.text || "";                      // 写回它自己那一块
+          saveBoxesFor(bk.pid, bs2);
+          if (bk.pid === curPage) boxes = bs2;
+        }
       }
       renderBoxList();
-      toast("识别完成：已按当前框位重新识别本题（续块不参与识别）", "ok");
+      toast(blocks.length > 1
+        ? `识别完成：题干 + ${blocks.length - 1} 个续块（文字分别在各自块里）`
+        : "识别完成：题干已填入（图形请在卡片里点「裁图」框选）", "ok");
     } catch (err) {
       toast("AI 识别失败: " + err.message, "err");
     }
