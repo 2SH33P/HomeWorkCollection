@@ -332,6 +332,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .box-card .bno { font-weight: 700; color: var(--danger); font-size: 13px; flex: none; }
 .box-card .badge { font-size: 11px; background: color-mix(in srgb, var(--warn) 18%, transparent);
                    color: var(--warn); border-radius: 5px; padding: 2px 7px; margin-left: 6px; }
+.box-card .badge.miss { background: rgba(255,59,48,.14); color: var(--danger); }
 .box-card input, .box-card select { width: 100%; margin-bottom: 6px; }
 .box-card textarea { width: 100%; margin-bottom: 6px; min-height: 44px; resize: vertical;
                      font-family: inherit; font-size: 13px; line-height: 1.6;
@@ -362,6 +363,21 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .pg-head .cnt { font-size: 10px; font-weight: 400; color: var(--t3); background: var(--elev);
                 border-radius: 999px; padding: 0 7px; }
 .box-card.dim { opacity: .65; }
+
+/* 框选卡片: 手动裁出的图块(缩略图/删除/按图号绑定) */
+.b-figs { margin: 2px 0 6px; }
+.b-fig-strip { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.b-fig-strip figure { margin: 0; text-align: center; }
+.b-fig-strip img { max-width: 108px; max-height: 76px; background: #fff; border-radius: 8px;
+                   box-shadow: var(--shadow); display: block; cursor: pointer; }
+.b-fig-ph { display: inline-flex; align-items: center; justify-content: center; min-width: 60px;
+            height: 40px; background: var(--elev); border-radius: 8px; font-size: 12px; color: var(--t3); }
+.b-fig-strip figcaption { font-size: 11px; color: var(--t3); margin-top: 2px;
+                          display: flex; align-items: center; justify-content: center; gap: 4px; }
+.b-fig-del { border: none; background: transparent; color: var(--t3); cursor: pointer;
+             padding: 0 2px; font-size: 11px; line-height: 1; }
+.b-fig-del:hover { color: var(--danger); }
+.b-fig-miss { color: var(--danger) !important; }
 
 /* 框选卡片: AI 识别(仅文字) */
 .b-ai { color: #248a3d !important; font-weight: 600; }
@@ -936,7 +952,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <button class="btn" id="saveBtn"><svg class="ic"><use href="#ic-check"/></svg><span>保存到错题库</span></button>
           <button class="btn ghost" id="clearBtn">清空全部</button>
         </div>
-        <div class="hint" style="margin-top:8px">列表汇总所有整页的框选 · 保存后自动 AI 识别文字并裁剪题内图形</div>
+        <div class="hint" style="margin-top:8px">列表汇总所有整页的框选 · 保存后自动 AI 识别文字；题内图形请在各题卡片里点「裁图」手动框选</div>
       </div>
     </div>
   </section>
@@ -2097,6 +2113,32 @@ function allPageBoxes() {
   return out;
 }
 
+/* 卡片里缺图的编号: 正文引用了 [图N] 但还没有图块 */
+function boxMissingFigs(b) {
+  const have = new Set((b.figures || []).map(f => +f.n));
+  const txt = [b.note || "", b.answer || "", b.analysis || ""].join(" ");
+  const nums = [...new Set((txt.match(/\[图(\d+)/g) || []).map(s => +s.replace(/\D/g, "")))];
+  return nums.filter(n => !have.has(n)).sort((a, c) => a - c);
+}
+
+/* 草稿阶段图块缩略图: 用 /api/crop/preview 现算一张(按坐标缓存, 不写草稿) */
+const figPreviewCache = new Map();
+function figPreview(pid, box, f) {
+  const key = [pid, box.x, box.y, box.w, box.h, f.n, f.x, f.y, f.w, f.h].join("|");
+  if (figPreviewCache.has(key)) return Promise.resolve(figPreviewCache.get(key));
+  const x = box.x + (f.x || 0) / 1000 * box.w;
+  const y = box.y + (f.y || 0) / 1000 * box.h;
+  const w = Math.max(20, (f.w || 0) / 1000 * box.w);
+  const h = Math.max(20, (f.h || 0) / 1000 * box.h);
+  return api("/api/crop/preview", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: pid, box: { x: Math.round(x), y: Math.round(y),
+                                             w: Math.round(w), h: Math.round(h) } }) })
+    .then(d => { const u = d.url ? (d.url + "?t=" + Date.now()) : "";
+                 figPreviewCache.set(key, u); return u; })
+    .catch(() => "");
+}
+
 function boxCardHTML(b, i, pid) {
   const other = pid !== curPage;
   const star = b.star || 0;
@@ -2108,6 +2150,8 @@ function boxCardHTML(b, i, pid) {
         <span class="bno">#${i + 1}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
         <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
         <span class="b-sum">${esc(b.chapter || "未分类")}${summary ? " · " + esc(summary) : ""}</span>
+        ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
+        ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
         <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
         <button class="del" data-id="${b.id}">删</button>
       </div>
@@ -2126,8 +2170,20 @@ function boxCardHTML(b, i, pid) {
         <textarea data-f="note" rows="4" placeholder="题干与选项（AI 自动识别，可编辑；[图1] 表示图块）">${esc(b.note)}</textarea>
         <textarea data-f="answer" rows="2" placeholder="答案（可选）">${esc(b.answer)}</textarea>
         <textarea data-f="analysis" rows="2" placeholder="解析（可选，支持 *楷体* **黑体** 与 [图1]）">${esc(b.analysis)}</textarea>
+        ${((b.figures || []).length || boxMissingFigs(b).length) ? `
+        <div class="b-figs">
+          <span class="hint">图块（正文用 [图N] 引用；点图可插入引用）</span>
+          <div class="b-fig-strip">
+            ${(b.figures || []).map(f => `<figure class="b-fig" data-n="${f.n}">
+              <img data-fig="1" loading="lazy" alt="[图${f.n}]">
+              <figcaption>[图${f.n}]<button type="button" class="b-fig-del" data-n="${f.n}" title="删除这个图">✕</button></figcaption>
+            </figure>`).join("")}
+            ${boxMissingFigs(b).map(n => `<button type="button" class="mini b-fig-miss" data-n="${n}">裁图到 [图${n}]</button>`).join("")}
+          </div>
+        </div>` : ""}
         <div class="brow">
-          <button class="mini b-ai" data-id="${b.id}" title="识别题干文字（静默填入；图形请用「裁图」手动处理）">AI 识别</button>
+          <button class="mini b-ai" data-id="${b.id}" title="识别题干文字（静默填入；图形请在卡片里点「裁图」手动框选）">AI 识别</button>
+          <button type="button" class="mini b-cfig" data-id="${b.id}" title="在题目框内框选图形，可连续裁多个">裁图</button>
           <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
         </div>
       </div>
@@ -2279,11 +2335,57 @@ function renderBoxList() {
       renderBoxList();
     });
   });
+  // 图块: 缩略图(现算) / 点图插入引用 / 删除 / 按编号裁图
+  el.querySelectorAll(".b-fig").forEach(fig => {
+    const card = fig.closest(".box-card"), pid = card.dataset.pid, bid = card.dataset.id, n = +fig.dataset.n;
+    const b = loadBoxes(pid).find(x => x.id === bid);
+    const f = b && (b.figures || []).find(x => +x.n === n);
+    const img = fig.querySelector("img");
+    if (b && f && img) figPreview(pid, b, f).then(url => {
+      if (url) img.src = url;
+      else img.replaceWith(Object.assign(document.createElement("span"),
+                                         { className: "b-fig-ph", textContent: "无预览" }));
+    });
+    fig.onclick = (e) => {
+      if (e.target.closest(".b-fig-del")) return;
+      const ta = card.querySelector('textarea[data-f="note"]');
+      if (!ta) return;
+      const tag = "[图" + n + "]";
+      const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+      ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(pos);
+      ta.dispatchEvent(new Event("input"));      // 走既有同步逻辑保存到草稿
+      toast("已插入 " + tag, "ok");
+    };
+  });
+  el.querySelectorAll(".b-fig-del").forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = card.dataset.id, n = +btn.dataset.n;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (!b) return;
+    b.figures = (b.figures || []).filter(x => +x.n !== n);
+    ["note", "answer", "analysis"].forEach(k => {   // 正文引用一并去掉([图1] 不误伤 [图10])
+      if (b[k]) b[k] = b[k].replace(new RegExp("\\[图" + n + "\\](?!\\d)", "g"), "");
+    });
+    saveBoxesFor(pid, bs);
+    if (pid === curPage) boxes = bs;
+    renderBoxList();
+    toast("已删除 [图" + n + "]", "ok");
+  });
+  el.querySelectorAll(".b-fig-miss").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card");
+    startBoxCrop(card.dataset.pid, card.dataset.id, +btn.dataset.n);
+  });
+  el.querySelectorAll(".b-cfig").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card");
+    startBoxCrop(card.dataset.pid, btn.dataset.id, 0);
+  });
 }
 /* ---------- 裁图模式: 在原图画布上直接框选, 换算坐标 ---------- */
 let cropMode = null, cropRect = null, cropDrag = null;
 let cropTool = "zoom";        // frame(框题) | zoom | edit(点框弹编辑窗)
 let activeBoxId = null;       // 当前选中的题目框(裁图用)
+let cropBindN = 0;            // >0: 本次裁出的图绑定到该编号 [图N]
 let cropPrevTool = null;      // 进入裁图前的工具栏模式
 let cropZoom = 1;             // 1 ~ 6
 let panDrag = null;           // 缩放模式拖动平移
@@ -2687,11 +2789,18 @@ $("rfApply").onclick = async function () {
 };
 
 $("ctCropFig").onclick = () => {
-  if (cropMode) return toast("已在裁图模式", "err");
-  if (!activeBoxId) return toast("请先在「框题」模式点选一个题目框", "err");
+  if (!activeBoxId) return toast("请先在「框题」模式点选一个题目框，或用卡片上的「裁图」", "err");
   if (!curPage) return;
-  enterCropMode(curPage, activeBoxId);
+  startBoxCrop(curPage, activeBoxId, 0);
 };
+
+/** 进入某题框的裁图模式。bindN>0 时把裁好的图绑定到已有编号 [图N](不再自动补引用)。 */
+function startBoxCrop(pid, bid, bindN) {
+  if (cropMode) return toast("已在裁图模式", "err");
+  cropBindN = bindN || 0;
+  if (cropBindN > 0) toast(`在题框内框选图形，裁好后绑定 [图${cropBindN}]`, "ok");
+  enterCropMode(pid, bid);
+}
 
 function enterCropMode(pid, bid) {
   if (pid !== curPage) {                 // 框在别的页: 先切过去
@@ -2751,14 +2860,20 @@ $("cropOk").onclick = () => {
   if (rw < 20 || rh < 20) return toast("框选区域无效，请重新框选", "err");
   const bs = loadBoxes(b.pid);
   const box = bs.find(x => x.id === b.bid);
-  if (box) {                                  // 图片附件一律手动裁: 新增一块
-    const figs = box.figures || (box.figures = []);
-    const n = figs.length + 1;
+  if (box) {                                  // 图块一律手动裁; cropBindN>0 时绑定到该编号
+    let figs = box.figures || (box.figures = []);
+    const bind = cropBindN;
+    const n = bind > 0 ? bind : (figs.reduce((m, x) => Math.max(m, +x.n || 0), 0) + 1);
+    if (bind > 0) figs = box.figures = figs.filter(x => +x.n !== bind);   // 覆盖同编号旧图
     figs.push({ n, x: rx, y: ry, w: rw, h: rh });
-    const note = (box.note || "").trim();
-    box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
+    figs.sort((a, c) => (+a.n) - (+c.n));
+    if (bind <= 0) {                          // 新编号才自动补引用; 绑定时正文里本来就有 [图N]
+      const note = (box.note || "").trim();
+      box.note = note ? note + "\n[图" + n + "]" : "[图" + n + "]";
+    }
+    cropBindN = 0;
     saveBoxesFor(b.pid, bs);
-    toast(`已裁好图${n}，可继续框选下一个`, "ok");
+    toast(bind > 0 ? `已裁好并绑定到 [图${n}]` : `已裁好图${n}，可继续框选下一个`, "ok");
   }
   cropRect = null;                       // 清掉图形框, 继续裁下一个(不退出裁图模式)
   renderCanvas();
