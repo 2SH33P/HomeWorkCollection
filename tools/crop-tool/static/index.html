@@ -333,6 +333,9 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .box-card .badge { font-size: 11px; background: color-mix(in srgb, var(--warn) 18%, transparent);
                    color: var(--warn); border-radius: 5px; padding: 2px 7px; margin-left: 6px; }
 .box-card .badge.miss { background: rgba(255,59,48,.14); color: var(--danger); }
+.box-card .badge.ok { background: rgba(36,138,61,.14); color: #248a3d; }
+button.badge { border: none; cursor: pointer; font-family: inherit; }
+.box-card.saved { border-color: rgba(36,138,61,.45); }
 .box-card input, .box-card select { width: 100%; margin-bottom: 6px; }
 .box-card textarea { width: 100%; margin-bottom: 6px; min-height: 44px; resize: vertical;
                      font-family: inherit; font-size: 13px; line-height: 1.6;
@@ -960,7 +963,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <button class="btn" id="saveBtn"><svg class="ic"><use href="#ic-check"/></svg><span>保存到错题库</span></button>
           <button class="btn ghost" id="clearBtn">清空全部</button>
         </div>
-        <div class="hint" style="margin-top:8px">列表汇总所有整页的框选 · 保存后自动 AI 识别文字；题内图形请在各题卡片里点「裁图」手动框选</div>
+        <div class="hint" id="boxStat" style="margin-top:8px">列表汇总所有整页的框选 · 题内图形请在卡片里点「裁图」（页面上任意位置都能框选）</div>
       </div>
     </div>
   </section>
@@ -1665,6 +1668,10 @@ async function loadPages() {
     e.stopPropagation();
     if (!confirm("删除这张整页照片？已裁剪的错题不受影响。")) return;
     await api("/api/page/" + btn.dataset.page, { method: "DELETE" });
+    localStorage.removeItem("boxes_" + btn.dataset.page);      // 主动删页 -> 连同该页草稿一起删
+    localStorage.removeItem("boxes_at_" + btn.dataset.page);
+    delete serverDrafts[btn.dataset.page];
+    try { await api("/api/draft/" + encodeURIComponent(btn.dataset.page), { method: "DELETE" }); } catch (e) { }
     if (curPage === btn.dataset.page) {
       curPage = null;
       $("editorArea").style.display = "none";
@@ -1750,6 +1757,7 @@ async function openEditor(pageId) {
 }
 let serverDrafts = {};                 // 服务端草稿(页 -> {boxes, at})
 let draftTimer = null;
+const draftTimers = {};                 // 每页一个防抖定时器(否则多页同时改只有最后一页会写服务器)
 
 let draftsReady = null;
 function loadDrafts(force) {           // 返回 Promise, 可 await; 默认只拉一次
@@ -1793,8 +1801,8 @@ function saveBoxesFor(pid, list) {
     const c = Object.assign({}, b); delete c._ai; delete c._keep; return c;
   });
   serverDrafts[pid] = { boxes: clean, at: at, count: clean.length };
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(function () {
+  clearTimeout(draftTimers[pid]);
+  draftTimers[pid] = setTimeout(function () {
     api("/api/draft/" + encodeURIComponent(pid), { method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ boxes: clean }) }).then(function (d) {
@@ -2262,11 +2270,12 @@ function boxCardHTML(b, qno, pid, gi) {
   const conts = (gi && gi.contsOf[b.id]) || [];
   const sum = boxSummary(b);
   return `
-    <div class="box-card ${other ? "dim" : ""} ${open ? "open" : ""}" data-id="${b.id}" data-pid="${pid}">
+    <div class="box-card ${other ? "dim" : ""} ${open ? "open" : ""} ${b.savedCode ? "saved" : ""}" data-id="${b.id}" data-pid="${pid}">
       <div class="bhead">
         <span class="bno">#${qno}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
         <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
         <span class="b-sum">${esc(b.chapter || "未分类")}${sum ? " · " + esc(sum) : ""}</span>
+        ${b.savedCode ? `<button type="button" class="badge ok b-unsave" data-id="${b.id}" title="已加入错题库（草稿保留，下次保存自动跳过）。点一下 = 重新入库（会新增一条题目，原题保留）">已入库 ${esc(b.savedCode)}</button>` : ""}
         ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
         ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
         ${conts.length ? `<span class="badge">含 ${conts.length} 个续块</span>` : ""}
@@ -2289,6 +2298,7 @@ function contRowHTML(b, pid, gi) {
       <span class="bc-no">续 ${gi.kOf[b.id] || 1}</span>
       <span class="bc-pg">${pageNo(pid)}</span>
       <span class="bc-sum">${esc(b.chapter || "")}${sum ? " · " + esc(sum) : ""}</span>
+      ${b.savedCode ? `<span class="badge ok">已入库</span>` : '<span class="badge miss">待入库</span>'}
       ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>`
                                  : '<span class="badge miss">无图</span>'}
       <span style="flex:1"></span>
@@ -2323,6 +2333,14 @@ function renderBoxList() {
     </div>`;
   }).join("") || '<div class="hint">在下方整页图上拖拽框选题目</div>';
   $("boxCount").textContent = total;
+  const allB = groups.flatMap(g => g.boxes);
+  const pendN = allB.filter(b => !b.savedCode).length, doneN = allB.length - pendN;
+  const stat = $("boxStat");
+  if (stat) stat.textContent = allB.length
+    ? `已框 ${allB.length} 块（${gi.questions} 题）：${pendN} 块待入库`
+      + (doneN ? ` · ${doneN} 块已入库` : "")
+      + " · 草稿会一直保留（要清掉用「清空全部」或单块「删」）"
+    : "在下方整页图上拖拽框选题目";
   el.scrollTop = keepScrollTop;                       // 重建后恢复列表滚动位置
   el.querySelectorAll(".starclear").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
@@ -2512,6 +2530,18 @@ function renderBoxList() {
   el.querySelectorAll(".b-fig-miss").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card");
     startBoxCrop(card.dataset.pid, card.dataset.id, +btn.dataset.n);
+  });
+  el.querySelectorAll(".b-unsave").forEach(btn => btn.onclick = (e) => {   // 已入库 -> 改回待入库
+    e.stopPropagation();
+    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
+    if (!confirm("把这块改回「待入库」？\n\n下次保存会重新添加一条新题目（原题目保留，不会被覆盖）。")) return;
+    const bs = loadBoxes(pid);
+    const b = bs.find(x => x.id === bid);
+    if (!b) return;
+    b.savedCode = "";
+    saveBoxesFor(pid, bs);
+    if (pid === curPage) { boxes = bs; renderCanvas(); }
+    renderBoxList();
   });
   el.querySelectorAll(".bc-unlink").forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
@@ -3044,27 +3074,42 @@ function clampCropRect() {
 
 function esc(s) { return (s || "").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
-$("clearBtn").onclick = () => {
+$("clearBtn").onclick = async () => {
   if (!allPageBoxes().length) return;
-  if (!confirm("清空所有整页的框选？")) return;
-  for (const pg of pages) localStorage.removeItem("boxes_" + pg.page);
-  boxes = []; renderBoxList(); renderCanvas(); saveBoxes();
+  if (!confirm("清空所有整页的框选？\n\n草稿（本机 + 服务器）会一并删除，不可撤销。")) return;
+  for (const pg of pages) {
+    localStorage.removeItem("boxes_" + pg.page);
+    localStorage.removeItem("boxes_at_" + pg.page);
+    delete serverDrafts[pg.page];
+    try { await api("/api/draft/" + encodeURIComponent(pg.page), { method: "DELETE" }); } catch (e) { }
+  }
+  boxes = []; pendingGroup = null; renderBoxList(); renderCanvas();
+  toast("已清空全部框选草稿", "ok");
 };
 
-/* ---------- 保存裁剪(保存所有页的框选, 统一科目) ---------- */
+/* ---------- 保存裁剪(只保存尚未入库的框; 草稿永远保留, 除非主动删除) ---------- */
 $("saveBtn").onclick = async () => {
   const groups = allPageBoxes();
   const gi = groupInfo();
-  const conts = groups.reduce((n, g) => n + g.boxes.length, 0) - gi.questions;
-  if (!gi.questions) return toast("还没有框选任何题目", "err");
+  const all0 = groups.flatMap(g => g.boxes);
+  const isNew = b => !b.savedCode;
+  const newBoxes = all0.filter(isNew);
+  const oldBoxes = all0.length - newBoxes.length;
+  if (!all0.length) return toast("还没有框选任何题目", "err");
+  if (!newBoxes.length) return toast(`没有新框可保存（${oldBoxes} 个框已入库，草稿保留）`, "");
+  const conts = all0.length - gi.questions;
   // 保存前确认科目(避免科目选错入库)
   const subj = curSubject || "未分类";
-  const pagesInfo = groups.map(g => `  ${pageNo(g.pid)}：${g.boxes.filter(b => gi.headOf[b.id] === b.id).length} 题`).join("\n");
+  const pagesInfo = groups.map(g => {
+    const n = g.boxes.filter(isNew).length;
+    return n ? `  ${pageNo(g.pid)}：${n} 块` : "";
+  }).filter(Boolean).join("\n");
   const warn = (subj === "未分类")
     ? "\n\n注意：当前科目是「未分类」，建议先在左侧顶部选择科目。"
     : "";
-  const contInfo = conts ? `（含 ${conts} 个续块，会并入对应题目）` : "";
-  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${gi.questions} 道题${contInfo}：\n${pagesInfo}${warn}`)) {
+  const contInfo = conts ? `（共 ${gi.questions} 题，含 ${conts} 个续块，续块会并入对应题目）` : `（共 ${gi.questions} 题）`;
+  const oldInfo = oldBoxes ? `\n已入库的 ${oldBoxes} 个框会自动跳过（草稿仍保留）。` : "";
+  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${newBoxes.length} 个框 ${contInfo}：\n${pagesInfo}${oldInfo}${warn}`)) {
     toast("已取消保存，可在左侧顶部修改科目", "");
     return;
   }
@@ -3072,7 +3117,9 @@ $("saveBtn").onclick = async () => {
   btn.querySelector("span").textContent = "保存中…";
   let saved = 0, merged = 0, failed = null;
   for (const g of groups) {
-    const payload = g.boxes.map(b => ({
+    const pend = g.boxes.filter(isNew);
+    if (!pend.length) continue;
+    const payload = pend.map(b => ({
       subject: curSubject, chapter: b.chapter, title: b.title,
       note: b.note, group: b.group || "",
       answer: b.answer || "", analysis: b.analysis || "",
@@ -3086,19 +3133,30 @@ $("saveBtn").onclick = async () => {
         body: JSON.stringify({ page: g.pid, boxes: payload }) });
       saved += d.count;
       merged += (d.merged || 0);
-      localStorage.removeItem("boxes_" + g.pid);
-      localStorage.removeItem("boxes_at_" + g.pid);
-      try { await api("/api/draft/" + encodeURIComponent(g.pid), { method: "DELETE" }); } catch (e) { }
-      delete serverDrafts[g.pid];
+      // 标记已入库(按坐标匹配新题; 续块稍后跟随首块) —— 草稿不清空
+      (d.items || []).forEach(it => {
+        if (!it.box) return;
+        const hit = pend.find(b => Math.abs(it.box.x - Math.round(b.x)) < 3
+                              && Math.abs(it.box.y - Math.round(b.y)) < 3);
+        if (hit) hit.savedCode = it.code || it.id;
+      });
     } catch (err) { failed = err.message; break; }
   }
-  for (const pg of pages) {
-    if (!localStorage.getItem("boxes_" + pg.page)) continue;
-    if (!loadBoxes(pg.page).length) localStorage.removeItem("boxes_" + pg.page);
+  // 续块跟随首块标记(可跨页), 防止下次重复保存
+  if (!failed) {
+    all0.forEach(b => {
+      if (b.savedCode || !b.group || b.group === b.id) return;
+      const head = all0.find(x => x.id === b.group);
+      if (head && head.savedCode) b.savedCode = head.savedCode;
+    });
   }
-  boxes = []; pendingGroup = null; renderBoxList(); renderCanvas(); saveBoxes();
-  if (failed) toast("部分失败: " + failed, "err");
-  else toast(`已保存 ${saved} 道` + (merged ? `（另有 ${merged} 个续块已并入对应题目）` : "") + "，AI 正在后台识别文字…", "ok");
+  groups.forEach(g => saveBoxesFor(g.pid, g.boxes));       // 写回草稿(保留)
+  boxes = loadBoxes(curPage) || boxes;                     // 重新载入当前页(带“已入库”标记)
+  renderBoxList(); renderCanvas();
+  if (failed) toast("部分失败: " + failed + "（草稿已保留，可再次保存）", "err");
+  else toast(`已保存 ${saved} 道`
+             + (merged ? `（另有 ${merged} 个续块已并入对应题目）` : "")
+             + "；草稿保留，已入库的框下次自动跳过", "ok");
   loadLibrary();
   setTimeout(loadLibrary, 8000);   // 后台 AI 识别完成后刷新显示文字
   btn.disabled = false; btn.querySelector("span").textContent = "保存到错题库";
