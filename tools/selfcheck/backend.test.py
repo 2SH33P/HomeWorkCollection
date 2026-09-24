@@ -174,6 +174,15 @@ ok(isinstance(r, dict) and r.get("ok"), "合并仓库：" + msg)
 ok(r.get("added") == 0, "空仓库合并进来不新增题目")
 ok((Path(VAULT).parent / "vaults" / "临时仓库B" / "library.json").exists(), "源仓库保留")
 
+
+print("\n[9] AI 提示词必须是严格模式（禁止凭记忆补出图片里没有的内容）")
+P = m.AI_PROMPT_STRICT
+ok("不算识别结果" in P, "提示词明确说明：记得的真题内容不算识别结果")
+ok("没有选项就绝对不要输出" in P, "提示词禁止输出图片里没有的选项行")
+ok("截断处结束" in P, "提示词要求截断处结束、不补全")
+ok("逐字找到" in P, "提示词要求输出前自查每行都能在图片里逐字找到")
+ok(m.call_ai_vision.__doc__ is not None and "识别" in m.call_ai_vision.__doc__, "识别函数存在且用该提示词")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")
