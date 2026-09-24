@@ -103,12 +103,52 @@ backups/               写库前自动备份（保留 30 份）
 
 ## 升级
 
-1. 从 GitHub 拉取最新代码（或下载最新 exe）。
-2. 重启服务（见上文「后台常驻运行」）。
-3. 浏览器强制刷新一次（`Ctrl+Shift+R`）。
+!!! note "没有内置自动更新"
+    本工具**没有自动更新**（按要求已移除自动更新接口）。升级 = 用新版本替换旧的可执行文件 / 代码，**数据不动**。
+    新版本首次启动会自动补齐新增的数据字段（写库前先备份到 `backups/`）。
 
-!!! tip "更省事的更新方式（仅源码方式）"
-    本工具**没有内置自动更新**（按要求已移除）。源码方式用 `git pull` 即可；exe 方式重新下载 Artifacts 覆盖可执行文件。
+=== "exe 版（Windows）"
+
+    数据就在 exe 所在目录，所以升级**只要换 exe 文件**：
+
+    1. **先备份**：关掉程序，把 exe 所在整个文件夹复制一份
+       （至少复制 `library.json` + `items\` + `subjects.json` + `code_prefix.json`）。
+    2. **关掉正在运行的程序**：关闭那个命令行窗口；若在后台跑，任务管理器结束
+       `HomeWorkCollection.exe`，或命令行 `taskkill /IM HomeWorkCollection.exe /F`。
+    3. 到仓库 **Actions → 最新一次成功的 build → 页面底部 Artifacts** 下载
+       `HomeWorkCollection-windows`，解压到临时目录。
+    4. 把解压出的 **`HomeWorkCollection.exe`** 复制到**原来那个文件夹，覆盖旧 exe**
+       （顺便覆盖 `fonts\`、`typst-packages\` 也可以，它们不常变，覆盖无副作用）。
+    5. **不要动** `library.json`、`items\`、`pages\`、`vaults\`、`.ai_config.json` ——
+       它们是数据，新产物里也没有这些文件。
+    6. 双击新 exe → 控制台打印访问地址 → 浏览器打开 `http://localhost:8091`，
+       按 `Ctrl+Shift+R` 强刷一次。
+
+    !!! warning "两个坑"
+        - **别把新产物解压到一个空文件夹就用**——那样会变成一套全新数据（题库是空的）。要放回原来那个目录。
+        - Windows SmartScreen / 杀软可能拦新 exe：选「更多信息 → 仍要运行」，或把目录加入排除。
+
+    更干净的做法（换机器 / 大版本时）：新建一个空文件夹 → 解压新产物（exe + `fonts/` + `typst-packages/`）
+    → 再把旧目录里的数据（`library.json`、`items\`、`pages\`、`subjects.json`、`code_prefix.json`、
+    `chapter_templates.json`、`vaults.json`、`vaults\`、`.ai_config.json`）复制过去。
+
+=== "macOS"
+
+    同样只换可执行文件：解压 `HomeWorkCollection-macos-<arch>.zip`，用新的 `HomeWorkCollection`
+    覆盖旧的（保持 `fonts/`、`typst-packages/` 在同一目录）；若执行权限丢了：
+
+    ```bash
+    chmod +x HomeWorkCollection
+    ```
+
+=== "源码方式"
+
+    ```bash
+    cd HomeWorkCollection
+    git pull
+    ```
+
+    然后重启服务（见「后台常驻运行」），浏览器 `Ctrl+Shift+R` 强刷。
 
 ## 启动排错
 

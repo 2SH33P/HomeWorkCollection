@@ -280,6 +280,9 @@ backups/                 写库前自动备份（保留 30 份）
 在 workflow 运行页面底部 **Artifacts** 区域下载。解压后把可执行文件和 `fonts/`、`typst-packages/`
 放在同一目录，双击 / `./HomeWorkCollection` 运行，数据就存在该目录。
 
+**升级 exe**：数据（`library.json`、`items/`…）就在 exe 同目录，升级**只需用新 exe 覆盖旧 exe**，
+切勿删除或更换数据目录；详见教程《安装与启动 → 升级》（<https://2sh33p.github.io/HomeWorkCollection/install/#升级>）。
+
 备份：直接复制上述数据目录即可；或使用设置页的「导出数据」生成 ZIP。
 
 ## URL 直达
