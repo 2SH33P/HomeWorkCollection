@@ -2247,6 +2247,19 @@ function boxSummary(b) {
     .replace(/\s+/g, " ").trim().slice(0, 26);
 }
 
+/* 后端返回的新题按 box 坐标回标到草稿框上(用于“已入库”标记 + 下次保存自动跳过重复)
+   返回标记数量。放在这里是因为它是纯函数, tools/selfcheck 会测它。 */
+function markSaved(boxes, items) {
+  let n = 0;
+  (items || []).forEach(it => {
+    if (!it || !it.box) return;
+    const hit = (boxes || []).find(b => Math.abs(it.box.x - Math.round(b.x)) < 3
+                                     && Math.abs(it.box.y - Math.round(b.y)) < 3);
+    if (hit && !hit.savedCode) { hit.savedCode = it.code || it.id; n++; }
+  });
+  return n;
+}
+
 /* 图块区(首块与续块共用) */
 function figsHTML(b) {
   return ((b.figures || []).length || boxMissingFigs(b).length) ? `
@@ -3199,12 +3212,7 @@ $("saveBtn").onclick = async () => {
       saved += d.count;
       merged += (d.merged || 0);
       // 标记已入库(按坐标匹配新题; 续块稍后跟随首块) —— 草稿不清空
-      (d.items || []).forEach(it => {
-        if (!it.box) return;
-        const hit = pend.find(b => Math.abs(it.box.x - Math.round(b.x)) < 3
-                              && Math.abs(it.box.y - Math.round(b.y)) < 3);
-        if (hit) hit.savedCode = it.code || it.id;
-      });
+      markSaved(pend, d.items);
     } catch (err) { failed = err.message; break; }
   }
   // 续块跟随首块标记(可跨页), 防止下次重复保存

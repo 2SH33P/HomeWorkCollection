@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""后端逻辑回归测试（不需要起服务、不碰真实数据）
+
+覆盖“曾经翻过车 / 容易再翻车”的点：
+  - fig_size_args: 图片默认高度、指定宽/高、过高过宽都不超版心
+  - /api/crop 图块: 题框内坐标 + 整页坐标(全局裁图) + 续块并题
+  - /api/item/{id}/figure/crop: from_page(从整页原图裁)
+  - paper_pdf: 真 Typst 编译（公式/图注/续块编号）
+  - auto_plan: 指定题目每份必含、随机题跨份不重复
+  - rename_global: 科目 / 大题(标签) / 关键字 / 编号前缀
+  - vault: 新建 / 切换 / 合并（源仓库保留）
+
+运行: .venv/bin/python tools/selfcheck/backend.test.py   （或 bash tools/selfcheck/run.sh）
+所有测试都在临时仓库目录里做，绝不写用户数据。
+"""
+import asyncio
+import json
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools" / "crop-tool"))
+
+import app as m  # noqa: E402
+
+PASS, FAIL = 0, 0
+TMPROOT = Path(tempfile.mkdtemp(prefix="selfcheck-"))
+VAULT = TMPROOT / "vault"
+
+
+def ok(cond, msg):
+    global PASS, FAIL
+    if cond:
+        PASS += 1
+        print("  \u2713 " + msg)
+    else:
+        FAIL += 1
+        print("  \u2717 " + msg)
+
+
+def eq(a, b, msg):
+    ok(a == b, f"{msg}  → {a!r}")
+
+
+def make_page(name="P1", w=600, h=900, blocks=()):
+    """造一张整页图并在指定位置画黑色方块(当图形)。"""
+    from PIL import Image
+    img = Image.new("RGB", (w, h), (250, 250, 250))
+    for (x0, y0, x1, y1) in blocks:
+        for x in range(x0, x1):
+            for y in range(y0, y1):
+                img.putpixel((x, y), (20, 20, 20))
+    d = m.PAGES_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    img.save(d / f"{name}.jpg")
+
+
+def dark_ratio(p):
+    from PIL import Image
+    im = Image.open(p).convert("L")
+    px = list(im.getdata())
+    return sum(1 for v in px if v < 200) / max(1, len(px))
+
+
+# ---------------------------------------------------------------- 初始化
+m.BASE_DIR = TMPROOT
+m.VAULT_FILE = TMPROOT / "vaults.json"
+m._bind_data_paths(VAULT)          # 数据全部落到临时目录
+
+print("\n[1] fig_size_args: 图片尺寸/不超版心")
+make_page("PX", 600, 900, [(100, 100, 400, 200)])          # 宽图 3:1
+wide = str(m.PAGES_DIR / "PX.jpg")
+src = m.ROOT / "items" / "t"; src.mkdir(parents=True, exist_ok=True)
+from PIL import Image  # noqa: E402
+Image.new("RGB", (400, 100)).save(src / "wide.jpg")
+Image.new("RGB", (100, 400)).save(src / "tall.jpg")
+a = m.fig_size_args(str(src / "wide.jpg"), "", 24)          # 默认高度 24% → 太宽 → width:100%
+ok(a.startswith("width:"), "默认高度下过宽的图退回宽度限制：" + a)
+eq(m.fig_size_args(str(src / "wide.jpg"), "60%", 24), "width: 60%", "指定宽度百分比原样输出")
+h = m.fig_size_args(str(src / "tall.jpg"), "50%", 24)
+ok(h.startswith("width: ") and float(h.split()[1][:-2]) <= 14.1, "竖图指定宽度过大 → 改按高度定尺寸：" + h)
+ok("%" not in m.fig_size_args(str(src / "tall.jpg"), "", 24).split()[1],
+   "默认高度算出的宽度用 cm（便于精确控制）")
+
+print("\n[2] /api/crop：题框内坐标 + 整页坐标（全局裁图）")
+make_page("P1", 600, 900, [(120, 300, 220, 380), (400, 600, 520, 700)])
+r = asyncio.run(m.crop({"page": "P1", "boxes": [{
+    "subject": "数学", "chapter": "一、选择题", "note": "题干 [图1] 图在框外 [图2]",
+    "x": 40, "y": 200, "w": 300, "h": 300,
+    "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270},      # 相对题图
+                {"n": 2, "px": 660, "py": 660, "pw": 200, "ph": 110}]}]}))
+eq(r["count"], 1, "保存 1 道题")
+it = r["items"][0]
+ok(len(it["figures"]) == 2, "两个图块都保存（框内 + 框外）")
+ok("px" in it["figures"][1], "整页坐标的图块保留 px 标记")
+for f in it["figures"]:
+    fp = m.ROOT / f["file"]
+    ok(fp.exists() and dark_ratio(fp) > 0.2, f"图块 [图{f['n']}] 内容非空白（确实裁到了方块）")
+
+print("\n[3] /api/crop：续块并题（不新增题目）")
+r2 = asyncio.run(m.crop({"page": "P1", "boxes": [
+    {"subject": "数学", "chapter": "三、解答题", "note": "第一块 [图1] 求 $x^2$ 的值", "group": "gx",
+     "x": 40, "y": 200, "w": 300, "h": 300, "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270}]},
+    {"subject": "数学", "chapter": "", "note": "续块文字 [图1]", "group": "gx",
+     "x": 40, "y": 520, "w": 300, "h": 300, "figures": [{"n": 1, "px": 660, "py": 660, "pw": 200, "ph": 110}]},
+] }))
+eq(r2["count"], 1, "续块没有单独入库（只 1 条新题）")
+eq(r2["merged"], 1, "合并了 1 个续块")
+merged = r2["items"][0]
+ok("续块文字" in merged["note"], "续块文字接到首块题干后面")
+nums = [f["n"] for f in merged["figures"]]
+eq(sorted(nums), sorted(set(nums)), "图块编号不重复：" + str(nums))
+ok("[图2]" in merged["note"], "续块里的 [图1] 被重编号为 [图2]：" + merged["note"].replace("\n", " | "))
+
+print("\n[4] 预览窗裁图 from_page（从整页原图裁）")
+d = m.crop_item_figure(merged["id"], {"x": 620, "y": 620, "w": 260, "h": 150, "from_page": 1})
+ok(isinstance(d, dict) and d.get("ok"), "从整页原图裁成功")
+ok((m.ROOT / d["figures"][-1]["file"]).exists(), "图块文件落盘")
+
+print("\n[5] paper_pdf：真 Typst 编译（续块显示 (续) / 图注 / 公式）")
+res = m.paper_pdf(ids=merged["id"], attach="both", fig_height="24", title="自检卷")
+ok(isinstance(res, dict) and res.get("ok"), "PDF 生成成功")
+typ = sorted(m.TMP_DIR.glob("paper_*.typ"))[-1]
+txt = typ.read_text(encoding="utf-8")
+ok(typ.with_suffix(".pdf").exists() and typ.with_suffix(".pdf").stat().st_size > 2000, "PDF 文件非空")
+ok("#mi(" in txt, "公式走 mitex 渲染")
+ok("#image(" in txt, "图块按 [图N] 插入")
+
+print("\n[6] auto_plan：指定题目每份必含 + 随机题不重复")
+items = []
+for i in range(1, 13):
+    items.append({"id": f"a{i}", "code": f"MA{i:04d}", "chapter": "三、解答题",
+                  "star": (i % 5) + 1, "keywords": "", "subject": "数学", "title": ""})
+groups = [{"chapter": "三、解答题", "count": 4, "stars": {}}]
+papers, diag = m.auto_plan(items, groups, subject="数学", papers=3, fixed_ids=["a1"])
+ok(diag.get("ok"), "组卷成功：" + diag.get("msg", ""))
+ok(all("a1" in [x["id"] for x in p] for p in papers), "指定题目 a1 出现在每一份里")
+rest = [x["id"] for p in papers for x in p if x["id"] != "a1"]
+eq(len(rest), len(set(rest)), "随机题跨份不重复（共 %d 道）" % len(rest))
+
+print("\n[7] rename_global：四类改名")
+r = m.rename_global({"kind": "chapter", "old": "三、解答题", "new": "三、解答题（改）"})
+ok(isinstance(r, dict) and r.get("changed", 0) > 0, "大题(标签)改名：" + r["msg"])
+r = m.rename_global({"kind": "keyword", "old": "无此关键字", "new": "x"})
+ok(isinstance(r, dict) and r.get("changed") == 0, "关键字改名无匹配时 changed=0（不误伤）")
+r = m.rename_global({"kind": "prefix", "subject": "数学", "new": "MATH"})
+ok(isinstance(r, dict) and r.get("ok"), "编号前缀改名：" + r["msg"])
+db = m.load_db()
+ok(all(x["code"].startswith("MATH") for x in db["items"] if x.get("subject") == "数学"),
+   "该科目所有题重新编号为 MATHxxxx")
+r = m.rename_global({"kind": "subject", "old": "数学", "new": "数学A"})
+ok(isinstance(r, dict) and r.get("ok"), "科目改名：" + r["msg"])
+ok(any(x.get("subject") == "数学A" for x in m.load_db()["items"]), "题目科目已同步")
+
+print("\n[8] vault：新建 / 切换 / 合并（源仓库保留）")
+cur = m.get_vault()
+ok(len(cur["vaults"]) >= 1, "仓库列表可读（当前：%s）" % cur["current"])
+created = m.create_vault({"name": "临时仓库B"})
+ok(isinstance(created, dict) and created.get("ok"), "新建仓库并切换")
+m.switch_vault({"name": m.DEFAULT_VAULT_NAME})        # 切回默认(临时)仓库
+m._bind_data_paths(VAULT)
+Path(VAULT, "library.json").write_text(json.dumps({"items": [
+    {"id": "z1", "code": "ZZ0001", "subject": "其他", "chapter": "一、选择题",
+     "note": "合并来的题", "image": "", "figures": [], "keywords": "", "star": 1}]},
+    ensure_ascii=False), encoding="utf-8")
+before = len(m.load_db()["items"])
+r = m.merge_vault({"from": "临时仓库B"})
+after = len(m.load_db()["items"])
+msg = r.get("msg") if isinstance(r, dict) else str(r)
+ok(isinstance(r, dict) and r.get("ok"), "合并仓库：" + msg)
+ok(r.get("added") == 0, "空仓库合并进来不新增题目")
+ok((Path(VAULT).parent / "vaults" / "临时仓库B" / "library.json").exists(), "源仓库保留")
+
+# ---------------------------------------------------------------- 收尾
+shutil.rmtree(TMPROOT, ignore_errors=True)
+print(f"\n结果: {PASS} 通过, {FAIL} 失败")
+sys.exit(1 if FAIL else 0)

@@ -161,6 +161,12 @@ python tools/crop-tool/app.py
 # 访问 http://localhost:8091
 ```
 
+### 改完代码先跑自检
+
+```bash
+bash tools/selfcheck/run.sh      # 前端纯逻辑 + 后端逻辑，共 50+ 项，不碰用户数据
+```
+
 ### 配置 AI（可选但强烈建议）
 
 启动后打开 **「设置」** 页填写，或在项目目录创建 `.ai_config.json`：
@@ -220,6 +226,7 @@ python tools/crop-tool/app.py
 ├── tools/crop-tool/
 │   ├── app.py                # FastAPI 后端（全部接口 + Typst 排版）
 │   └── static/index.html     # 单页前端（原生 JS）
+├── tools/selfcheck/          # 自检回归测试：bash tools/selfcheck/run.sh（不碰用户数据）
 ├── typst-packages/           # 本地 Typst 包（mitex: LaTeX → Typst）
 ├── fonts/                    # 内置排版字体（宋体/黑体/楷体/Times）——换字体就换这里的同名文件
 ├── .github/workflows/        # build.yml 编译 Windows exe / macOS 产物；docs.yml 发布教程
