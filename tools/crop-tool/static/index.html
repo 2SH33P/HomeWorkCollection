@@ -1781,8 +1781,8 @@ function saveDraftSoon() {             // 防抖 700ms, 避免频繁写盘
       const d = await api("/api/draft/" + encodeURIComponent(pid), { method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ boxes: clean }) });
-      serverDrafts[pid] = { boxes: clean, at: d.at, count: d.count };
-      setDraftHint("草稿已自动保存 · " + (d.at || "").slice(11));
+      serverDrafts[pid] = { boxes: clean, at: _ts(d.at) || Date.now(), count: d.count };
+      setDraftHint("草稿已自动保存 · " + ((d.at_str || "").slice(11) || ""));
     } catch (e) { setDraftHint("草稿保存失败（仅存于本浏览器）"); }
   }, 700);
 }
@@ -1794,9 +1794,9 @@ function setDraftHint(txt) {
 
 function saveBoxesFor(pid, list) {
   // 写某页框选数据: 本地 + 服务端草稿同步(否则下次打开该页会从服务器草稿把旧数据恢复回来)
+  const at = Date.now();
   localStorage.setItem("boxes_" + pid, JSON.stringify(list));
-  const at = new Date().toISOString();
-  localStorage.setItem("boxes_at_" + pid, at);
+  localStorage.setItem("boxes_at_" + pid, String(at));
   const clean = (list || []).map(function (b) {
     const c = Object.assign({}, b); delete c._ai; delete c._keep; return c;
   });
@@ -1806,20 +1806,47 @@ function saveBoxesFor(pid, list) {
     api("/api/draft/" + encodeURIComponent(pid), { method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ boxes: clean }) }).then(function (d) {
-        if (pid === curPage) setDraftHint("草稿已自动保存 · " + (d.at || "").slice(11));
+        serverDrafts[pid] = { boxes: clean, at: _ts(d.at) || at, count: clean.length };
+        if (pid === curPage) setDraftHint("草稿已自动保存 · " + ((d.at_str || "").slice(11) || ""));
       }).catch(function () { });
   }, 400);
 }
 
+/** 立即把某页草稿写回服务器(不等防抖), 保证“改完马上识别/入库”用的是一致状态 */
+async function flushDraftNow(pid) {
+  clearTimeout(draftTimers[pid]);
+  const arr = loadBoxes(pid) || [];
+  const at = Date.now();
+  localStorage.setItem("boxes_at_" + pid, String(at));
+  const clean = arr.map(function (b) {
+    const c = Object.assign({}, b); delete c._ai; delete c._keep; return c;
+  });
+  serverDrafts[pid] = { boxes: clean, at: at, count: clean.length };
+  try {
+    const d = await api("/api/draft/" + encodeURIComponent(pid), { method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ boxes: clean }) });
+    serverDrafts[pid] = { boxes: clean, at: _ts(d.at) || at, count: clean.length };
+  } catch (e) { /* 离线也继续, 本地已存 */ }
+}
+
+function _ts(v) {                      // 时间戳统一成毫秒数字(兼容旧的秒/ISO 字符串)
+  if (v === null || v === undefined || v === "") return 0;
+  const n = Number(v);
+  if (isFinite(n) && n > 0) return n > 1e11 ? n : Math.round(n * 1000);
+  const t = Date.parse(String(v));
+  return isFinite(t) ? t : 0;
+}
 function loadBoxes(pid) {
   let local = [];
   try { local = JSON.parse(localStorage.getItem("boxes_" + pid)) || []; } catch (e) { local = []; }
   const srv = serverDrafts[pid];
-  const localAt = localStorage.getItem("boxes_at_" + pid) || "";
-  // 两边都有: 取较新的那份; 只有一边: 用它
-  if (srv && srv.boxes && srv.boxes.length && (!local.length || (srv.at || "") > localAt)) {
+  const localAt = _ts(localStorage.getItem("boxes_at_" + pid));
+  const srvAt = srv ? _ts(srv.at) : 0;
+  // 两边都有: 取较新的那份(数字比较); 只有一边: 用它
+  if (srv && srv.boxes && srv.boxes.length && (!local.length || srvAt > localAt)) {
     localStorage.setItem("boxes_" + pid, JSON.stringify(srv.boxes));
-    localStorage.setItem("boxes_at_" + pid, srv.at || "");
+    localStorage.setItem("boxes_at_" + pid, String(srvAt || Date.now()));
     return srv.boxes;
   }
   return local;
@@ -2235,8 +2262,50 @@ function figsHTML(b) {
         </div>` : "";
 }
 
-/* 卡片主体: 首块 = 完整字段; 续块不再有自己的卡片/字段(只留首块里的一行) */
-function boxBodyHTML(b) {
+/* 取消续块 = 把这块并回首块(文字接在首块后面、图块重新编号后并入), 本块从草稿移除。
+   关键: 它不会变成一道新题目；误操作可用 Ctrl+Z 撤销。 */
+function unlinkCont(pid, bid) {
+  const gi = groupInfo();
+  const headId = gi.headOf[bid];
+  if (!headId || headId === bid) return;
+  const hpid = gi.pidOf[headId] || pid;
+  const arrs = {};
+  const get = p => arrs[p] || (arrs[p] = loadBoxes(p));
+  const head = get(hpid).find(x => x.id === headId);
+  const cont = get(pid).find(x => x.id === bid);
+  if (!head || !cont) return;
+  const before = (pid === curPage || hpid === curPage) ? snap() : null;
+  // 图块: 续块的图块接到首块后面; 正文里的 [图N] 一律重编号(没裁的也分配新号, 避免撞号)
+  let maxN = (head.figures || []).reduce((m, f) => Math.max(m, +f.n || 0), 0);
+  const map = {};
+  (cont.figures || []).forEach(f => {
+    const n = ++maxN;
+    map[+f.n] = n;
+    (head.figures = head.figures || []).push(Object.assign({}, f, { n: n }));
+  });
+  const txts = [cont.note || "", cont.answer || "", cont.analysis || ""];
+  new Set(txts.join(" ").match(/\[图(\d+)/g) || []).forEach(s => {
+    const n = +s.replace(/\D/g, "");
+    if (!map[n]) map[n] = ++maxN;
+  });
+  const rw = t => (t || "").replace(/\[图(\d+)([^\]]*)\]/g,
+    (m0, n, rest) => `[图${map[+n] || n}${rest}]`);
+  const add = (a, b) => [String(a || "").trim(), rw(b).trim()].filter(Boolean).join("\n");
+  head.note = add(head.note, cont.note);
+  head.answer = add(head.answer, cont.answer);
+  head.analysis = add(head.analysis, cont.analysis);
+  head.keywords = [...new Set([...kwList(head.keywords), ...kwList(cont.keywords)])].join(",");
+  head.star = Math.max(+head.star || 0, +cont.star || 0);
+  if (!(head.chapter || "").trim()) head.chapter = cont.chapter || "";
+  arrs[pid] = get(pid).filter(x => x.id !== bid);          // 续块从草稿里移除
+  saveBoxesFor(pid, arrs[pid]);
+  if (hpid !== pid) saveBoxesFor(hpid, arrs[hpid]);
+  boxes = loadBoxes(curPage) || boxes;
+  renderBoxList(); renderCanvas();
+  if (before) pushHistory(before);
+  toast("已取消续块：内容并回首块，本块已从草稿移除（不会单独成题）", "ok");
+}
+function boxBodyHTML(b) {                // 首块卡片主体: 完整字段
   const star = b.star || 0;
   return `
         <span class="chap-wrap">
@@ -2372,6 +2441,7 @@ function renderBoxList() {
       for (let k = 0; k < blocks.length; k++) {
         const bk = blocks[k];
         if (blocks.length > 1) btn.textContent = `识别中 ${k + 1}/${blocks.length}…`;
+        await flushDraftNow(bk.pid);                    // 先把草稿写实, 识别用的就是当前最新框位
         const bx = loadBoxes(bk.pid).find(x => x.id === bk.id);
         if (!bx) continue;
         const d = await api("/api/ocr/ai", { method: "POST",
@@ -2546,14 +2616,9 @@ function renderBoxList() {
   el.querySelectorAll(".bc-unlink").forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
     const pid = btn.dataset.pid || btn.closest("[data-pid]").dataset.pid, bid = btn.dataset.id;
-    const bs = loadBoxes(pid);
-    const b = bs.find(x => x.id === bid);
-    if (!b) return;
-    b.group = "";
-    saveBoxesFor(pid, bs);
-    if (pid === curPage) { boxes = bs; renderCanvas(); }
-    renderBoxList();
-    toast("已取消续块：本块变回独立题目", "");
+    if (!confirm("取消续块？\n\n本块的文字与图块会立即【并回首块】，并从草稿里移除；"
+               + "它不会单独变成一道新题。（误操作可用 Ctrl+Z 撤销）")) return;
+    unlinkCont(pid, bid);
   });
   el.querySelectorAll(".b-cfig").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card");

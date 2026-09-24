@@ -2908,10 +2908,12 @@ def put_draft(page_id: str, payload: dict = None):
         return JSONResponse({"ok": False, "msg": "boxes 必须是数组"}, status_code=400)
     with DB_LOCK:
         d = load_drafts()
-        at = time.strftime("%Y-%m-%d %H:%M:%S")
-        d[page_id] = {"boxes": boxes, "at": at, "count": len(boxes)}
+        at = int(time.time() * 1000)          # 毫秒时间戳: 前端按数字比较, 避免时区/格式不一致导致旧草稿盖新草稿
+        d[page_id] = {"boxes": boxes, "at": at,
+                      "at_str": time.strftime("%Y-%m-%d %H:%M:%S"), "count": len(boxes)}
         put_draft_file(d)
-    return {"ok": True, "page": page_id, "count": len(boxes), "at": at}
+    return {"ok": True, "page": page_id, "count": len(boxes), "at": at,
+            "at_str": d[page_id]["at_str"]}
 
 
 @app.delete("/api/draft/{page_id}")
