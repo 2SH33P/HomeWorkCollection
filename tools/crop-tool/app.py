@@ -679,13 +679,13 @@ def crop_preview(payload: dict):
     b = payload.get("box") or {}
     r = page_ratio(payload.get("page", "")) or 1.0
     x, y, w, h = (int(b.get(k, 0) * r) for k in ("x", "y", "w", "h"))
-    if w < 20 or h < 20:
+    if w < 6 or h < 6:
         return JSONResponse({"ok": False, "msg": "请先框选题目"}, status_code=400)
     img = np.array(open_photo(srcs[0]))
     H, W = img.shape[:2]
-    x = max(0, min(x, W - 20)); y = max(0, min(y, H - 20))   # 边界保护, 避免越界 500
+    x = max(0, min(x, W - 6)); y = max(0, min(y, H - 6))   # 边界保护, 避免越界 500
     w = min(w, W - x); h = min(h, H - y)
-    if w < 20 or h < 20:
+    if w < 6 or h < 6:
         return JSONResponse({"ok": False, "msg": "框选区域超出图片边界，请重新框选"}, status_code=400)
     crop = img[y:y + h, x:x + w]
     if (cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY) > 245).mean() > 0.97:
@@ -731,9 +731,9 @@ async def crop(payload: dict):
         base = img if full else box_img
         W, H = base.size
         x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
-        w0 = min(W - x0, max(20, int(fw / 1000 * W)))
-        h0 = min(H - y0, max(20, int(fh / 1000 * H)))
-        if x0 >= W or y0 >= H or w0 < 5 or h0 < 5:
+        w0 = min(W - x0, max(6, int(fw / 1000 * W)))
+        h0 = min(H - y0, max(6, int(fh / 1000 * H)))
+        if x0 >= W or y0 >= H or w0 < 3 or h0 < 3:
             return None
         try:
             im2 = trim_margins(base.crop((x0, y0, x0 + w0, y0 + h0)))
@@ -745,7 +745,7 @@ async def crop(payload: dict):
 
     for b in boxes:
         x, y, w, h = (max(0, int(b.get(k, 0) * r)) for k in ("x", "y", "w", "h"))
-        if w < 20 or h < 20:
+        if w < 6 or h < 6:
             continue
         subject = safe_name(b.get("subject") or "未分类")
         chapter = safe_name(b.get("chapter") or "")
@@ -2413,7 +2413,7 @@ def ocr_ai(payload: dict):
         b = payload.get("box") or {}
         r = page_ratio(payload.get("page", "")) or 1.0
         x, y, w, h = (int(b.get(k, 0) * r) for k in ("x", "y", "w", "h"))
-        if w < 20 or h < 20:
+        if w < 6 or h < 6:
             return JSONResponse({"ok": False, "msg": "请先框选题目"}, status_code=400)
         img = np.array(open_photo(srcs[0]))[y:y + h, x:x + w]
     try:
@@ -2611,9 +2611,9 @@ def add_figure(item_id: str, payload: dict):
             fig = payload.get("figure") or payload
             fx, fy, fw, fh = (int(fig.get(k, 0)) for k in ("x", "y", "w", "h"))
             x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
-            w0 = min(W - x0, max(20, int(fw / 1000 * W)))
-            h0 = min(H - y0, max(20, int(fh / 1000 * H)))
-            if w0 < 20 or h0 < 20:
+            w0 = min(W - x0, max(6, int(fw / 1000 * W)))
+            h0 = min(H - y0, max(6, int(fh / 1000 * H)))
+            if w0 < 6 or h0 < 6:
                 return JSONResponse({"ok": False, "msg": "框选区域太小"}, status_code=400)
             figs = list(it.get("figures") or [])
             try:
@@ -2804,9 +2804,9 @@ def crop_item_figure(item_id: str, payload: dict = None):
             return JSONResponse({"ok": False, "msg": "坐标无效"}, status_code=400)
         x0 = max(0, int(fx / 1000 * FW))
         y0 = max(0, int(fy / 1000 * FH))
-        w0 = min(FW - x0, max(10, int(fw / 1000 * FW)))
-        h0 = min(FH - y0, max(10, int(fh / 1000 * FH)))
-        if x0 >= FW or y0 >= FH or w0 < 10 or h0 < 10:
+        w0 = min(FW - x0, max(4, int(fw / 1000 * FW)))
+        h0 = min(FH - y0, max(4, int(fh / 1000 * FH)))
+        if x0 >= FW or y0 >= FH or w0 < 4 or h0 < 4:
             return JSONResponse({"ok": False, "msg": "框选区域超出图片范围"}, status_code=400)
         fig = trim_blank(img[y0:y0 + h0, x0:x0 + w0])
         if fig.shape[0] < 8 or fig.shape[1] < 8:
@@ -2874,9 +2874,9 @@ def recrop_item(item_id: str, payload: dict = None):
             w = int(payload.get("w", 0) * r); h = int(payload.get("h", 0) * r)
         except (TypeError, ValueError):
             return JSONResponse({"ok": False, "msg": "坐标无效"}, status_code=400)
-        x = max(0, min(x, W - 20)); y = max(0, min(y, H - 20))
+        x = max(0, min(x, W - 6)); y = max(0, min(y, H - 6))
         w = min(w, W - x); h = min(h, H - y)
-        if w < 20 or h < 20:
+        if w < 6 or h < 6:
             return JSONResponse({"ok": False, "msg": "框太小"}, status_code=400)
         sd = subj_dirname(it.get("subject") or "其他")
         d = ITEMS_DIR / sd

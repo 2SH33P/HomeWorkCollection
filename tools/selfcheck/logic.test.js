@@ -137,16 +137,16 @@ localStorage.removeItem("boxes_P1"); localStorage.removeItem("boxes_at_P1");
 eq(loadBoxes("P1").map(b => b.id), ["srv"], "本地为空 → 从服务器草稿恢复");
 
 // =========================================================
-console.log("\n[5] markSaved: 按坐标回标已入库（避免重复入库）");
+console.log("\n[5] markSaved: 允许重复入库（记录编号与次数）");
 useRealLoadBoxes = false;
 const pend = [{ id: "a", x: 40, y: 200, w: 300, h: 300 }, { id: "b", x: 40, y: 520, w: 300, h: 300 }];
-const n = markSaved(pend, [{ code: "MA0001", box: { x: 40, y: 200, w: 300, h: 300 } }]);
-eq(n, 1, "只标记匹配到的那一块");
-eq(pend[0].savedCode, "MA0001", "a 标记为已入库");
-ok(!pend[1].savedCode, "b 仍是待入库");
+markSaved(pend, [{ code: "MA0001", box: { x: 40, y: 200, w: 300, h: 300 } }]);
+eq(pend[0].savedCode, "MA0001", "记录入库编号");
+eq(pend[0].savedTimes, 1, "第一次入库");
+ok(!pend[1].savedCode, "另一块不受影响");
 markSaved(pend, [{ code: "MA0002", box: { x: 40, y: 200, w: 300, h: 300 } }]);
-eq(pend[0].savedCode, "MA0001", "已入库不会被重复标记覆盖");
+eq(pend[0].savedCode, "MA0002", "重复入库后记录最新编号（不再跳过）");
+eq(pend[0].savedTimes, 2, "入库次数累加（允许重复）");
 
-// =========================================================
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);

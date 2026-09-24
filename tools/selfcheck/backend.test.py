@@ -183,6 +183,19 @@ ok("截断处结束" in P, "提示词要求截断处结束、不补全")
 ok("逐字找到" in P, "提示词要求输出前自查每行都能在图片里逐字找到")
 ok(m.call_ai_vision.__doc__ is not None and "识别" in m.call_ai_vision.__doc__, "识别函数存在且用该提示词")
 
+print("\n[10] 允许重复入库 + 小框不丢（用户要求：不限制框）")
+before = len(m.load_db()["items"])
+box = {"subject": "数学", "chapter": "一、选择题", "note": "重复入库测试",
+       "x": 40, "y": 200, "w": 300, "h": 300}
+r1 = asyncio.run(m.crop({"page": "P1", "boxes": [dict(box)]}))
+r2 = asyncio.run(m.crop({"page": "P1", "boxes": [dict(box)]}))
+eq(len(m.load_db()["items"]) - before, 2, "同一道题保存两次 = 入库两条（允许重复）")
+codes = [it["code"] for it in (r1["items"] + r2["items"])]
+eq(len(set(codes)), 2, "两条编号不同：" + str(codes))
+tiny = {"subject": "数学", "chapter": "", "note": "小框", "x": 100, "y": 100, "w": 12, "h": 12}
+rt = asyncio.run(m.crop({"page": "P1", "boxes": [tiny]}))
+eq(rt["count"], 1, "很小的框也能保存（不再被 20px 门槛丢掉）")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")

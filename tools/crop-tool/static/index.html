@@ -2123,7 +2123,7 @@ function cvUp(e) {
   let needList = false;
   if (drag.mode === "new") {
     const b = boxes.find(x => x.id === "new");
-    if (b && (b.w < 15 || b.h < 15)) boxes = boxes.filter(x => x.id !== "new");
+    if (b && (b.w < 5 || b.h < 5)) boxes = boxes.filter(x => x.id !== "new");
     else if (b) {
       b.id = uid();
       if (pendingGroup) { b.group = pendingGroup; pendingGroup = null;   // 续块只接下一个新框(一次性)
@@ -2255,7 +2255,11 @@ function markSaved(boxes, items) {
     if (!it || !it.box) return;
     const hit = (boxes || []).find(b => Math.abs(it.box.x - Math.round(b.x)) < 3
                                      && Math.abs(it.box.y - Math.round(b.y)) < 3);
-    if (hit && !hit.savedCode) { hit.savedCode = it.code || it.id; n++; }
+    if (hit) {                                     // 允许重复入库: 只记录"最近编号 + 入库次数"
+      hit.savedCode = it.code || it.id;
+      hit.savedTimes = (+hit.savedTimes || 0) + 1;
+      n++;
+    }
   });
   return n;
 }
@@ -2341,7 +2345,7 @@ function boxCardHTML(b, qno, pid, gi) {
         <span class="bno">#${qno}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
         <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
         <span class="b-sum">${esc(b.chapter || "未分类")}${sum ? " · " + esc(sum) : ""}</span>
-        ${b.savedCode ? `<button type="button" class="badge ok b-unsave" data-id="${b.id}" title="已加入错题库（草稿保留，下次保存自动跳过）。点一下 = 重新入库（会新增一条题目，原题保留）">已入库 ${esc(b.savedCode)}</button>` : ""}
+        ${b.savedCode ? `<span class="badge ok" title="最近入库：${esc(b.savedCode)}${b.savedTimes > 1 ? `（已存 ${b.savedTimes} 次）` : ""}；允许重复入库，再点保存会再存一份">已入库 ${esc(b.savedCode)}${b.savedTimes > 1 ? " ×" + b.savedTimes : ""}</span>` : ""}
         ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
         ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
         ${conts.length ? `<span class="badge">含 ${conts.length} 个续块</span>` : ""}
@@ -2402,12 +2406,12 @@ function renderBoxList() {
   }).join("") || '<div class="hint">在下方整页图上拖拽框选题目</div>';
   $("boxCount").textContent = total;
   const allB = groups.flatMap(g => g.boxes);
-  const pendN = allB.filter(b => !b.savedCode).length, doneN = allB.length - pendN;
+  const doneN = allB.filter(b => b.savedCode).length;
   const stat = $("boxStat");
   if (stat) stat.textContent = allB.length
-    ? `已框 ${allB.length} 块（${gi.questions} 题）：${pendN} 块待入库`
-      + (doneN ? ` · ${doneN} 块已入库` : "")
-      + " · 草稿会一直保留（要清掉用「清空全部」或单块「删」）"
+    ? `已框 ${allB.length} 块（${gi.questions} 题）`
+      + (doneN ? ` · 其中 ${doneN} 块已入库（再保存会重复入库，允许）` : "")
+      + " · 草稿一直保留（要清掉用「清空全部」或单块「删」）"
     : "在下方整页图上拖拽框选题目";
   el.scrollTop = keepScrollTop;                       // 重建后恢复列表滚动位置
   el.querySelectorAll(".starclear").forEach(btn => btn.onclick = () => {
@@ -2601,18 +2605,6 @@ function renderBoxList() {
   el.querySelectorAll(".b-fig-miss").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card");
     startBoxCrop(card.dataset.pid, card.dataset.id, +btn.dataset.n);
-  });
-  el.querySelectorAll(".b-unsave").forEach(btn => btn.onclick = (e) => {   // 已入库 -> 改回待入库
-    e.stopPropagation();
-    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
-    if (!confirm("把这块改回「待入库」？\n\n下次保存会重新添加一条新题目（原题目保留，不会被覆盖）。")) return;
-    const bs = loadBoxes(pid);
-    const b = bs.find(x => x.id === bid);
-    if (!b) return;
-    b.savedCode = "";
-    saveBoxesFor(pid, bs);
-    if (pid === curPage) { boxes = bs; renderCanvas(); }
-    renderBoxList();
   });
   el.querySelectorAll(".bc-unlink").forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
@@ -3093,7 +3085,7 @@ function exitCropMode() {
 }
 $("cropCancel").onclick = exitCropMode;
 $("cropOk").onclick = () => {
-  if (!cropRect || cropRect.w < 10 || cropRect.h < 10) return toast("先拖拽框选图形区域", "err");
+  if (!cropRect || cropRect.w < 5 || cropRect.h < 5) return toast("先拖拽框选图形区域", "err");
   const beforeCrop = snap();
   const b = cropMode;
   clampCropRect();
@@ -3154,29 +3146,22 @@ $("clearBtn").onclick = async () => {
   toast("已清空全部框选草稿", "ok");
 };
 
-/* ---------- 保存裁剪(只保存尚未入库的框; 草稿永远保留, 除非主动删除) ---------- */
+/* ---------- 保存裁剪（允许重复入库：每次点保存都把草稿里的框重新写进题库） ---------- */
 $("saveBtn").onclick = async () => {
   const groups = allPageBoxes();
   const gi = groupInfo();
   const all0 = groups.flatMap(g => g.boxes);
-  const isNew = b => !b.savedCode;
-  const newBoxes = all0.filter(isNew);
-  const oldBoxes = all0.length - newBoxes.length;
   if (!all0.length) return toast("还没有框选任何题目", "err");
-  if (!newBoxes.length) return toast(`没有新框可保存（${oldBoxes} 个框已入库，草稿保留）`, "");
+  const doneN = all0.filter(b => b.savedCode).length;
   const conts = all0.length - gi.questions;
-  // 保存前确认科目(避免科目选错入库)
   const subj = curSubject || "未分类";
-  const pagesInfo = groups.map(g => {
-    const n = g.boxes.filter(isNew).length;
-    return n ? `  ${pageNo(g.pid)}：${n} 块` : "";
-  }).filter(Boolean).join("\n");
+  const pagesInfo = groups.map(g => `  ${pageNo(g.pid)}：${g.boxes.length} 块`).join("\n");
   const warn = (subj === "未分类")
     ? "\n\n注意：当前科目是「未分类」，建议先在左侧顶部选择科目。"
     : "";
   const contInfo = conts ? `（共 ${gi.questions} 题，含 ${conts} 个续块，续块会并入对应题目）` : `（共 ${gi.questions} 题）`;
-  const oldInfo = oldBoxes ? `\n已入库的 ${oldBoxes} 个框会自动跳过（草稿仍保留）。` : "";
-  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${newBoxes.length} 个框 ${contInfo}：\n${pagesInfo}${oldInfo}${warn}`)) {
+  const reInfo = doneN ? `\n注意：其中 ${doneN} 个框上次已入库，本次会【再存一份】（允许重复）。` : "";
+  if (!confirm(`你确定添加的科目为「${subj}」吗？\n\n本次将保存 ${all0.length} 个框 ${contInfo}：\n${pagesInfo}${reInfo}${warn}`)) {
     toast("已取消保存，可在左侧顶部修改科目", "");
     return;
   }
@@ -3184,9 +3169,7 @@ $("saveBtn").onclick = async () => {
   btn.querySelector("span").textContent = "保存中…";
   let saved = 0, merged = 0, failed = null;
   for (const g of groups) {
-    const pend = g.boxes.filter(isNew);
-    if (!pend.length) continue;
-    const payload = pend.map(b => ({
+    const payload = g.boxes.map(b => ({
       subject: curSubject, chapter: b.chapter, title: b.title,
       note: b.note, group: b.group || "",
       answer: b.answer || "", analysis: b.analysis || "",
@@ -3200,8 +3183,7 @@ $("saveBtn").onclick = async () => {
         body: JSON.stringify({ page: g.pid, boxes: payload }) });
       saved += d.count;
       merged += (d.merged || 0);
-      // 标记已入库(按坐标匹配新题; 续块稍后跟随首块) —— 草稿不清空
-      markSaved(pend, d.items);
+      markSaved(g.boxes, d.items);          // 仅用于显示“已入库 MA0012”，不再阻止重复保存
     } catch (err) { failed = err.message; break; }
   }
   // 续块跟随首块标记(可跨页), 防止下次重复保存
@@ -4142,7 +4124,7 @@ function setPvCropHint(txt) {
   if (h) { h.textContent = txt; h.style.display = "block"; }
 }
 $("pvCropOk").onclick = async () => {
-  if (!pvRect || pvRect.w < 20 || pvRect.h < 20) return toast("先拖拽框选图形区域", "err");
+  if (!pvRect || pvRect.w < 5 || pvRect.h < 5) return toast("先拖拽框选图形区域", "err");
   if (!pvItem || !pvItem.image) return toast("该题没有图片，无法裁图", "err");
   pvResizeCv();                         // 用最新图片尺寸做比例换算
   const dispW = parseFloat(pvcv.style.width) || 1;
