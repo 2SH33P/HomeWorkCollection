@@ -197,9 +197,18 @@ rt = asyncio.run(m.crop({"page": "P1", "boxes": [tiny]}))
 eq(rt["count"], 1, "很小的框也能保存（不再被 20px 门槛丢掉）")
 
 print("\n[11] 不再自动插图标签 + 保存时自动识别(含续块)")
-eq(m.strip_fig_marks("题干文字 [图1] 继续 [图2|60%]"), "题干文字 继续", "AI 结果里的 [图N] 标记会被清掉")
-ok("[图1]" not in m.AI_PROMPT_STRICT or "不要输出 [图1]" in m.AI_PROMPT_STRICT,
-   "提示词不再要求 AI 插入图块标记：" + ("不要输出 [图1]" in m.AI_PROMPT_STRICT and "有禁止条款" or "?"))
+for _c, _want in [("题干 [图1] 继续", "题干 继续"),
+                  ("题干【图1】继续", "题干继续"),
+                  ("题干（图1）继续", "题干继续"),
+                  ("题干(图 1)继续", "题干继续"),
+                  ("题干 [图片] 继续", "题干 继续"),
+                  ("题干 ![示意图](x.png) 继续", "题干 继续"),
+                  ("题干 [图1|60%|left] 继续", "题干 继续")]:
+    eq(m.strip_fig_marks(_c), _want, "AI 结果里的图标签会被清掉：" + _c)
+ok("绝对不要输出任何形式的图块" in m.AI_PROMPT_STRICT, "识别提示词点名禁止所有形式的图标签")
+_pf = __import__("inspect").getsource(m.ai_proofread)
+ok("[图N] 及其位置保持不变" not in _pf and "不要新增任何图块标记" in _pf,
+   "校对提示词不再教模型 [图N] 格式")
 ok("插入 [图1]" not in m.AI_PROMPT_STRICT, "提示词里没有“插入 [图1]”这种指令")
 # 用假识别函数跑保存流程：空文字的块(含续块)必须被自动识别并合并
 (Path(m.BASE_DIR) / ".ai_config.json").write_text(
