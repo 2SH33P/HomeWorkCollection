@@ -2408,7 +2408,9 @@ function contRowHTML(b, pid, gi) {
       ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
       ${(b.note || "").trim()
         ? `<span class="badge ok" title="${esc((b.note || "").slice(0, 300))}">文 ${(b.note || "").trim().length}</span>`
-        : '<span class="badge miss">无文字</span>'}
+        : ((b.figures || []).length
+            ? '<span class="badge miss" title="没有文字，保存时会整块丢弃（只保留已裁的图块）">无文字</span>'
+            : '<span class="badge miss" title="既没有文字也没有裁图：保存时会整块丢弃">将丢弃</span>')}
       <span class="bc-sum">${esc(b.chapter || "")}${sum ? " · " + esc(sum) : ""}</span>
       <span style="flex:1 1 auto"></span>
       <button type="button" class="mini bc-unlink" data-id="${b.id}" data-pid="${pid}"
@@ -3206,7 +3208,7 @@ $("saveBtn").onclick = async () => {
   btn.querySelector("span").textContent = "保存中…";
   // 本次保存的批次号: 续块只并进本次新建的首块(重复保存时不会并回上次的老题目)
   const batch = "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  let saved = 0, merged = 0, failed = null;
+  let saved = 0, merged = 0, dropped = 0, failed = null;
   for (const g of groups) {
     const payload = g.boxes.map(b => ({
       subject: curSubject, chapter: b.chapter, title: b.title,
@@ -3222,6 +3224,7 @@ $("saveBtn").onclick = async () => {
         body: JSON.stringify({ page: g.pid, boxes: payload, batch: batch }) });
       saved += d.count;
       merged += (d.merged || 0);
+      dropped += (d.discarded || 0);
       markSaved(g.boxes, d.items);          // 仅用于显示“已入库 MA0012”，不再阻止重复保存
     } catch (err) { failed = err.message; break; }
   }
@@ -3239,7 +3242,8 @@ $("saveBtn").onclick = async () => {
   if (failed) toast("部分失败: " + failed + "（草稿已保留，可再次保存）", "err");
   else toast(`已保存 ${saved} 道`
              + (merged ? `（另有 ${merged} 个续块已并入对应题目）` : "")
-             + "；草稿保留，已入库的框下次自动跳过", "ok");
+             + (dropped ? `；${dropped} 个续块因为没有文字被丢弃` : "")
+             + "；草稿保留，可再次保存（会新建题目）", "ok");
   loadLibrary();
   setTimeout(loadLibrary, 8000);   // 后台 AI 识别完成后刷新显示文字
   btn.disabled = false; btn.querySelector("span").textContent = "保存到错题库";

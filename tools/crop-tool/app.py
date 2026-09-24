@@ -716,7 +716,7 @@ async def crop(payload: dict):
     img = open_photo(srcs[0])
     r = page_ratio(page) or 1.0
     db = load_db()
-    saved, merged = [], 0
+    saved, merged, discarded = [], 0, 0
     # 同一次保存的批次号: 续块只能并进"本次保存"刚创建的首块;
     # 不带批次(老客户端/直接调接口)就用一次性随机值 —— 否则重复保存会一直并进上次那条老题目。
     batch = str(payload.get("batch") or "").strip() or f"auto{time.time_ns()}"
@@ -735,7 +735,9 @@ async def crop(payload: dict):
             return note or ""
         try:
             t = strip_fig_marks(clean_ai_text(call_ai_vision(np.array(box_img))))
-            return t or (note or "")
+            if not real_text(t):                 # 只有 '【题干】' 之类噪声 -> 当作没识别出文字
+                return note or ""
+            return t
         except Exception:
             return note or ""
 
@@ -790,8 +792,13 @@ async def crop(payload: dict):
                 return nxt[0]
 
             # 续块 = 同一道题的另一块(可能是文字块, 也可能是图块): 文字按块拼接, 图块接在后面
+            figs_in = b.get("figures") or []
+            note_in = _auto_note(crop_img, b.get("note"))
+            if not real_text(note_in) and not figs_in:
+                discarded += 1                      # 既没文字也没裁图 -> 整块丢弃(不生成 [图N])
+                continue
             mapping = {}                            # 续块图号 -> 并题后的新图号
-            for fg in (b.get("figures") or []):
+            for fg in figs_in:
                 got = _crop_fig(crop_img, fg)
                 if not got:
                     continue
@@ -814,16 +821,10 @@ async def crop(payload: dict):
             for _m in {int(v) for v in re.findall(r"\[图(\d+)", refs)}:
                 if _m not in mapping:
                     mapping[_m] = take()
-            cnote = _remap_refs(_auto_note(crop_img, b.get("note")), mapping).strip()
-            if cnote:
+            cnote = _remap_refs(note_in, mapping).strip()
+            if real_text(cnote):                    # 只有噪声的续块文字不并进首块
+
                 head["note"] = ((head.get("note") or "").rstrip() + "\n" + cnote).strip()
-            else:                                   # 这块没文字 -> 整块图作为 [图N] 并入
-                nn = take()
-                fname = f"{head['id']}_fig{nn}.jpg"
-                crop_img.save(hdir / fname, "JPEG", quality=95)
-                hfigs.append({"n": nn, "file": str((hdir / fname).relative_to(ROOT)),
-                              "t": int(time.time() * 1000)})
-                head["note"] = ((head.get("note") or "").rstrip() + f"\n[图{nn}]").strip()
             for k in ("answer", "analysis"):
                 add = _remap_refs(b.get(k) or "", mapping).strip()
                 if add:
@@ -884,7 +885,7 @@ async def crop(payload: dict):
     if saved:
         threading.Thread(target=_auto_ai_bg, args=(list(saved),), daemon=True).start()
     return {"ok": True, "count": len(saved), "items": saved, "auto_ai": True,
-            "merged": merged}
+            "merged": merged, "discarded": discarded}
 
 
 def trim_margins(img, tol=245):
@@ -1254,6 +1255,15 @@ AI_PROMPT_STRICT = (
     "输出前自查：你要输出的每一行，都能在图片里逐字找到吗？找不到就删掉。\n"
     "只输出识别结果，不要解释。"
 )
+
+
+def real_text(t):
+    """去掉【题干】【答案】等标记、图块标签、空白与标点后剩下的“有效文字”。
+    用途: 模型对“只有图没有文字的块”常返回 '【题干】' 这类噪声, 用它判断这块到底有没有文字。"""
+    t = re.sub(r"【[^】]*】", "", t or "")
+    t = re.sub(r"[\[【（(]\s*图\s*\d*[^\]】）)]*[\]】）)]", "", t)
+    t = re.sub(r"[\s，。、；：,.!?！？:;·\-—_()（）\[\]【】]+", "", t)
+    return t
 
 
 def call_ai_vision(img_rgb):

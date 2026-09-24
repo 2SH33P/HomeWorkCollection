@@ -249,6 +249,32 @@ r4 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-3", "boxes": [dict(cont)]
 eq(r4["count"], 0, "同批次第二页的续块不再新建题目")
 eq(r4["merged"], 1, "同批次跨请求仍能并入首块")
 
+print("\n[13] 续块没文字也没裁图 -> 整块丢弃（不生成 [图N]）")
+# 模拟“只有图没有文字”的块：模型会返回 '【题干】' 这类噪声（用假识别函数，避免真实调用）
+(Path(m.BASE_DIR) / ".ai_config.json").write_text(
+    '{"base_url":"http://x","model":"fake","key":"fake-key"}', encoding="utf-8")
+real_cv2 = m.call_ai_vision
+m.call_ai_vision = lambda img: "【题干】"
+try:
+    before = len(m.load_db()["items"])
+    rd = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-D", "boxes": [
+        {"subject": "数学", "chapter": "三、解答题", "note": "只有题干", "group": "gdrop",
+         "x": 40, "y": 200, "w": 300, "h": 300, "figures": []},
+        {"subject": "数学", "chapter": "", "note": "", "group": "gdrop",
+         "x": 40, "y": 520, "w": 300, "h": 300, "figures": []},
+    ]}))
+finally:
+    m.call_ai_vision = real_cv2
+eq(rd["count"], 1, "只入库 1 条题目")
+eq(rd.get("discarded"), 1, "空续块（只有噪声文字）被计入丢弃")
+item = rd["items"][0]
+eq((item.get("note") or "").strip(), "只有题干", "首块题干没被塞进 [图N] 或噪声文字")
+eq([f["n"] for f in item["figures"]], [], "没有为丢掉的续块生成图块")
+eq(len(m.load_db()["items"]) - before, 1, "库里只多了一条")
+eq(m.real_text("【题干】"), "", "real_text: 纯噪声 = 没文字")
+eq(m.real_text("[图1]  "), "", "real_text: 只有图标签 = 没文字")
+ok(m.real_text("A．选项内容") != "", "real_text: 真文字能识别出来")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")
