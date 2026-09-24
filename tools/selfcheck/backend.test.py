@@ -196,6 +196,31 @@ tiny = {"subject": "数学", "chapter": "", "note": "小框", "x": 100, "y": 100
 rt = asyncio.run(m.crop({"page": "P1", "boxes": [tiny]}))
 eq(rt["count"], 1, "很小的框也能保存（不再被 20px 门槛丢掉）")
 
+print("\n[11] 不再自动插图标签 + 保存时自动识别(含续块)")
+eq(m.strip_fig_marks("题干文字 [图1] 继续 [图2|60%]"), "题干文字 继续", "AI 结果里的 [图N] 标记会被清掉")
+ok("[图1]" not in m.AI_PROMPT_STRICT or "不要输出 [图1]" in m.AI_PROMPT_STRICT,
+   "提示词不再要求 AI 插入图块标记：" + ("不要输出 [图1]" in m.AI_PROMPT_STRICT and "有禁止条款" or "?"))
+ok("插入 [图1]" not in m.AI_PROMPT_STRICT, "提示词里没有“插入 [图1]”这种指令")
+# 用假识别函数跑保存流程：空文字的块(含续块)必须被自动识别并合并
+(Path(m.BASE_DIR) / ".ai_config.json").write_text(
+    '{"base_url":"http://x","model":"fake","key":"fake-key"}', encoding="utf-8")
+real_cv = m.call_ai_vision
+m.call_ai_vision = lambda img: "自动识别文字 [图1]"
+try:
+    rr = asyncio.run(m.crop({"page": "P1", "boxes": [
+        {"subject": "数学", "chapter": "三、解答题", "note": "", "group": "gz",
+         "x": 40, "y": 200, "w": 300, "h": 300, "figures": []},
+        {"subject": "数学", "chapter": "", "note": "", "group": "gz",
+         "x": 40, "y": 520, "w": 300, "h": 300, "figures": []},
+    ]}))
+finally:
+    m.call_ai_vision = real_cv
+item = rr["items"][0]
+ok("自动识别文字" in (item.get("note") or ""), "保存时对空文字块自动识别：" + (item.get("note") or "").replace("\n", " | "))
+eq((item.get("note") or "").count("自动识别文字"), 2, "首块与续块各识别了一次并合并成一道题")
+ok("[图1]" not in (item.get("note") or ""), "自动识别结果里的 [图N] 已被清掉")
+eq(rr["merged"], 1, "续块合并计数正确")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")

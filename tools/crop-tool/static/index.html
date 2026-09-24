@@ -313,8 +313,15 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
   .canvas-wrap.cropping { padding-bottom: 110px; }
 }
 .side { width: 330px; background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow);
-        padding: 14px; height: 100%; overflow-y: auto; }
+        padding: 14px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .side h3 { font-size: 13px; color: var(--t2); margin-bottom: 10px; font-weight: 600; }
+/* 顶部(标题+科目)与底部(保存按钮)固定在侧栏两端, 只有中间列表滚动 */
+.side-top { flex: none; padding-bottom: 4px; border-bottom: 1px solid var(--sep); margin-bottom: 6px; }
+.side-top h3 { margin-bottom: 8px; }
+#boxList { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+           overscroll-behavior: contain; padding-right: 2px; }
+.side-foot { flex: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--sep);
+             background: var(--card); }
 .box-card { border: 1px solid var(--sep); border-radius: var(--r-md); padding: 10px; margin-bottom: 10px;
             animation: fadeSlide .2s var(--motion); }
 .box-card { padding: 8px 10px; }
@@ -816,7 +823,8 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
   header { padding: 20px 16px 10px; }
   .nav-inner { padding: 0 16px; }
   .editor { flex-direction: column; height: auto; min-height: 0; }
-  .side { width: 100%; max-height: none; position: static; }
+  .side { width: 100%; max-height: none; position: static; display: block; overflow: visible; height: auto; }
+  #boxList { overflow: visible; max-height: none; }
   .card .rm { opacity: 1; }
   .card .cln { opacity: 1; }
   .card .aif { opacity: 1; }
@@ -952,18 +960,22 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         <canvas id="cv"></canvas>
       </div>
       <div class="side">
-        <h3>框选列表（<span id="boxCount">0</span> 题）<span class="hint" id="draftHint"
-            style="font-weight:400;margin-left:6px">草稿自动保存在服务器</span></h3>
-        <div class="subj-line">
-          <span class="hint">科目（统一）</span>
-          <select id="curSubj"></select>
+        <div class="side-top">
+          <h3>框选列表（<span id="boxCount">0</span> 题）<span class="hint" id="draftHint"
+              style="font-weight:400;margin-left:6px">草稿自动保存在服务器</span></h3>
+          <div class="subj-line">
+            <span class="hint">科目（统一）</span>
+            <select id="curSubj"></select>
+          </div>
         </div>
         <div id="boxList"></div>
-        <div class="actions">
-          <button class="btn" id="saveBtn"><svg class="ic"><use href="#ic-check"/></svg><span>保存到错题库</span></button>
-          <button class="btn ghost" id="clearBtn">清空全部</button>
+        <div class="side-foot">
+          <div class="actions">
+            <button class="btn" id="saveBtn"><svg class="ic"><use href="#ic-check"/></svg><span>保存到错题库</span></button>
+            <button class="btn ghost" id="clearBtn">清空全部</button>
+          </div>
+          <div class="hint" id="boxStat" style="margin-top:8px">列表汇总所有整页的框选 · 题内图形请在卡片里点「裁图」（页面上任意位置都能框选）</div>
         </div>
-        <div class="hint" id="boxStat" style="margin-top:8px">列表汇总所有整页的框选 · 题内图形请在卡片里点「裁图」（页面上任意位置都能框选）</div>
       </div>
     </div>
   </section>

@@ -655,10 +655,11 @@ def ai_recognize_one(it, force=False):
 
 
 def strip_fig_marks(text):
-    """清理 AI 输出里可能出现的旧式图形坐标标记([图@x,y,w,h] / 图@12)。
-    保留 [图N] 位置标记——AI 按图形位置插标记, 用户再把裁好的图绑定到对应编号。"""
+    """清掉 AI 输出里的图块标记([图N]、[图@x,y,w,h]) —— 已不再让 AI 自动插图标签，
+    图块一律由用户自己裁图/上传后引用，避免正文里凭空出现 [图1]。"""
     text = text or ""
-    text = re.sub(r"\[?\s*图@[^\]\n]*\]?", " ", text)
+    text = re.sub(r"\[?\s*图@[^\]\n]*\]?", " ", text)          # 旧式坐标标记
+    text = re.sub(r"\[图\d+(?:\|[^\]]*)?\]", "", text)            # [图1] / [图1|60%]
     text = re.sub(r"[ \t]{2,}", " ", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
@@ -718,6 +719,18 @@ async def crop(payload: dict):
         return re.sub(r"\[图(\d+)([^\]]*)\]",
                       lambda m: f"[图{mapping.get(int(m.group(1)), int(m.group(1)))}{m.group(2)}]",
                       text or "")
+
+    _ai_ready = bool(ai_config().get("key"))
+
+    def _auto_note(box_img, note):
+        """保存入库时自动识别文字(仅当该块文字为空; 不覆盖手填/已识别内容)。失败就返回原文。"""
+        if (note or "").strip() or not _ai_ready:
+            return note or ""
+        try:
+            t = strip_fig_marks(clean_ai_text(call_ai_vision(np.array(box_img))))
+            return t or (note or "")
+        except Exception:
+            return note or ""
 
     def _crop_fig(box_img, fg):
         """按 fg 的坐标裁出图块图。fg 带 px/py/pw/ph 时坐标相对**整页原图**(全页裁图),
@@ -793,7 +806,7 @@ async def crop(payload: dict):
             for _m in {int(v) for v in re.findall(r"\[图(\d+)", refs)}:
                 if _m not in mapping:
                     mapping[_m] = take()
-            cnote = _remap_refs(b.get("note") or "", mapping).strip()
+            cnote = _remap_refs(_auto_note(crop_img, b.get("note")), mapping).strip()
             if cnote:
                 head["note"] = ((head.get("note") or "").rstrip() + "\n" + cnote).strip()
             else:                                   # 这块没文字 -> 整块图作为 [图N] 并入
@@ -845,7 +858,7 @@ async def crop(payload: dict):
             "chapter": chapter,
             "title": title,
             "reason": b.get("reason", ""),
-            "note": b.get("note", ""),
+            "note": _auto_note(crop_img, b.get("note")),    # 空着的话保存时自动识别
             "answer": b.get("answer", ""),
             "analysis": b.get("analysis", ""),
             "keywords": b.get("keywords", ""),
@@ -1226,8 +1239,7 @@ AI_PROMPT_STRICT = (
     "6. 不要输出题号（如 1. 2. 3.、①②、第1题），直接从题目内容开始；"
     "但英语完形填空/语法填空每小题的编号（如 41. 61.）属于题目内容，保留；\n"
     "7. 第一行输出【题干】，后跟题干文字；\n"
-    "8. 选中题里的图形不要在文字里描述，而是在图形出现的位置插入 [图1]、[图2]……"
-    "（从上到下、从左到右，标记单独占一行；同一幅图只标一次；不要输出「图@」坐标标记）；\n"
+    "8. 不要输出 [图1]、[图2]、[图@…] 这类图块标记，也不要描述图形；图形一律由用户自己裁图后引用；\n"
     "9. 所有数学公式/化学式用 $...$ LaTeX。\n"
     "输出前自查：你要输出的每一行，都能在图片里逐字找到吗？找不到就删掉。\n"
     "只输出识别结果，不要解释。"
