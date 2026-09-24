@@ -214,8 +214,14 @@ label.chk input { width: 18px; height: 18px; accent-color: var(--accent); }
 .page-thumb:hover .pdel { opacity: 1; }
 
 /* ===== 编辑器 ===== */
-.editor { display: flex; gap: 16px; margin-top: 14px; align-items: stretch;
+.editor { display: flex; gap: 8px; margin-top: 14px; align-items: stretch;
           height: calc(100vh - 210px); min-height: 420px; }
+/* 画布 / 框选列表 之间的可拖动分隔条 */
+.ed-split { width: 10px; flex: none; cursor: col-resize; position: relative;
+            touch-action: none; user-select: none; }
+.ed-split::after { content: ""; position: absolute; left: 4px; top: 14px; bottom: 14px; width: 2px;
+                   background: var(--sep); border-radius: 2px; }
+.ed-split:hover::after, .ed-split.dragging::after { background: var(--accent); width: 3px; left: 3.5px; }
 .canvas-wrap { flex: 1; min-width: 0; background: var(--card); border-radius: var(--r-lg);
                box-shadow: var(--shadow); padding: 12px; overflow: auto; position: relative; }
 /* 退出编辑后的只读遮罩 */
@@ -311,6 +317,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
   .ct-val { min-width: 36px; font-size: 11px; }
   .crop-bar .btn-sm { height: 30px; padding: 0 10px; font-size: 12px; }
   .canvas-wrap.cropping { padding-bottom: 110px; }
+  .ed-split { display: none; }
 }
 .side { width: 330px; background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow);
         padding: 14px; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -975,6 +982,7 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         </div>
         <canvas id="cv"></canvas>
       </div>
+      <div class="ed-split" id="edSplit" title="拖动调整框选列表宽度（双击恢复默认）"></div>
       <div class="side">
         <div class="side-top">
           <h3>框选列表（<span id="boxCount">0</span> 题）<span class="hint" id="draftHint"
@@ -3820,6 +3828,53 @@ $("pvSplit").addEventListener("pointerup", () => {
   splitDrag = null;
   $("pvSplit").classList.remove("dragging");
 });
+/* ---------- 画布 / 框选列表 分隔条拖拽 ---------- */
+const ED_SIDE_MIN = 240, ED_SIDE_MAX = 760, ED_SIDE_DEF = 330;
+function edSideEl() { return document.querySelector("#editorArea .side"); }
+function setEdSideWidth(w, save) {
+  const side = edSideEl();
+  if (!side) return;
+  if (window.innerWidth <= 860) {            // 手机单栏: 不固定宽度
+    side.style.width = ""; side.style.flex = ""; return;
+  }
+  w = Math.max(ED_SIDE_MIN, Math.min(ED_SIDE_MAX, Math.round(w)));
+  side.style.width = w + "px";
+  side.style.flex = "none";
+  if (save) { try { localStorage.setItem("edSideW", String(w)); } catch (e) { } }
+}
+function applyEdSideWidth() {
+  let w = ED_SIDE_DEF;
+  try { w = +localStorage.getItem("edSideW") || ED_SIDE_DEF; } catch (e) { }
+  setEdSideWidth(w, false);
+}
+let edSplitDrag = null;
+$("edSplit").addEventListener("pointerdown", e => {
+  const side = edSideEl();
+  if (!side) return;
+  edSplitDrag = { startX: e.clientX, startW: side.offsetWidth };
+  $("edSplit").classList.add("dragging");
+  try { $("edSplit").setPointerCapture(e.pointerId); } catch (err) { }
+  e.preventDefault();
+});
+$("edSplit").addEventListener("pointermove", e => {
+  if (!edSplitDrag) return;
+  setEdSideWidth(edSplitDrag.startW - (e.clientX - edSplitDrag.startX), true);
+  renderCanvas();                            // 画布宽度变了, 重新排版
+});
+$("edSplit").addEventListener("pointerup", () => {
+  edSplitDrag = null;
+  $("edSplit").classList.remove("dragging");
+  renderCanvas();
+});
+$("edSplit").addEventListener("dblclick", () => {
+  try { localStorage.setItem("edSideW", String(ED_SIDE_DEF)); } catch (e) { }
+  setEdSideWidth(ED_SIDE_DEF, false);
+  renderCanvas();
+  toast("框选列表宽度已恢复默认", "ok");
+});
+window.addEventListener("resize", () => { applyEdSideWidth(); renderCanvas(); });
+applyEdSideWidth();
+
 function openPreview(it) {
   pvItem = it;
   pvCropOn = false; pvRect = null; pvDrag = null; pvCropReplace = 0; pvRebindCrop = 0;

@@ -158,5 +158,11 @@ ok(/#boxList \{[^}]*overflow-y: auto/.test(src), "列表自身滚动（顶部/�
 ok(src.includes('class="side-top"') && src.includes('class="side-foot"'), "侧栏分上/中/下三段");
 ok(!src.includes('<span class="b-sum">'), "旧的不换行摘要已移除");
 
+ok(/\.ed-split \{[^}]*cursor: col-resize/.test(src), "有可拖动的分隔条(.ed-split)");
+ok(src.includes('id="edSplit"'), "分隔条元素存在");
+ok(src.includes("function setEdSideWidth") && src.includes('localStorage.setItem("edSideW"'),
+   "分隔条可拖动并记住宽度");
+ok(/\.ed-split \{ display: none/.test(src), "手机单栏隐藏分隔条");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);
