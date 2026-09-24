@@ -288,7 +288,8 @@ def put_subjects(payload: dict):
                     it["subject"] = "其他"; moved += 1
             if moved:
                 save_db(db)
-    return {"ok": True, "subjects": new, "dirs": dirs, "removed": removed, "moved": moved}
+    return {"ok": True, "subjects": new, "dirs": dirs, "removed": removed, "moved": moved,
+            "prefixes": load_prefix()}
 
 
 @app.get("/api/prefix")
@@ -305,6 +306,119 @@ def put_prefix(payload: dict):
             p[k] = v
     PREFIX_FILE.write_text(json.dumps(p, ensure_ascii=False, indent=2), "utf-8")
     return {"ok": True, "prefix": p}
+
+
+def _kw_list(s):
+    return [x for x in re.split(r"[,，、;；\s]+", s or "") if x]
+
+
+def _tpl_all():
+    d = dict(DEFAULT_TPL)
+    if TPL_PATH.exists():
+        try:
+            d.update(json.loads(TPL_PATH.read_text("utf-8")))
+        except Exception:
+            pass
+    return d
+
+
+@app.post("/api/rename")
+def rename_global(payload: dict = None):
+    """一键全局改名: kind = subject(科目) | chapter(大题归类/标签) | keyword(关键字) | prefix(编号前缀)。
+    改名后所有题目、大题模板、编号引用一次性全部更新(写库前会自动备份 library.json)。"""
+    p = payload or {}
+    kind = (p.get("kind") or "").strip()
+    old = str(p.get("old") or "").strip()
+    new = str(p.get("new") or "").strip()
+    subj = str(p.get("subject") or "").strip()
+    if kind not in ("subject", "chapter", "keyword", "prefix"):
+        return JSONResponse({"ok": False, "msg": "未知的改名类型"}, status_code=400)
+    if not new:
+        return JSONResponse({"ok": False, "msg": "请输入新名称"}, status_code=400)
+    if kind == "prefix":                     # 改编号前缀 -> 该科目所有题重新编号
+        if not subj:
+            return JSONResponse({"ok": False, "msg": "请选择科目"}, status_code=400)
+        newp = re.sub(r"[^0-9A-Za-z]", "", new).upper()[:4]
+        if not newp:
+            return JSONResponse({"ok": False, "msg": "前缀只能含字母 / 数字"}, status_code=400)
+        pfx = load_prefix()
+        oldp = pfx.get(subj, "OT")
+        clash = next((s for s, v in pfx.items() if s != subj and v == newp), None)
+        if clash:
+            return JSONResponse({"ok": False, "msg": f"前缀 {newp} 已被科目「{clash}」占用"},
+                                status_code=400)
+        pfx[subj] = newp
+        PREFIX_FILE.write_text(json.dumps(pfx, ensure_ascii=False, indent=2), "utf-8")
+        n = 0
+        if oldp != newp:
+            with DB_LOCK:
+                db = load_db()
+                for it in db["items"]:
+                    c = it.get("code") or ""
+                    if (it.get("subject") or "未分类") == subj and c.startswith(oldp):
+                        it["code"] = newp + c[len(oldp):]
+                        n += 1
+                save_db(db)
+        return {"ok": True, "changed": n,
+                "msg": f"「{subj}」编号前缀 {oldp} → {newp}"
+                       + (f"，{n} 道题已重新编号" if n else "")}
+    if not old:
+        return JSONResponse({"ok": False, "msg": "请选择原名"}, status_code=400)
+    if old == new:
+        return JSONResponse({"ok": False, "msg": "新旧名称相同"}, status_code=400)
+    n = 0
+    if kind == "subject":                     # 改科目名: 题目/目录映射/前缀/模板全同步
+        lst, dirs = load_subjects()
+        if old not in lst:
+            return JSONResponse({"ok": False, "msg": f"科目「{old}」不存在"}, status_code=400)
+        if new in lst:
+            return JSONResponse({"ok": False, "msg": f"科目「{new}」已存在"}, status_code=400)
+        if old in dirs:
+            dirs[new] = dirs.pop(old)         # 英文目录名不变 -> 图片不用搬
+        lst = [new if s == old else s for s in lst]
+        save_subjects(lst, dirs)
+        pfx = load_prefix()
+        pfx[new] = pfx.pop(old, pfx.get(new, "OT"))
+        PREFIX_FILE.write_text(json.dumps(pfx, ensure_ascii=False, indent=2), "utf-8")
+        tpls = _tpl_all()
+        if old in tpls:
+            tpls[new] = tpls.pop(old)
+            TPL_PATH.write_text(json.dumps(tpls, ensure_ascii=False, indent=2), "utf-8")
+        with DB_LOCK:
+            db = load_db()
+            for it in db["items"]:
+                if (it.get("subject") or "未分类") == old:
+                    it["subject"] = new
+                    n += 1
+            save_db(db)
+        return {"ok": True, "changed": n, "msg": f"科目「{old}」→「{new}」，{n} 道题已更新"}
+    with DB_LOCK:
+        db = load_db()
+        if kind == "chapter":                 # 改大题归类(标签): 题目 + 大题模板
+            for it in db["items"]:
+                if (it.get("chapter") or "") == old and \
+                        (not subj or (it.get("subject") or "未分类") == subj):
+                    it["chapter"] = new
+                    n += 1
+            save_db(db)
+            tpls, changed_t = _tpl_all(), 0
+            for k in list(tpls):
+                if subj and k != subj:
+                    continue
+                if old in tpls[k]:
+                    tpls[k] = [new if x == old else x for x in tpls[k]]
+                    changed_t += 1
+            if changed_t:
+                TPL_PATH.write_text(json.dumps(tpls, ensure_ascii=False, indent=2), "utf-8")
+            return {"ok": True, "changed": n,
+                    "msg": f"大题「{old}」→「{new}」，{n} 道题、{changed_t} 个模板已更新"}
+        for it in db["items"]:                # 改关键字: 逗号分隔的令牌逐个替换
+            ks = _kw_list(it.get("keywords") or "")
+            if old in ks:
+                it["keywords"] = ",".join(new if x == old else x for x in ks)
+                n += 1
+        save_db(db)
+    return {"ok": True, "changed": n, "msg": f"关键字「{old}」→「{new}」，{n} 道题已更新"}
 
 
 def next_code(db, subject):
@@ -541,9 +655,11 @@ def ai_recognize_one(it, force=False):
 
 
 def strip_fig_marks(text):
-    """清理 AI 输出里可能出现的图形坐标标记(已不启用 AI 裁图, 一律丢弃, 避免污染正文)。"""
+    """清理 AI 输出里可能出现的旧式图形坐标标记([图@x,y,w,h] / 图@12)。
+    保留 [图N] 位置标记——AI 按图形位置插标记, 用户再把裁好的图绑定到对应编号。"""
     text = text or ""
     text = re.sub(r"\[?\s*图@[^\]\n]*\]?", " ", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
@@ -984,7 +1100,7 @@ def ai_proofread(img_rgb, draft):
               "4) 选项是否缺失、题干与选项是否混杂；\n"
               "5) 与图片不符之处。\n"
               "保持原格式：【题干】标记、选项每行一个(A．B．C．D．)、"
-              "公式用 $...$、不要输出图形坐标标记、不要输出解释。\n"
+              "公式用 $...$、图块标记 [图N] 及其位置保持不变（不要新增、删除或改号）、不要输出解释。\n"
               "只输出修正后的完整结果。\n\n识别结果：\n" + draft)
     body = {"model": cfg["model"] or "glm-4v-flash",
             "messages": [{"role": "user", "content": [
@@ -1037,8 +1153,10 @@ def call_ai_vision(img_rgb):
               '6. 选择题/多选题的选项逐行输出，每行一个：A．选项内容 / B．选项内容 / C．选项内容 / '
               'D．选项内容（用全角句点．）；\n'
               '7. 所有数学公式/化学式用 $...$ LaTeX 语法；\n'
-              '8. 不要输出任何图形位置标记（例如「图@」加数字、[图@x,y,w,h] 这类坐标），'
-              '也不要为图形留占位符：图片里的图形/示意图一律交给用户自己裁剪，你只负责把文字识别准确。\n'
+              '8. 图形/示意图/几何图/坐标图/表格图/插图等图片内容不要用文字描述，而是在它们出现的位置'
+              '插入图块标记：[图1]、[图2]……按从上到下、从左到右的顺序编号；标记单独占一行；'
+              '图与文字同一行时，标记就放在该行中图形所在的位置；同一幅图只标记一次；'
+              '不要输出「图@」加坐标这类旧标记，也不要给图形配说明文字（说明由用户自己写）。\n'
               '输出前请核对：下标与电荷是否标全、括号是否配对、选项是否齐全，发现错误直接改正。\n'
                '只输出识别结果，不要解释。')
     body = {
@@ -1172,8 +1290,47 @@ def typ_esc(t):
     return t
 
 
-def render_simple(txt, it, lines):
-    """附录页简化渲染: $公式$ -> mitex, [图N] -> 图片, markdown 字体标记。"""
+MAX_W_CM = 14.1          # 版心宽度 = 185mm - 左右页边距 2.2cm×2
+TEXT_H_CM = 22.0         # 版心高度 = 260mm - 上下页边距 2cm×2
+
+
+def fig_size_args(fp, spec, h_pct=24.0):
+    """算图块的 Typst 尺寸参数。spec: 空 / '60%'(宽) / '8cm'(宽) / '24%h'(高) / '6cmh'(高)。
+    默认按版心高度的 h_pct% 定高; 任何写法都保证不超版心宽/高(过长或过高的图自动换一种定尺寸方式)。"""
+    spec = (spec or "").strip()
+    try:
+        with Image.open(fp) as im0:
+            pw, ph = im0.size
+    except Exception:
+        pw, ph = 4, 3
+    ratio = pw / max(1, ph)
+    h_cm = TEXT_H_CM * min(90.0, max(3.0, h_pct)) / 100.0
+    if spec:
+        try:
+            if spec[-1] in "hH":                   # 按高度: 24%h / 6cmh
+                v = spec[:-1].strip()
+                if v.endswith("cm"):
+                    h_cm = min(TEXT_H_CM, max(0.5, float(v[:-2])))
+                else:
+                    h_cm = TEXT_H_CM * min(100.0, max(2.0, float(v.rstrip("%")))) / 100.0
+            else:                                  # 按宽度: 60% / 8cm
+                is_cm = spec.endswith("cm")
+                if is_cm:
+                    w_cm = min(MAX_W_CM, max(0.5, float(spec[:-2])))
+                else:
+                    pctv = min(100.0, max(5.0, float(spec.rstrip("%"))))
+                    w_cm = MAX_W_CM * pctv / 100.0
+                if w_cm * ph / max(1, pw) <= TEXT_H_CM:
+                    return f"width: {w_cm:.2f}cm" if is_cm else f"width: {pctv:g}%"
+                h_cm = TEXT_H_CM                  # 太高会顶出版心 -> 改按高度
+        except ValueError:
+            pass
+    w_cm = h_cm * ratio                            # 按高度定尺寸, 宽度按比例算
+    return "width: 100%" if w_cm > MAX_W_CM else f"width: {w_cm:.2f}cm"
+
+
+def render_simple(txt, it, lines, fig_h_pct=24.0):
+    """附录页简化渲染: $公式$ -> mitex, [图N] -> 图片, [图注:文字] -> 图下注释, markdown 字体标记。"""
     txt = (txt or "").strip()
     if not txt:
         return
@@ -1230,19 +1387,25 @@ def render_simple(txt, it, lines):
         figs = []
         def _fig(m):
             n2 = int(m.group(1))
-            w = (m.group(2) or "40%")
-            if not w.endswith("%"):
-                w += "%"
+            spec = m.group(2) or ""
             f0 = figmap.get(n2)
             fp = ROOT / str(f0.get("file", "")) if f0 else None
             if fp is None or not fp.exists():
                 cand = (ROOT / f"{it['image'][:-4]}_fig{n2}.jpg") if it.get("image") else None
                 fp = cand if (cand and cand.exists()) else None
             if fp:
-                figs.append((str(fp), w))
+                figs.append((str(fp), fig_size_args(fp, spec, fig_h_pct)))
                 return f"@@F{len(figs) - 1}@@"
             return f'#text(fill: rgb("#cc0000"))[图{n2}缺失]'
-        ln = re.sub(r"\[图(\d+)(?:\|([\d.]+%?))?\]", _fig, ln)
+        cap = None
+        cm = re.search(r"\[图注[:：]\s*([^\]]*)\]", ln)
+        if cm:
+            cap = md(cm.group(1).strip())
+            ln = ln.replace(cm.group(0), "").strip()
+            if not ln:
+                lines.append(f'#align(center)[#text(size: 0.88em)[{cap}]]')
+                continue
+        ln = re.sub(r"\[图(\d+)(?:\|([\d.]+%?[hH]?))?\]", _fig, ln)
         ln = ln.replace("（图）", "").replace("(图)", "")
         out = ""
         for seg in re.split(r"(\$[^$]+\$)", ln):
@@ -1250,10 +1413,12 @@ def render_simple(txt, it, lines):
                 out += '#mi("' + latex_var(seg[1:-1]) + '")'
             else:
                 out += md(seg)
-        for i, (fp, w) in enumerate(figs):
-            out = out.replace(f"@@F{i}@@", f'#image("{fp}", width: {w})')
+        for i, (fp, sz) in enumerate(figs):
+            out = out.replace(f"@@F{i}@@", f'#image("{fp}", {sz})')
         if out.strip():
             lines.append(f"#align({align_mode})[{out}]" if align_mode else out + " \\")
+        if cap:
+            lines.append(f'#align(center)[#text(size: 0.88em)[{cap}]]')
 
 
 # ---------- 自动组卷 ----------
@@ -1375,27 +1540,42 @@ def _alloc_star_counts(group, avail, P, tilt=""):
 
 
 def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
-              exclude_ids=None, seed=None, max_probe=50, tilt=""):
+              exclude_ids=None, seed=None, max_probe=50, tilt="", fixed_ids=None):
     """自动组卷: 先算全局配额(每份各星级拿几道), 再发牌。
+    fixed_ids: 每份卷子都必须包含的题目(指定题目)，其余题随机抽。
     返回 (卷子列表, 诊断); 卷子内按大题顺序、大题内按星级升序。"""
     rnd = random.Random(seed)
-    base = auto_pool(items, groups, subject, exclude_ids)
+    fixed_ids = [str(x) for x in (fixed_ids or [])]
+    byid = {x["id"]: x for x in items}
+    fx = [byid[i] for i in fixed_ids if i in byid]          # 指定题目(每份必含)
+    fx_by_ch = collections.defaultdict(list)
+    for x in fx:
+        fx_by_ch[x.get("chapter") or ""].append(x)
+    ex = set(exclude_ids or []) | {x["id"] for x in fx}    # 指定题不再参加随机
+    base = auto_pool(items, groups, subject, ex)
+
+    def eff(g):                                              # 该大题还需随机抽几道
+        return max(0, int(g.get("count") or 0) - len(fx_by_ch.get(g.get("chapter") or "", [])))
+
     diag = {"max_papers": 0, "per_group": [], "msg": ""}
     for g in groups:
         ch = g.get("chapter") or ""
         diag["per_group"].append({"chapter": ch, "available": len(base.get(ch) or []),
-                                  "count": int(g.get("count") or 0)})
+                                  "count": int(g.get("count") or 0),
+                                  "fixed": len(fx_by_ch.get(ch, []))})
     avail = {ch: collections.Counter(_star(x) for x in v) for ch, v in base.items()}
     live = [g for g in groups if int(g.get("count") or 0) > 0]
     if not live:
         return [], {**diag, "ok": False, "msg": "请先填写各大题的题量"}
-    # 最多能出几份: 逐份试探(配额分配是纯计算, 很快)
-    ups = [len(base.get(g.get("chapter") or "", [])) // int(g["count"]) for g in live]
-    upper = min(min(ups) if ups else 0, max_probe)
+    rlive = [g for g in live if eff(g) > 0]                 # 需要随机抽题的大题
+    ups = [len(base.get(g.get("chapter") or "", [])) // eff(g) for g in rlive]
+    upper = min(min(ups) if ups else max_probe, max_probe)
     for P in range(1, upper + 1):
         bad = None
-        for g in live:
-            _, err = _alloc_star_counts(g, avail.get(g.get("chapter") or "", collections.Counter()), P, tilt)
+        for g in rlive:
+            _, err = _alloc_star_counts({**g, "count": eff(g)},
+                                        avail.get(g.get("chapter") or "", collections.Counter()),
+                                        P, tilt)
             if err:
                 bad = err
                 break
@@ -1404,10 +1584,11 @@ def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
             break
         diag["max_papers"] = P
     if diag["max_papers"] == upper and diag["max_papers"] > 0:
-        for g in live:                      # 已到总量上限: 再试一份, 报告卡在哪
-            _, err2 = _alloc_star_counts(g, avail.get(g.get("chapter") or "",
-                                                      collections.Counter()),
-                                                    diag["max_papers"] + 1, tilt)
+        for g in rlive:                      # 已到总量上限: 再试一份, 报告卡在哪
+            _, err2 = _alloc_star_counts({**g, "count": eff(g)},
+                                         avail.get(g.get("chapter") or "",
+                                                     collections.Counter()),
+                                         diag["max_papers"] + 1, tilt)
             if err2:
                 diag["msg"] = f"再出第 {diag['max_papers'] + 1} 份时不够：{err2}"
                 break
@@ -1419,10 +1600,11 @@ def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
                     "msg": f"按当前约束最多只能出 {diag['max_papers']} 份（{diag['msg']}）"}
     # 发牌: 每个大题各星级洗牌后, 按配额分给各份
     for attempt in range(4):                # 关键字去重可能因发牌顺序失败 -> 重试几次
-        papers_items, kw_used, fail = [[] for _ in range(want)], [set() for _ in range(want)], None
+        papers_items, kw_used, fail = [[x for x in fx] for _ in range(want)], [set() for _ in range(want)], None
         for g in live:
             ch = g.get("chapter") or ""
-            n, err = _alloc_star_counts(g, avail.get(ch, collections.Counter()), want, tilt)
+            n, err = _alloc_star_counts({**g, "count": eff(g)},
+                                        avail.get(ch, collections.Counter()), want, tilt)
             if err:
                 fail = err
                 break
@@ -1458,9 +1640,14 @@ def auto_plan(items, groups, subject="", papers=1, unique_keywords=False,
     else:
         return [], {**diag, "ok": False, "msg": fail or "题目分配失败"}
     order = {(g.get("chapter") or ""): i for i, g in enumerate(groups)}
+    fx_ord = {x["id"]: i for i, x in enumerate(fx)}
     out = []
     for pi in range(want):
-        seg = sorted(papers_items[pi], key=lambda x: (order.get(x.get("chapter") or "", 99), _star(x)))
+        # 指定题目排在该大题最前(按添加顺序), 随机题按星级升序跟在后面
+        seg = sorted(papers_items[pi],
+                     key=lambda x: (order.get(x.get("chapter") or "", 99),
+                                    0 if x["id"] in fx_ord else 1,
+                                    fx_ord.get(x["id"], _star(x))))
         out.append(seg)
     return out, {**diag, "ok": True,
                  "msg": f"已生成 {want} 份（当前题库与约束最多可出 {diag['max_papers']} 份）"}
@@ -1476,7 +1663,7 @@ def auto_plan_api(payload: dict = None):
     ex = set(load_auto_last()) if payload.get("avoid_last") else set()
     _, diag = auto_plan(load_db()["items"], groups, payload.get("subject") or "",
                         papers=1, exclude_ids=ex, seed=payload.get("seed"),
-                        tilt=payload.get("tilt") or "")
+                        tilt=payload.get("tilt") or "", fixed_ids=payload.get("fixed"))
     mx = diag.get("max_papers", 0)
     msg = (f"最多可出 {mx} 份（{diag.get('msg', '')}）" if diag.get("ok") else diag.get("msg", ""))
     return {"ok": bool(diag.get("ok")), "max_papers": mx,
@@ -1495,7 +1682,7 @@ def auto_build_api(payload: dict = None):
                              papers=int(payload.get("papers") or 1),
                              unique_keywords=bool(payload.get("unique_keywords")),
                              exclude_ids=ex, seed=payload.get("seed"),
-                             tilt=payload.get("tilt") or "")
+                             tilt=payload.get("tilt") or "", fixed_ids=payload.get("fixed"))
     if not diag.get("ok"):
         return JSONResponse({"ok": False, "msg": diag.get("msg", "组卷失败"),
                              "max_papers": diag.get("max_papers", 0),
@@ -1533,7 +1720,8 @@ def auto_export(payload: dict = None):
                               body_size=payload.get("body_size") or "",
                               leading=payload.get("leading") or "",
                               subtitle=payload.get("subtitle") or "",
-                              first_indent=payload.get("first_indent") or "")
+                              first_indent=payload.get("first_indent") or "",
+                              fig_height=payload.get("fig_height") or "")
                 if isinstance(d, dict) and d.get("ok"):
                     f = ROOT / str(d["url"]).lstrip("/").replace("files/", "", 1)
                     if f.exists():
@@ -1550,7 +1738,7 @@ def auto_export(payload: dict = None):
 def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = "",
               title: str = "", subject_line: str = "", notice: str = "",
               body_size: str = "", leading: str = "", subtitle: str = "",
-              first_indent: str = ""):
+              first_indent: str = "", fig_height: str = ""):
     """用 Typst 渲染试卷 PDF。attach: 附答案解析页; index: 1 附编号对照页; header: 页眉文字。
     body_size/leading: 正文字号(pt)与行距(em), 语文卷常用 12pt / 1.5em。"""
     try:
@@ -1565,6 +1753,10 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         indent_em = min(4.0, max(0.0, float(first_indent))) if first_indent else 0.0
     except (TypeError, ValueError):
         indent_em = 0.0
+    try:                                   # 图片默认高度(占版心高度百分比)
+        fig_h_pct = min(90.0, max(6.0, float(fig_height))) if fig_height else 24.0
+    except (TypeError, ValueError):
+        fig_h_pct = 24.0
     db = load_db()
     wanted = [i for i in ids.split(",") if i]
     order = {iid: n for n, iid in enumerate(wanted)}
@@ -1786,41 +1978,57 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     return fp
 
                 def scan_figs(s):
-                    """提取行内图引用 -> (占位符文本, [{file,w,align}])。
-                    支持 [图N] / [图N|60%|left], 兼容旧 [图@x,y,w,h] 与 [图]。"""
+                    """提取行内图引用 -> (占位符文本, [{file,size,align}])。
+                    支持 [图N] / [图N|60%] / [图N|24%h] / [图N|60%|left]，兼容旧 [图@x,y,w,h] 与 [图]。"""
                     infos = []
 
                     def rep_new(m):
                         n2 = int(m.group(1))
-                        w = m.group(2) or "40%"
-                        if not w.endswith("%"):
-                            w += "%"
+                        spec = m.group(2) or ""
                         al = m.group(3) or "center"
                         fp = fig_file(n2)
                         if fp:
-                            infos.append({"file": str(fp), "w": w, "align": al})
+                            infos.append({"file": str(fp),
+                                          "size": fig_size_args(fp, spec, fig_h_pct),
+                                          "align": al})
                             return f"@@F{len(infos) - 1}@@"
                         return f'#text(fill: rgb("#cc0000"))[图{n2}未裁好]'
 
-                    s = re.sub(r"\[图(\d+)(?:\|([\d.]+%?))?(?:\|(left|center|right))?\]",
+                    s = re.sub(r"\[图(\d+)(?:\|([\d.]+%?[hH]?))?(?:\|(left|center|right))?\]",
                                rep_new, s)
 
                     def rep_old(m):
                         fp = crop_old(*(int(v) for v in m.groups()), len(infos))
-                        infos.append({"file": str(fp), "w": "40%", "align": "center"})
+                        infos.append({"file": str(fp),
+                                      "size": fig_size_args(fp, "", fig_h_pct),
+                                      "align": "center"})
                         return f"@@F{len(infos) - 1}@@"
 
                     s = re.sub(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", rep_old, s)
                     if "[图]" in s and it.get("image"):
-                        infos.append({"file": str(ROOT / it["image"]),
-                                      "w": "45%", "align": "center"})
+                        _ip = ROOT / it["image"]
+                        infos.append({"file": str(_ip),
+                                      "size": fig_size_args(_ip, "45%", fig_h_pct),
+                                      "align": "center"})
                         s = s.replace("[图]", f"@@F{len(infos) - 1}@@")
                     s = s.replace("（图）", "").replace("(图)", "")
                     return s, infos
 
-                for ln in txt.split("\n"):
-                    ln = ln.strip()
+                raw_lines = txt.split("\n")
+                skip_next = False
+                for li, raw_ln in enumerate(raw_lines):
+                    ln = raw_ln.strip()
                     if not ln:
+                        continue
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    capm = re.match(r"^\[图注[:：]\s*(.*?)\s*\]$", ln)
+                    if capm:                             # 独立图注行(前面没图): 居中排在这里
+                        flush_opts()
+                        lines.append(f'#align(center)[#text(size: 0.88 * BODY)'
+                                     f'[{esc_ln(capm.group(1))}]]')
+                        first_ln = False
                         continue
                     if ln.startswith("::: "):            # ::: center / poem / quote / right
                         mode = ln[4:].strip() or None
@@ -1852,6 +2060,11 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         if t:
                             lines.append(t)
                             lines.append("#v(0.15cm)")
+                    inline_cap = None
+                    cm3 = re.search(r"\[图注[:：]\s*([^\]]*)\]", ln)
+                    if cm3:
+                        inline_cap = cm3.group(1).strip()
+                        ln = ln.replace(cm3.group(0), "").strip()
                     ln2, infos = scan_figs(ln)
                     if para_mode:                        # 整段样式: 收集纯文本行(图仍走通用分支)
                         if not infos:
@@ -1859,23 +2072,34 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                             continue
                     rest = re.sub(r"@@F\d+@@", "", ln2).strip()
                     if infos and not rest:
-                        # 整行只有图: 多图并排 / 单图对齐
+                        # 整行只有图: 多图并排 / 单图对齐; 下一行是 [图注:文字] 时排在图正下方
+                        cap = None
+                        if li + 1 < len(raw_lines):
+                            m2 = re.match(r"^\[图注[:：]\s*(.*?)\s*\]$", raw_lines[li + 1].strip())
+                            if m2:
+                                cap = esc_ln(m2.group(1))
+                                skip_next = True
+                        cap_in = (f" \\ #v(-0.12cm) #text(size: 0.88 * BODY)[{cap}]"
+                                  if cap else "")
                         if len(infos) > 1:
-                            cells = "".join(f'[#image("{f0["file"]}", width: {f0["w"]})]'
+                            cells = "".join(f'[#image("{f0["file"]}", {f0["size"]})]'
                                             for f0 in infos)
                             lines.append(f"#grid(columns: {len(infos)}, "
                                          f"column-gutter: 0.6em, row-gutter: 0.5em){cells}")
+                            if cap:
+                                lines.append("#align(center)[#v(-0.25cm)"
+                                             f"#text(size: 0.88 * BODY)[{cap}]]")
                         else:
                             f0 = infos[0]
                             lines.append(f'#align({f0["align"]})'
-                                         f'[#image("{f0["file"]}", width: {f0["w"]})]')
+                                         f'[#image("{f0["file"]}", {f0["size"]}){cap_in}]')
                         placed = True
                         first_ln = False
                         continue
                     out = esc_ln(ln2)
                     for i, f0 in enumerate(infos):       # 混排: 行内插图
                         out = out.replace(f"@@F{i}@@",
-                                          f'#image("{f0["file"]}", width: {f0["w"]})')
+                                          f'#image("{f0["file"]}", {f0["size"]})')
                     if out.strip():
                         if align_mode:
                             flush_opts()
@@ -1891,6 +2115,9 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                             else:
                                 lines.append(out + " \\")
                             first_ln = False
+                        if inline_cap:                   # 行内图注: 紧跟本行下方居中
+                            lines.append(f'#align(center)[#text(size: 0.88 * BODY)'
+                                         f'[{esc_ln(inline_cap)}]]')
                 flush_para()
                 if tbl_buf:                          # 收尾: 题末仍是表格
                     t = md_table_typst(tbl_buf, esc_ln)
@@ -1928,7 +2155,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
             lines.append(f"**{num}．**")
             for label, content, b in parts:
                 lines.append(f'#text(font: F_HEI)[{label}：]')
-                render_simple(content, b, lines)
+                render_simple(content, b, lines, fig_h_pct)
             lines.append("#v(0.3cm)")
         if not has_content[0]:
             lines.append('#text(fill: rgb("#888888"))[本卷题目尚未填写答案或解析；'
@@ -2211,8 +2438,8 @@ def update_item(item_id: str, payload: dict):
 
 
 @app.post("/api/item/{item_id}/upload")
-async def upload_figure(item_id: str, file: UploadFile = File(...)):
-    """上传图片作为题目的图片附件, 返回编号 n。"""
+async def upload_figure(item_id: str, file: UploadFile = File(...), n: str = Form("")):
+    """上传图片作为题目的图片附件。n 非空时把图片绑定到该已有编号(覆盖同编号旧图)。"""
     db = load_db()
     for it in db["items"]:
         if it["id"] == item_id:
@@ -2222,19 +2449,33 @@ async def upload_figure(item_id: str, file: UploadFile = File(...)):
             data = await file.read()
             if len(data) < 100:
                 return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
-            figs = it.get("figures") or []
-            n = max((f.get("n", 0) for f in figs), default=0) + 1
+            figs = list(it.get("figures") or [])
+            try:
+                want = int(str(n).strip())
+            except (TypeError, ValueError):
+                want = 0
+            if want > 0:                              # 绑定到已有标签 [图N]
+                old = next((f for f in figs if int(f.get("n", 0)) == want), None)
+                if old:
+                    p0 = ROOT / str(old.get("file", ""))
+                    if p0.exists():
+                        p0.unlink(missing_ok=True)
+                    figs.remove(old)
+                num = want
+            else:
+                num = max((f.get("n", 0) for f in figs), default=0) + 1
             suffix = Path(file.filename or "img.jpg").suffix.lower()
             if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
                 suffix = ".jpg"
-            fname = f"{item_id}_fig{n}{suffix}"
+            fname = f"{item_id}_fig{num}{suffix}"
             fdir = src.parent
             (fdir / fname).write_bytes(data)
-            figs.append({"n": n, "file": str((fdir / fname).relative_to(ROOT)),
+            figs.append({"n": num, "file": str((fdir / fname).relative_to(ROOT)),
                          "upload": True})
+            figs.sort(key=lambda f: int(f.get("n", 0)))
             it["figures"] = figs
             save_db(db)
-            return {"ok": True, "n": n, "figures": figs}
+            return {"ok": True, "n": num, "figures": figs}
     return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
 
 
@@ -2263,7 +2504,8 @@ def delete_figure(item_id: str, n: int):
 
 @app.post("/api/item/{item_id}/figure")
 def add_figure(item_id: str, payload: dict):
-    """给已保存的错题添加图块: {x,y,w,h}(相对题图 0-1000 比例) -> 裁图块并返回编号。"""
+    """给已保存的错题添加图块: {x,y,w,h}(相对题图 0-1000 比例) -> 裁图块并返回编号。
+    可选 {n: 3} 把裁好的图绑定到已有标签 [图3] 上(覆盖同编号旧图)。"""
     db = load_db()
     for it in db["items"]:
         if it["id"] == item_id:
@@ -2279,17 +2521,75 @@ def add_figure(item_id: str, payload: dict):
             h0 = min(H - y0, max(20, int(fh / 1000 * H)))
             if w0 < 20 or h0 < 20:
                 return JSONResponse({"ok": False, "msg": "框选区域太小"}, status_code=400)
-            figs = it.get("figures") or []
-            n = max((f.get("n", 0) for f in figs), default=0) + 1
+            figs = list(it.get("figures") or [])
+            try:
+                want = int(payload.get("n") or 0)
+            except (TypeError, ValueError):
+                want = 0
+            if want > 0:
+                old = next((f for f in figs if int(f.get("n", 0)) == want), None)
+                if old:
+                    p0 = ROOT / str(old.get("file", ""))
+                    if p0.exists():
+                        p0.unlink(missing_ok=True)
+                    figs.remove(old)
+                n = want
+            else:
+                n = max((f.get("n", 0) for f in figs), default=0) + 1
             fname = f"{item_id}_fig{n}.jpg"
             fdir = src.parent
             trim_margins(img.crop((x0, y0, x0 + w0, y0 + h0))).save(
                 fdir / fname, "JPEG", quality=95)
             figs.append({"n": n, "file": str((fdir / fname).relative_to(ROOT)),
                          "x": fx, "y": fy, "w": fw, "h": fh})
+            figs.sort(key=lambda f: int(f.get("n", 0)))
             it["figures"] = figs
             save_db(db)
             return {"ok": True, "n": n, "figures": figs}
+    return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
+
+
+@app.patch("/api/item/{item_id}/figure/{n}")
+def rebind_figure(item_id: str, n: int, payload: dict = None):
+    """把已有图片改绑到另一个编号: {n: 新编号}。会同步改写题干/答案/解析里的 [图N] 引用。"""
+    try:
+        m = int((payload or {}).get("n") or 0)
+    except (TypeError, ValueError):
+        m = 0
+    if m <= 0:
+        return JSONResponse({"ok": False, "msg": "新编号无效"}, status_code=400)
+    if m == n:
+        return JSONResponse({"ok": False, "msg": "编号未变化"}, status_code=400)
+    db = load_db()
+    for it in db["items"]:
+        if it["id"] == item_id:
+            figs = list(it.get("figures") or [])
+            f0 = next((f for f in figs if int(f.get("n", 0)) == n), None)
+            if not f0:
+                return JSONResponse({"ok": False, "msg": f"[图{n}] 不存在"}, status_code=404)
+            if any(int(f.get("n", 0)) == m for f in figs):
+                return JSONResponse({"ok": False, "msg": f"[图{m}] 已有图片，请先删除或改用上传覆盖"},
+                                    status_code=400)
+            old_p = ROOT / str(f0.get("file", ""))
+            if old_p.exists():                             # 文件名同步带上新编号, 便于排查
+                new_p = old_p.with_name(f"{item_id}_fig{m}{old_p.suffix}")
+                try:
+                    old_p.rename(new_p)
+                    f0["file"] = str(new_p.relative_to(ROOT))
+                except OSError:
+                    pass
+            f0["n"] = m
+            figs.sort(key=lambda f: int(f.get("n", 0)))
+            it["figures"] = figs
+            for k in ("note", "answer", "analysis"):      # 两步换号, 避免新旧编号互相覆盖
+                t = it.get(k) or ""
+                if t:
+                    t = re.sub(rf"\[图{n}(\D|$)", f"[图@@{m}@@\\1", t)
+                    t = t.replace(f"[图@@{m}@@", f"[图{m}")
+                    it[k] = t
+            save_db(db)
+            return {"ok": True, "figures": figs, "note": it.get("note", ""),
+                    "answer": it.get("answer", ""), "analysis": it.get("analysis", "")}
     return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
 
 
@@ -2428,8 +2728,21 @@ def crop_item_figure(item_id: str, payload: dict = None):
                 return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
             old.update({"n": n, "file": rel, "x": fx, "y": fy, "w": fw, "h": fh,
                         "t": int(time.time() * 1000)})
-        else:                                       # 新增图块
-            n = max([int(f.get("n", 0) or 0) for f in figs] + [0]) + 1
+        else:                                       # 新增图块(bind>0 时绑定到指定编号 [图N])
+            try:
+                bind_n = int(payload.get("bind") or 0)
+            except (TypeError, ValueError):
+                bind_n = 0
+            if bind_n > 0:
+                ob = next((f for f in figs if int(f.get("n", 0) or 0) == bind_n), None)
+                if ob:
+                    p0 = ROOT / str(ob.get("file", ""))
+                    if p0.exists():
+                        p0.unlink(missing_ok=True)
+                    figs.remove(ob)
+                n = bind_n
+            else:
+                n = max([int(f.get("n", 0) or 0) for f in figs] + [0]) + 1
             rel = f"{it['image'][:-4]}_fig{n}.jpg"
             if not imwrite_u(ROOT / rel, cv2.cvtColor(fig, cv2.COLOR_RGB2BGR)):
                 return JSONResponse({"ok": False, "msg": "图块写入失败"}, status_code=500)
@@ -2562,6 +2875,212 @@ def make_paper(ids: str = ""):
 <div class="meta">共 {n} 题 · 由错题自动编排生成 · (续) 表示同一道题的接续部分</div>
 {cards or "<p>未选中任何题目</p>"}
 </body></html>"""
+
+
+# ---------- 数据仓库(类似 Obsidian 的仓库): 切换 / 新建 / 合并 ----------
+# 编译成 exe 后, 数据(图片/题库/配置)就存在 exe 所在目录; 可再建多个仓库子目录切换。
+BASE_DIR = ROOT                     # 程序所在目录: 仓库注册表、字体、Typst 包都放这里
+VAULT_FILE = BASE_DIR / "vaults.json"
+VAULTS_DIR = "vaults"
+DEFAULT_VAULT_NAME = "默认仓库"
+
+
+def _bind_data_paths(root):
+    """把全部数据路径指向某个仓库目录(切换仓库时调用)。字体/Typst 包仍用程序目录。"""
+    global ROOT, PAGES_DIR, ITEMS_DIR, DB_FILE, TMP_DIR, PREFIX_FILE, TPL_PATH, \
+        AUTO_LAST_FILE, DRAFT_FILE, BACKUP_DIR, TRASH_DIR, SUBJ_FILE, _SUBJ_CACHE
+    ROOT = Path(root)
+    PAGES_DIR = ROOT / "pages"
+    ITEMS_DIR = ROOT / "items"
+    DB_FILE = ROOT / "library.json"
+    TMP_DIR = ROOT / ".tmp"
+    PREFIX_FILE = ROOT / "code_prefix.json"
+    TPL_PATH = ROOT / "chapter_templates.json"
+    AUTO_LAST_FILE = ROOT / "auto_last.json"
+    DRAFT_FILE = ROOT / "drafts.json"
+    BACKUP_DIR = ROOT / "backups"
+    TRASH_DIR = ROOT / ".trash"
+    SUBJ_FILE = ROOT / "subjects.json"
+    _SUBJ_CACHE = None
+    for d in (PAGES_DIR, ITEMS_DIR, TMP_DIR, BACKUP_DIR, TRASH_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+def _vaults():
+    """返回 (当前仓库名, {仓库名: 相对程序目录的路径})。"""
+    if VAULT_FILE.exists():
+        try:
+            d = json.loads(VAULT_FILE.read_text("utf-8"))
+            lst = {str(k): str(v) for k, v in (d.get("list") or {}).items() if str(k).strip()}
+            if lst:
+                cur = str(d.get("current") or "")
+                return (cur if cur in lst else next(iter(lst))), lst
+        except Exception:
+            pass
+    return DEFAULT_VAULT_NAME, {DEFAULT_VAULT_NAME: "."}
+
+
+def _save_vaults(cur, lst):
+    VAULT_FILE.write_text(json.dumps({"current": cur, "list": lst},
+                                     ensure_ascii=False, indent=2), "utf-8")
+
+
+def _vault_root(name, lst=None):
+    _, lst = (None, lst) if lst else _vaults()
+    rel = lst.get(name)
+    return (BASE_DIR / rel).resolve() if rel else None
+
+
+def _discover_vaults():
+    """把 vaults/ 目录下已有的子目录登记为仓库。"""
+    cur, lst = _vaults()
+    vdir = BASE_DIR / VAULTS_DIR
+    changed = False
+    if vdir.exists():
+        for d in sorted(vdir.iterdir()):
+            if d.is_dir() and d.name not in lst:
+                lst[d.name] = f"{VAULTS_DIR}/{d.name}"
+                changed = True
+    if changed:
+        _save_vaults(cur, lst)
+    return cur, lst
+
+
+@app.get("/api/vault")
+def get_vault():
+    """列出全部仓库(数据目录)与当前仓库、数据存放路径。"""
+    cur, lst = _discover_vaults()
+    out = []
+    for name, rel in lst.items():
+        r = (BASE_DIR / rel).resolve()
+        cnt = 0
+        try:
+            if (r / "library.json").exists():
+                cnt = len(json.loads((r / "library.json").read_text("utf-8")).get("items", []))
+        except Exception:
+            pass
+        out.append({"name": name, "path": str(r), "items": cnt, "current": name == cur})
+    return {"ok": True, "current": cur, "base": str(BASE_DIR),
+            "path": str(_vault_root(cur, lst) or BASE_DIR), "vaults": out}
+
+
+@app.post("/api/vault/switch")
+def switch_vault(payload: dict = None):
+    """切换当前仓库(数据目录)。"""
+    name = str((payload or {}).get("name") or "").strip()
+    cur, lst = _discover_vaults()
+    if name not in lst:
+        return JSONResponse({"ok": False, "msg": "仓库不存在"}, status_code=404)
+    _bind_data_paths(_vault_root(name, lst))
+    _save_vaults(name, lst)
+    log_ai("切换仓库", "-", True, 0, name)
+    return {"ok": True, "current": name, "path": str(_vault_root(name, lst))}
+
+
+@app.post("/api/vault/create")
+def create_vault(payload: dict = None):
+    """新建仓库(空题库), 并切换过去。"""
+    name = safe_name(str((payload or {}).get("name") or "").strip())
+    if not name:
+        return JSONResponse({"ok": False, "msg": "请输入仓库名"}, status_code=400)
+    cur, lst = _vaults()
+    if name in lst or (BASE_DIR / VAULTS_DIR / name).exists():
+        return JSONResponse({"ok": False, "msg": "同名仓库已存在"}, status_code=400)
+    d = BASE_DIR / VAULTS_DIR / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "library.json").write_text(json.dumps({"items": []}, ensure_ascii=False), "utf-8")
+    lst[name] = f"{VAULTS_DIR}/{name}"
+    _bind_data_paths(d)
+    _save_vaults(name, lst)
+    return {"ok": True, "current": name, "path": str(d)}
+
+
+@app.post("/api/vault/rename")
+def rename_vault(payload: dict = None):
+    """给当前仓库改名(目录也会改名)。"""
+    name = safe_name(str((payload or {}).get("new") or "").strip())
+    cur, lst = _vaults()
+    if not name or name == cur:
+        return JSONResponse({"ok": False, "msg": "新名称无效"}, status_code=400)
+    if name in lst:
+        return JSONResponse({"ok": False, "msg": "同名仓库已存在"}, status_code=400)
+    if lst.get(cur) == ".":
+        return JSONResponse({"ok": False, "msg": "默认仓库就是程序目录，不能改名"}, status_code=400)
+    src, dst = (BASE_DIR / lst[cur]).resolve(), BASE_DIR / VAULTS_DIR / name
+    try:
+        if src.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dst)
+    except OSError as e:
+        return JSONResponse({"ok": False, "msg": f"改名失败: {e}"}, status_code=500)
+    lst[name] = f"{VAULTS_DIR}/{name}"
+    lst.pop(cur, None)
+    _bind_data_paths(dst)
+    _save_vaults(name, lst)
+    return {"ok": True, "current": name, "path": str(dst)}
+
+
+@app.post("/api/vault/merge")
+def merge_vault(payload: dict = None):
+    """把另一个仓库的题目合并进当前仓库(源仓库保留不动): 复制图片、重新编号、不覆盖现有题。"""
+    name = str((payload or {}).get("from") or "").strip()
+    cur, lst = _vaults()
+    if name not in lst:
+        return JSONResponse({"ok": False, "msg": "源仓库不存在"}, status_code=404)
+    if name == cur:
+        return JSONResponse({"ok": False, "msg": "不能合并到自身"}, status_code=400)
+    src_root = _vault_root(name, lst)
+    if not (src_root / "library.json").exists():
+        return JSONResponse({"ok": False, "msg": "源仓库没有 library.json"}, status_code=400)
+    try:
+        sdb = json.loads((src_root / "library.json").read_text("utf-8"))
+    except Exception as e:
+        return JSONResponse({"ok": False, "msg": f"读取源仓库失败: {e}"}, status_code=500)
+    added, missing = 0, 0
+    with DB_LOCK:
+        db = load_db()
+        for i, it0 in enumerate(sdb.get("items", [])):
+            it = dict(it0)
+            subject = it.get("subject") or "未分类"
+            sd = subj_dirname(subject)
+            ddir = ITEMS_DIR / sd
+            ddir.mkdir(parents=True, exist_ok=True)
+            new_id = f"m{int(time.time() * 1000)}{i}"
+            rel = str(it.get("image") or "")
+            if rel and (src_root / rel).exists():
+                suffix = Path(rel).suffix or ".jpg"
+                new_rel = f"items/{sd}/{new_id}{suffix}"
+                shutil.copy2(src_root / rel, ROOT / new_rel)
+                it["image"] = new_rel
+            else:
+                it["image"] = ""
+                missing += 1
+            figs = []
+            for f0 in (it.get("figures") or []):
+                frel = str(f0.get("file") or "")
+                if frel and (src_root / frel).exists():
+                    suffix = Path(frel).suffix or ".jpg"
+                    new_frel = f"items/{sd}/{new_id}_fig{f0.get('n', 0)}{suffix}"
+                    shutil.copy2(src_root / frel, ROOT / new_frel)
+                    nf = dict(f0)
+                    nf["file"] = new_frel
+                    figs.append(nf)
+            it["figures"] = figs
+            it["id"] = new_id
+            it["code"] = next_code(db, subject)
+            it["merged_from"] = name
+            db["items"].append(it)
+            added += 1
+        if added:
+            save_db(db)
+    log_ai("仓库合并", "-", True, 0, f"{name} -> {cur}: {added} 题")
+    return {"ok": True, "added": added, "missing": missing,
+            "msg": f"已从「{name}」合并 {added} 道题（源仓库保留不动）"
+                   + (f"，{missing} 道缺图片" if missing else "")}
+
+
+_init_vault_cur, _init_vault_lst = _discover_vaults()
+_bind_data_paths(_vault_root(_init_vault_cur, _init_vault_lst) or BASE_DIR)
 
 
 # ---------- 静态文件 ----------

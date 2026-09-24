@@ -37,3 +37,7 @@ drafts.json
 # 本地协作规则(不推送)
 AGENT.md
 
+
+# 数据仓库
+vaults.json
+vaults/

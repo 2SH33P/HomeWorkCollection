@@ -703,6 +703,16 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 .fig-ops button { border: none; background: var(--card); border-radius: 7px; padding: 5px 9px;
                   font-size: 12px; cursor: pointer; color: var(--accent); }
 .fig-ops button.danger { color: var(--danger); }
+.fig-ops select { border: none; background: var(--card); border-radius: 7px; padding: 5px 6px;
+                  font-size: 12px; color: var(--accent); cursor: pointer; }
+.fig-miss { font-size: 12px; color: var(--danger); background: rgba(255,59,48,.08);
+            border-radius: var(--r-sm); padding: 8px 10px; margin-bottom: 8px; line-height: 2.1; }
+.auto-fixed { margin: 8px 0; padding: 8px 10px; border-radius: var(--r-sm); background: var(--elev); }
+.af-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+.af-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.af-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px;
+           background: var(--card); font-size: 12px; color: var(--accent); cursor: pointer; }
+.af-chip b { color: var(--danger); font-weight: 400; }
 @media (max-width: 860px) {
   .pv-body { flex-direction: column; }
   .pv-left { height: 42vh; flex: none; touch-action: pan-x pan-y; }
@@ -1024,12 +1034,20 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
               <option value="1.5">宽松 1.5 倍（语文常用）</option>
               <option value="1.75">很宽 1.75 倍</option>
             </select></label>
+          <label class="fld" style="flex:1;min-width:150px"><span>图片默认高度</span>
+            <select id="phFigHeight">
+              <option value="16">小 16%（约 3.5cm）</option>
+              <option value="20">较小 20%（约 4.4cm）</option>
+              <option value="24">适中 24%（约 5.3cm，推荐）</option>
+              <option value="28">较大 28%（约 6.2cm）</option>
+              <option value="32">大 32%（约 7.0cm）</option>
+            </select></label>
         </div>
         <label class="fld"><span>页眉文字（可留空；显示在每页顶部）</span>
           <input type="text" id="paperHeader" placeholder="如：错题重组试卷 · 内部资料"></label>
       </details>
       <details class="paper-head-set" id="autoPanel" style="margin-top:12px">
-        <summary>自动组卷（按大题自动抽题；一次生成多份，互不重复）</summary>
+        <summary>自动组卷（按大题自动抽题 + 指定题目；一次生成多份，互不重复）</summary>
         <div style="margin-top:10px">
           <div class="auto-top">
             <label class="fld"><span>科目</span><select id="autoSubject"></select></label>
@@ -1045,6 +1063,17 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
             <button class="btn ghost btn-sm" id="autoFill"
                     title="按题库里各大题的题量与份数自动填好题量">按题库一键填充</button>
             <button class="btn ghost btn-sm" id="autoAdvBtn" title="展开后可为每个大题指定各星级的最少/最多">高级约束 ▾</button>
+          </div>
+          <div class="auto-fixed">
+            <div class="af-head"><b>指定题目</b>
+              <span class="hint">每份卷子都必含（排在各自大题最前）；其余题按上面的题量随机出</span></div>
+            <div class="auto-top">
+              <input type="text" id="autoFixedCode" placeholder="输入编号添加，如 MA0003，多个用逗号分隔" style="flex:1">
+              <button class="btn ghost btn-sm" id="autoFixedAdd">添加</button>
+              <button class="btn ghost btn-sm" id="autoFixedSel">加入当前勾选</button>
+              <button class="btn ghost btn-sm" id="autoFixedClear">清空</button>
+            </div>
+            <div id="autoFixedList" class="af-list"></div>
           </div>
           <div id="autoGroups"></div>
           <div class="auto-bottom">
@@ -1157,6 +1186,57 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
         <input type="text" id="newSubj" placeholder="新科目名，如 信息技术" style="flex:1;min-width:140px;max-width:260px"
                autocomplete="off">
         <button class="btn" id="addSubjBtn"><svg class="ic"><use href="#ic-plus"/></svg><span>添加科目</span></button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin-bottom:6px">一键改名（全局覆盖）</h3>
+      <p class="hint" style="line-height:1.8;margin-bottom:12px">
+        标签（大题归类）、关键字、科目及其编号前缀均可一键改名：一次改完，所有题目 / 模板 / 编号引用全部覆盖。
+        写库前会自动备份 <code>library.json</code>。
+      </p>
+      <div class="actions" style="flex-wrap:wrap;align-items:flex-end">
+        <label class="fld" style="min-width:150px"><span>改什么</span>
+          <select id="rnKind">
+            <option value="chapter">标签（大题归类）</option>
+            <option value="keyword">关键字</option>
+            <option value="subject">科目</option>
+            <option value="prefix">编号前缀</option>
+          </select></label>
+        <label class="fld" id="rnSubjWrap" style="min-width:140px;display:none"><span>限定科目</span>
+          <select id="rnSubject"></select></label>
+        <label class="fld" style="min-width:160px"><span>原名</span><select id="rnOld"></select></label>
+        <label class="fld" style="min-width:160px"><span>新名</span>
+          <input type="text" id="rnNew" placeholder="输入新名称" autocomplete="off"></label>
+        <button class="btn" id="rnBtn">一键改名</button>
+      </div>
+      <div class="hint" id="rnMsg" style="margin-top:10px;line-height:1.8"></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin-bottom:6px">数据仓库（题库文件夹）</h3>
+      <p class="hint" style="line-height:1.8;margin-bottom:12px">
+        每套题库（图片 + <code>library.json</code>）存在一个仓库文件夹里；可像 Obsidian 一样随时切换，互不干扰；
+        也可把另一个仓库的题目合并进来（<b>源仓库保留不动</b>，现有题目不会被覆盖）。<br>
+        当前仓库：<b id="vaultCur">—</b><br>
+        数据目录：<code id="vaultPath">—</code>　（exe 版就是 exe 所在目录；图片都存在这里）
+      </p>
+      <div class="actions" style="flex-wrap:wrap;align-items:center">
+        <select id="vaultSel" style="min-width:160px"></select>
+        <button class="btn" id="vaultSwitch">切换</button>
+        <span style="flex:1"></span>
+        <input type="text" id="vaultNew" placeholder="新仓库名（新建 / 改名用）"
+               style="min-width:180px" autocomplete="off">
+        <button class="btn ghost" id="vaultCreate">新建并切换</button>
+        <button class="btn ghost" id="vaultRename">当前仓库改名</button>
+      </div>
+      <div class="actions" style="flex-wrap:wrap;align-items:center;margin-top:10px">
+        <span class="hint">合并其他仓库进当前仓库：</span>
+        <select id="vaultMergeSel" style="min-width:180px"></select>
+        <button class="btn ghost" id="vaultMerge">合并（保留源仓库）</button>
+      </div>
+      <div class="hint" style="margin-top:10px;line-height:1.8">
+        备份：可用下方「导出数据 ZIP」，或直接复制整个仓库目录。
       </div>
     </div>
 
@@ -1333,7 +1413,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <button class="btn ghost btn-sm" id="pvStarClear">清零</button>
         </div>
         <label class="fld"><span>关键字（搜索用，逗号分隔）</span><input type="text" id="pvKeywords" placeholder="如：三角函数,图像"></label>
-        <label class="fld"><span>识别内容（*楷体* **黑体** [图1]）</span>
+        <label class="fld"><span>识别内容（*楷体* **黑体** [图1]；[图1|60%|left] 调大小/对齐；[图注:说明] 图下注释）</span>
           <textarea id="pvNote" rows="8"></textarea></label>
         <label class="fld"><span>答案（可选，支持 [图1]）</span>
           <textarea id="pvAnswer" rows="3"></textarea></label>
@@ -1341,7 +1421,8 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
           <textarea id="pvAnalysis" rows="5"></textarea></label>
         <div class="pv-figs">
           <div class="pv-figs-head">
-            <span>图片附件（在题干/答案/解析中用 [图N] 引用）</span>
+            <span>图片附件（在题干/答案/解析中用 [图N] 引用；可调大小/对齐）</span>
+            <button class="btn ghost btn-sm" id="pvCap" title="在光标处插入 [图注:说明文字]，写在与图片同一行的下一行即可排在图片正下方">插入图注</button>
             <label class="btn ghost btn-sm">上传图片
               <input type="file" id="pvUpload" accept="image/*" style="display:none"></label>
           </div>
@@ -1366,6 +1447,7 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
 <script>
 const $ = id => document.getElementById(id);
 let SUBJECTS = ["数学", "物理", "化学", "生物", "英语", "语文", "政治", "历史", "地理", "其他"];
+let PREFIXES = {};
 const REASONS = ["概念不清", "计算失误", "审题错误", "方法不当", "记忆不牢", "其他"];  // 预留(界面已移除错因)
 
 let pages = [], curPage = null, img = null, imgW = 0, imgH = 0, scale = 1;
@@ -1399,6 +1481,7 @@ async function loadSubjects() {
   try {
     const d = await api("/api/subjects");
     if (d.subjects && d.subjects.length) SUBJECTS = d.subjects;
+    if (d.prefixes) PREFIXES = d.prefixes;
     renderSubjectSelects();
   } catch (e) { /* 保持默认科目 */ }
 }
@@ -1445,7 +1528,7 @@ function switchTab(name) {
     else renderLibrary();                    // 已有数据: 直接渲染(否则切过来是空的)
   }
   if (name === "paper") { updateSelCount(); renderPaperList(); renderTplList(); }
-  if (name === "settings") { loadLogs(); renderSubjList(); }
+  if (name === "settings") { loadLogs(); renderSubjList(); loadVault(); }
   if (name === "editor" && img) {                      // 切回框选页: 恢复裁题模式 + 重算尺寸
     if (!pageEdit && !cropMode) enterPageEdit();
     requestAnimationFrame(() => renderCanvas());
@@ -3339,7 +3422,7 @@ $("pvSplit").addEventListener("pointerup", () => {
 });
 function openPreview(it) {
   pvItem = it;
-  pvCropOn = false; pvRect = null; pvDrag = null; pvCropReplace = 0;
+  pvCropOn = false; pvRect = null; pvDrag = null; pvCropReplace = 0; pvRebindCrop = 0;
   pvcv.classList.remove("on"); $("pvCropBtn").classList.remove("on");
   $("pvCropOk").style.display = "none"; $("pvCropCancel").style.display = "none";
   $("pvCropHint").style.display = "none";
@@ -3421,20 +3504,45 @@ $("pvAi").onclick = async () => {
 $("pvClose2").onclick = () => $("prevMask").classList.remove("show");
 
 
-/* ---------- 图片附件(上传/删除/插入引用) ---------- */
+/* ---------- 图片附件(上传/绑定编号/删除/插入引用) ---------- */
+let pvUploadTarget = 0;         // >0: 这次上传的图绑定到该编号 [图N]
+function figMissing(it) {
+  const have = new Set((it.figures || []).map(f => +f.n));
+  const txt = [$("pvNote").value, it.answer || "", it.analysis || ""].join(" ");
+  const nums = [...new Set((txt.match(/\[图(\d+)/g) || []).map(x => +x.replace(/\D/g, "")))];
+  return nums.filter(n => !have.has(n)).sort((a, b) => a - b);
+}
 function renderPvFigs(it) {
   const figs = it.figures || [];
-  $("pvFigList").innerHTML = figs.length ? figs.map(f => `
+  const miss = figMissing(it);
+  const box = $("pvFigList");
+  box.innerHTML = (miss.length ? `<div class="fig-miss">题干引用了 ${miss.map(n => "[图" + n + "]").join("　")} 但还没图片：
+      ${miss.map(n => `<button class="mini" data-up="${n}">上传到 [图${n}]</button>`).join(" ")}
+      <button class="mini" data-upcrop="${miss[0]}">框选到 [图${miss[0]}]</button></div>` : "")
+    + (figs.length ? figs.map(f => {
+        const cands = [...new Set([+f.n, ...miss])].sort((a, b) => a - b);
+        return `
     <div class="fig-item">
       <img src="${figUrl(f)}" loading="lazy">
       <div class="fig-info"><b>[图${f.n}]</b> ${f.upload ? "上传" : "裁剪"}</div>
       <div class="fig-ops">
+        <select data-bind="${f.n}" title="把这张图改绑到其他编号（会同步改写引用）">
+          ${cands.map(m => `<option value="${m}"${m === +f.n ? " selected" : ""}>[图${m}]</option>`).join("")}
+        </select>
         <button data-recrop="${f.n}" title="重新框选该图块（拖动虚线框后确认覆盖）">重裁</button>
         <button data-ins="${f.n}">插入</button>
         <button class="danger" data-del="${f.n}">删除</button>
       </div>
-    </div>`).join("") : '<div class="hint">还没有图片，可用「裁图」或「上传图片」</div>';
-  $("pvFigList").querySelectorAll("[data-ins]").forEach(b => b.onclick = () => {
+    </div>`; }).join("") : '<div class="hint">还没有图片，可用「裁图」或「上传图片」</div>');
+  box.querySelectorAll("[data-up]").forEach(b => b.onclick = () => {
+    pvUploadTarget = +b.dataset.up; $("pvUpload").click();
+  });
+  box.querySelectorAll("[data-upcrop]").forEach(b => b.onclick = () => {
+    pvRebindCrop = +b.dataset.upcrop;
+    if (!pvCropOn) $("pvCropBtn").click();
+    toast(`框选图形后会绑定到 [图${pvRebindCrop}]`, "ok");
+  });
+  box.querySelectorAll("[data-ins]").forEach(b => b.onclick = () => {
     const tag = `[图${b.dataset.ins}]`;
     const ta = $("pvNote");
     const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
@@ -3442,8 +3550,22 @@ function renderPvFigs(it) {
     ta.focus();
     toast(`已在识别内容插入 ${tag}`, "ok");
   });
-  $("pvFigList").querySelectorAll("[data-recrop]").forEach(b => b.onclick = () => pvRecrop(+b.dataset.recrop));
-  $("pvFigList").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+  box.querySelectorAll("[data-bind]").forEach(s => s.onchange = async () => {
+    const from = +s.dataset.bind, to = +s.value;
+    if (from === to) return;
+    try {
+      const d = await api(`/api/item/${it.id}/figure/${from}`, { method: "PATCH",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: to }) });
+      it.figures = d.figures;
+      $("pvNote").value = d.note || "";
+      $("pvAnswer").value = d.answer || "";
+      $("pvAnalysis").value = d.analysis || "";
+      renderPvFigs(it);
+      toast(`[图${from}] 已改绑为 [图${to}]，引用已同步`, "ok");
+    } catch (err) { toast("改绑失败: " + err.message, "err"); renderPvFigs(it); }
+  });
+  box.querySelectorAll("[data-recrop]").forEach(b => b.onclick = () => pvRecrop(+b.dataset.recrop));
+  box.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
     const n = b.dataset.del;
     if (!confirm(`删除 [图${n}]？题干中若还引用它，渲染时会显示缺失提示`)) return;
     try {
@@ -3454,24 +3576,34 @@ function renderPvFigs(it) {
     } catch (err) { toast("删除失败: " + err.message, "err"); }
   });
 }
+$("pvCap").onclick = () => {
+  const ta = $("pvNote");
+  const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+  ta.value = ta.value.slice(0, pos) + "[图注:说明文字]" + ta.value.slice(pos);
+  ta.focus();
+  toast("已插入 [图注:说明文字]，写在与图片同一行的下一行即可排在图片正下方", "");
+};
 $("pvUpload").onchange = async e => {
   const f = e.target.files[0];
   if (!f || !pvItem) return;
   const fd = new FormData();
   fd.append("file", f);
+  if (pvUploadTarget > 0) fd.append("n", String(pvUploadTarget));
   try {
     const d = await api(`/api/item/${pvItem.id}/upload`, { method: "POST", body: fd });
     pvItem.figures = d.figures;
     renderPvFigs(pvItem);
-    toast(`已上传为 [图${d.n}]，可点「插入」引用`, "ok");
+    toast(pvUploadTarget > 0 ? `已上传并绑定到 [图${d.n}]` : `已上传为 [图${d.n}]，可点「插入」引用`, "ok");
   } catch (err) { toast("上传失败: " + err.message, "err"); }
   e.target.value = "";
+  pvUploadTarget = 0;
 };
 $("prevMask").onclick = e => { if (e.target === $("prevMask")) $("prevMask").classList.remove("show"); };
 
 /* ---------- 手动裁图: 在预览大图上框选图形区域 -> [图@x,y,w,h] ---------- */
 let pvCropOn = false, pvDrag = null, pvRect = null, pvScale = 1;
 let pvCropReplace = 0;                 // >0 表示这次裁剪是覆盖该编号的图块
+let pvRebindCrop = 0;                  // >0 表示这次裁剪绑定的编号 [图N]
 const pvcv = $("pvCv"), pvctx = pvcv.getContext("2d");
 
 function pvResizeCv() {
@@ -3604,19 +3736,24 @@ $("pvCropOk").onclick = async () => {
   const w = Math.round(pvRect.w / dispW * 1000);
   const h = Math.round(pvRect.h / dispH * 1000);
   const replacing = pvCropReplace;
+  const binding = pvRebindCrop;
   pvCropReplace = 0;
+  pvRebindCrop = 0;
   try {
     // 当场裁好并存为图片附件(不再写成 [图@坐标] 拖到渲染时裁, 图片被改动后也不会错位)
     const d = await api(`/api/item/${pvItem.id}/figure/crop`, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ x: Math.max(0, x), y: Math.max(0, y),
                              w: Math.min(1000, w), h: Math.min(1000, h),
-                             replace: replacing || 0 }) });
+                             replace: replacing || 0, bind: binding || 0 }) });
     pvItem.figures = d.figures;
     renderPvFigs(pvItem);
     if (replacing) {
       toast("图 " + d.n + " 已按新框重新裁剪", "ok");
       $("pvCropBtn").click();                 // 重裁是一次性操作 -> 退出
+    } else if (binding) {
+      toast("已裁好并绑定到 [图" + d.n + "]", "ok");
+      pvRect = null; pvDraw();
     } else {
       const tag = "[图" + d.n + "]";
       const note = $("pvNote").value.trim();
@@ -3750,6 +3887,7 @@ $("pdfBtn").onclick = async () => {
       notice: $("phNotice").value || "",
       body_size: $("phBodySize").value || "",
       leading: $("phLeading").value || "",
+      fig_height: $("phFigHeight").value || "",
       first_indent: $("phIndent").value || "" });
     const d = await api("/api/paper/pdf?" + q.toString());
     window.open(d.url, "_blank");
@@ -3838,6 +3976,45 @@ $("undoBtn").onclick = async () => {
 
 /* ---------- 自动组卷 ---------- */
 let autoPapers = [];
+let autoFixed = [];                     // 指定题目(每份卷子必含)的 id
+function autoFixedRender() {
+  const box = $("autoFixedList");
+  if (!box) return;
+  box.innerHTML = autoFixed.length ? autoFixed.map((id, i) => {
+    const it = library.find(x => x.id === id) || {};
+    return `<span class="af-chip" data-i="${i}" title="${esc((it.note || "").slice(0, 80))}">`
+         + `${esc(it.code || id)}<b>×</b></span>`;
+  }).join("") : '<span class="hint">未指定（可输入编号，或把错题库里勾选的题加进来）</span>';
+  box.querySelectorAll(".af-chip").forEach(c => c.onclick = () => {
+    autoFixed.splice(+c.dataset.i, 1); autoFixedRender(); autoSaveCfg();
+  });
+}
+function autoFixedAddCodes(codes) {
+  let ok = 0;
+  String(codes || "").split(/[,，、;；\s]+/).filter(Boolean).forEach(c => {
+    const it = library.find(x => (x.code || "").toLowerCase() === c.toLowerCase() || x.id === c);
+    if (it && !autoFixed.includes(it.id)) { autoFixed.push(it.id); ok++; }
+  });
+  autoFixedRender(); autoSaveCfg();
+  return ok;
+}
+$("autoFixedAdd").onclick = () => {
+  const ok = autoFixedAddCodes($("autoFixedCode").value.trim());
+  if (!ok) return toast("没找到对应题目（可输入编号，如 MA0003）", "err");
+  $("autoFixedCode").value = "";
+  toast(`已指定 ${ok} 道题（每份卷子必含）`, "ok");
+};
+$("autoFixedSel").onclick = () => {
+  if (!selected.size) return toast("错题库里还没勾选题目", "err");
+  const n0 = autoFixed.length;
+  [...selected].forEach(id => { if (!autoFixed.includes(id)) autoFixed.push(id); });
+  autoFixedRender(); autoSaveCfg();
+  toast(`已指定 ${autoFixed.length - n0} 道题（每份卷子必含）`, "ok");
+};
+$("autoFixedClear").onclick = () => {
+  autoFixed = []; autoFixedRender(); autoSaveCfg();
+  toast("已清空指定题目", "ok");
+};
 
 function autoSubjects() {
   const subs = [...new Set(library.map(x => x.subject || "").filter(s => s && s !== "未分类"))];
@@ -3920,6 +4097,7 @@ function autoSaveCfg() {
       papers: $("autoPapers").value, tilt: $("autoTilt").value,
       kw: $("autoKw").checked, avoid: $("autoAvoid").checked,
       groups: autoCollect(),
+      fixed: autoFixed.slice(),
     };
     localStorage.setItem("autoCfg", JSON.stringify(all));
   } catch (e) { }
@@ -3987,7 +4165,8 @@ function autoFill() {
   let ok = 0;
   document.querySelectorAll("#autoGroups .auto-group").forEach(el => {
     const ch = el.querySelector(".ag-ch").value;
-    const avail = autoPoolCount(ch);
+    const fx = autoFixed.filter(id => ((library.find(x => x.id === id) || {}).chapter || "") === ch).length;
+    const avail = Math.max(0, autoPoolCount(ch) - fx);
     const num = el.querySelector(".ag-num");
     if (!ch || avail <= 0) { num.value = 0; return; }
     num.value = Math.max(1, Math.min(8, Math.floor(avail / papers)));   // 按份数均分题库
@@ -4023,6 +4202,8 @@ function autoBody(extra) {
     avoid_last: $("autoAvoid").checked,
     tilt: $("autoTilt").value,
     groups: autoCollect(),
+    fixed: autoFixed.slice(),
+    fig_height: $("phFigHeight").value || "",
   }, extra || {}));
 }
 
@@ -4063,7 +4244,8 @@ function paperHeadQuery(ids, titleOverride) {
     title: titleOverride || $("phTitle").value || "",
     subject_line: $("phSubject").value || "", subtitle: $("phSubtitle").value || "",
     notice: $("phNotice").value || "", body_size: $("phBodySize").value || "",
-    leading: $("phLeading").value || "", first_indent: $("phIndent").value || "" });
+    leading: $("phLeading").value || "", first_indent: $("phIndent").value || "",
+    fig_height: $("phFigHeight").value || "" });
 }
 
 async function autoPdf(i) {
@@ -4084,7 +4266,9 @@ $("autoSubject").onchange = () => {
     $("autoTilt").value = cfg.tilt || "";
     $("autoKw").checked = !!cfg.kw;
     $("autoAvoid").checked = !!cfg.avoid;
+    autoFixed = (cfg.fixed || []).slice();
   }
+  autoFixedRender();
   autoInitGroups(true);
 };
 $("autoFill").onclick = () => autoFill();
@@ -4112,7 +4296,9 @@ $("autoPanel").ontoggle = () => {
     $("autoTilt").value = cfg.tilt || "";
     $("autoKw").checked = !!cfg.kw;
     $("autoAvoid").checked = !!cfg.avoid;
+    autoFixed = (cfg.fixed || []).slice();
   }
+  autoFixedRender();
   autoInitGroups(false);
   autoRefreshAvail();
 };
@@ -4176,7 +4362,7 @@ function savePaperHead() {
       notice: $("phNotice").value, header: $("paperHeader").value,
       subtitle: $("phSubtitle").value,
       bodySize: $("phBodySize").value, leading: $("phLeading").value,
-      indent: $("phIndent").value }));
+      indent: $("phIndent").value, figHeight: $("phFigHeight").value }));
   } catch (e) { }
 }
 function loadPaperHead() {
@@ -4191,6 +4377,7 @@ function loadPaperHead() {
     $("phBodySize").value = d.bodySize || "10.5";
     $("phLeading").value = d.leading || "0.95";
     $("phIndent").value = d.indent || "0";
+    $("phFigHeight").value = d.figHeight || "24";
   } catch (e) { }
 }
 
@@ -4275,6 +4462,7 @@ function renderSubjList() {
     if (!confirm(msg)) return;
     await saveSubjects(SUBJECTS.filter(x => x !== name));
   });
+  if ($("rnKind")) rnFill();
 }
 
 async function saveSubjects(list) {
@@ -4283,6 +4471,7 @@ async function saveSubjects(list) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subjects: list }) });
     SUBJECTS = d.subjects;
+    if (d.prefixes) PREFIXES = d.prefixes;
     renderSubjectSelects();
     renderSubjList();
     const msg = d.moved ? `已保存科目设置，${d.moved} 道题归入「其他」` : "科目已更新";
@@ -4302,6 +4491,117 @@ $("addSubjBtn").onclick = () => {
   saveSubjects([...SUBJECTS, name]);
 };
 $("newSubj").addEventListener("keydown", e => { if (e.key === "Enter") $("addSubjBtn").click(); });
+
+/* ---------- 一键改名（全局覆盖） ---------- */
+function kwList(s) { return String(s || "").split(/[,，、;；\s]+/).filter(Boolean); }
+function rnFill() {
+  const k = $("rnKind").value;
+  $("rnSubjWrap").style.display = (k === "chapter") ? "" : "none";
+  if ($("rnSubject") && !$("rnSubject").options.length) {
+    $("rnSubject").innerHTML = '<option value="__all__">全部科目</option>'
+      + SUBJECTS.map(s => `<option>${esc(s)}</option>`).join("");
+  }
+  let vals = [];
+  if (k === "subject") vals = SUBJECTS.map(s => [s, s]);
+  else if (k === "prefix") vals = SUBJECTS.map(s => [s, `${s}（${PREFIXES[s] || "OT"}）`]);
+  else if (k === "chapter") {
+    const subj = $("rnSubject").value;
+    const seen = [];
+    library.forEach(it => {
+      if (subj && subj !== "__all__" && (it.subject || "未分类") !== subj) return;
+      const c = it.chapter || "";
+      if (c && !seen.includes(c)) seen.push(c);
+    });
+    vals = seen.map(c => [c, c]);
+  } else {
+    const seen = [];
+    library.forEach(it => kwList(it.keywords).forEach(w => { if (!seen.includes(w)) seen.push(w); }));
+    vals = seen.map(w => [w, w]);
+  }
+  $("rnOld").innerHTML = vals.length
+    ? vals.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")
+    : '<option value="">（没有可改的名称）</option>';
+  $("rnNew").value = "";
+  $("rnMsg").textContent = k === "prefix" ? "改前缀会给该科目所有题重新编号（旧前缀 + 序号 → 新前缀 + 原序号）"
+    : k === "subject" ? "科目改名会同步：题目、编号前缀、大题模板；图片不用搬动"
+    : k === "chapter" ? "标签（大题）改名会同步：题目的大题归类 + 科目的大题模板"
+    : "关键字改名会替换所有题目里的该关键字（逗号分隔的令牌，精确匹配）";
+}
+$("rnKind").onchange = rnFill;
+$("rnSubject").onchange = rnFill;
+$("rnBtn").onclick = async () => {
+  const kind = $("rnKind").value, old = $("rnOld").value, nv = $("rnNew").value.trim();
+  if (!old) return toast("请选择原名", "err");
+  if (!nv) return toast("请输入新名", "err");
+  const label = { subject: "科目", chapter: "标签（大题）", keyword: "关键字", prefix: "编号前缀" }[kind];
+  const body = kind === "prefix" ? { kind, subject: old, new: nv }
+    : { kind, old, new: nv,
+        subject: (kind === "chapter" && $("rnSubject").value !== "__all__") ? $("rnSubject").value : "" };
+  if (!confirm(`把${label}「${old}」全局改名为「${nv}」？\n\n所有相关题目 / 模板 / 编号会一次性覆盖（写库前自动备份）。`)) return;
+  const b = $("rnBtn"); b.disabled = true;
+  try {
+    const d = await api("/api/rename", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast(d.msg || "已改名", "ok");
+    $("rnMsg").textContent = d.msg || "";
+    if (kind === "subject") await loadSubjects();
+    await loadLibrary();
+    if (kind === "chapter") loadTpl();
+    rnFill();
+  } catch (err) { toast("改名失败: " + err.message, "err"); }
+  b.disabled = false;
+};
+
+/* ---------- 数据仓库（切换 / 新建 / 合并，类似 Obsidian 仓库） ---------- */
+let VAULT_INFO = null;
+async function loadVault() {
+  try {
+    const d = await api("/api/vault");
+    VAULT_INFO = d;
+    $("vaultCur").textContent = `${d.current}（${(d.vaults.find(v => v.current) || {}).items || 0} 题）`;
+    $("vaultPath").textContent = d.path;
+    $("vaultSel").innerHTML = d.vaults.map(v =>
+      `<option value="${esc(v.name)}"${v.current ? " selected" : ""}>${esc(v.name)}（${v.items} 题）</option>`).join("");
+    $("vaultMergeSel").innerHTML = d.vaults.filter(v => !v.current).map(v =>
+      `<option value="${esc(v.name)}">${esc(v.name)}（${v.items} 题）</option>`).join("")
+      || '<option value="">（没有其他仓库）</option>';
+  } catch (e) { /* 忽略 */ }
+}
+async function vaultOp(path, body, okMsg) {
+  try {
+    const d = await api(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(body || {}) });
+    toast(d.msg || okMsg || "完成", "ok");
+    return d;
+  } catch (err) { toast("失败: " + err.message, "err"); return null; }
+}
+$("vaultSwitch").onclick = async () => {
+  const name = $("vaultSel").value;
+  if (!name) return;
+  if (VAULT_INFO && name === VAULT_INFO.current) return toast("已经是当前仓库", "err");
+  if (!confirm(`切换到仓库「${name}」？页面会刷新，加载该仓库的题库与图片。`)) return;
+  if (await vaultOp("/api/vault/switch", { name })) location.reload();
+};
+$("vaultCreate").onclick = async () => {
+  const name = $("vaultNew").value.trim();
+  if (!name) return toast("请输入新仓库名", "err");
+  if (!confirm(`新建空仓库「${name}」并切换过去？（当前题目仍留在原仓库，不会丢）`)) return;
+  if (await vaultOp("/api/vault/create", { name })) location.reload();
+};
+$("vaultRename").onclick = async () => {
+  const name = $("vaultNew").value.trim();
+  if (!name) return toast("先在输入框填写新仓库名", "err");
+  if (!confirm(`把当前仓库改名为「${name}」？（仓库目录一并改名）`)) return;
+  if (await vaultOp("/api/vault/rename", { new: name })) location.reload();
+};
+$("vaultMerge").onclick = async () => {
+  const from = $("vaultMergeSel").value;
+  if (!from) return toast("没有可合并的其他仓库", "err");
+  const cur = VAULT_INFO ? VAULT_INFO.current : "";
+  if (!confirm(`把「${from}」的全部题目合并进当前仓库「${cur}」？\n\n会复制图片并重新编号；源仓库保留不动，现有题目不会被覆盖。`)) return;
+  const d = await vaultOp("/api/vault/merge", { from });
+  if (d) { await loadLibrary(); await loadVault(); }
+};
 
 async function loadAiCfg() {
   try {
@@ -4585,6 +4885,7 @@ loadPages();
 loadTpl();
 loadAiCfg();
 loadPaperHead();
+loadVault();
 // 数据就绪后才定位到具体科目/题目, 避免中间态闪烁
 loadLibrary(false).then(() => applyRoute(location.pathname));
 window.addEventListener("resize", () => { if (img) renderCanvas(); });

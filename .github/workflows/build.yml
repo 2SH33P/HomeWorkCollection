@@ -1,0 +1,78 @@
+name: build
+
+# 只编译并上传 Actions 产物（Artifacts），不创建 Release、不发布任何东西。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: >-
+          python -m pip install --upgrade pip pyinstaller fastapi "uvicorn[standard]"
+          python-multipart pillow opencv-python-headless numpy typst
+      - name: Build exe
+        run: >-
+          python -m PyInstaller --noconfirm --onefile --name HomeWorkCollection
+          --add-data "tools/crop-tool/static;static"
+          --collect-all typst
+          --hidden-import uvicorn.logging
+          --hidden-import uvicorn.loops.auto
+          --hidden-import uvicorn.protocols.http.auto
+          --hidden-import uvicorn.protocols.websockets.auto
+          --hidden-import uvicorn.lifespan.on
+          tools/crop-tool/app.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HomeWorkCollection-windows
+          if-no-files-found: error
+          path: |
+            dist/HomeWorkCollection.exe
+            fonts/
+            typst-packages/
+            README-Windows.txt
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: >-
+          python -m pip install --upgrade pip pyinstaller fastapi "uvicorn[standard]"
+          python-multipart pillow opencv-python-headless numpy typst
+      - name: Build binary
+        run: >-
+          python -m PyInstaller --noconfirm --onefile --name HomeWorkCollection
+          --add-data "tools/crop-tool/static:static"
+          --collect-all typst
+          --hidden-import uvicorn.logging
+          --hidden-import uvicorn.loops.auto
+          --hidden-import uvicorn.protocols.http.auto
+          --hidden-import uvicorn.protocols.websockets.auto
+          --hidden-import uvicorn.lifespan.on
+          tools/crop-tool/app.py
+      - name: Package (binary + fonts + typst packages)
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p pkg/HomeWorkCollection
+          cp dist/HomeWorkCollection pkg/HomeWorkCollection/
+          cp -r fonts typst-packages pkg/HomeWorkCollection/
+          chmod +x pkg/HomeWorkCollection/HomeWorkCollection
+          cd pkg
+          zip -r "../HomeWorkCollection-macos-${ARCH}.zip" HomeWorkCollection
+          echo "ARTIFACT=HomeWorkCollection-macos-${ARCH}.zip" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HomeWorkCollection-macos-${{ runner.arch }}
+          if-no-files-found: error
+          path: ${{ env.ARTIFACT }}
