@@ -322,6 +322,22 @@ canvas { display: block; margin: 0 auto; cursor: crosshair; border-radius: var(-
            overscroll-behavior: contain; padding-right: 2px; }
 .side-foot { flex: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--sep);
              background: var(--card); }
+/* 侧栏防溢出: 头部徽标/按钮自动换行, 摘要另起一行截断 */
+.side-top h3 { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.side-top h3 .hint { font-weight: 400; margin-left: 0; min-width: 0; white-space: nowrap;
+                     overflow: hidden; text-overflow: ellipsis; }
+.box-card { min-width: 0; overflow-wrap: anywhere; }
+.box-card .bhead { flex-wrap: wrap; row-gap: 5px; }
+.box-card .bhead .badge { flex: none; }
+.b-sub { font-size: 12px; color: var(--t3); margin-top: 4px; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+.box-card .brow { flex-wrap: wrap; row-gap: 6px; column-gap: 10px; }
+.star-row { flex-wrap: wrap; row-gap: 4px; }
+.b-cont { flex-wrap: wrap; row-gap: 5px; }
+.b-cont .bc-sum { flex: 1 1 110px; min-width: 0; }
+.b-cont button.mini { flex: none; }
+.b-conts-t { overflow-wrap: anywhere; }
+.b-fig-strip { min-width: 0; }
 .box-card { border: 1px solid var(--sep); border-radius: var(--r-md); padding: 10px; margin-bottom: 10px;
             animation: fadeSlide .2s var(--motion); }
 .box-card { padding: 8px 10px; }
@@ -2356,14 +2372,15 @@ function boxCardHTML(b, qno, pid, gi) {
       <div class="bhead">
         <span class="bno">#${qno}${other ? ` <span class="badge">${pageNo(pid)}</span>` : ""}</span>
         <span class="b-star">${"★".repeat(star)}${"☆".repeat(5 - star)}</span>
-        <span class="b-sum">${esc(b.chapter || "未分类")}${sum ? " · " + esc(sum) : ""}</span>
-        ${b.savedCode ? `<span class="badge ok" title="最近入库：${esc(b.savedCode)}${b.savedTimes > 1 ? `（已存 ${b.savedTimes} 次）` : ""}；允许重复入库，再点保存会再存一份">已入库 ${esc(b.savedCode)}${b.savedTimes > 1 ? " ×" + b.savedTimes : ""}</span>` : ""}
+        ${b.savedCode ? `<span class="badge ok" title="最近入库：${esc(b.savedCode)}${b.savedTimes > 1 ? `（已存 ${b.savedTimes} 次）` : ""}；允许重复入库，再点保存会再存一份">入库 ${esc(b.savedCode)}${b.savedTimes > 1 ? " ×" + b.savedTimes : ""}</span>` : ""}
         ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
         ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
-        ${conts.length ? `<span class="badge">含 ${conts.length} 个续块</span>` : ""}
+        ${conts.length ? `<span class="badge" title="含 ${conts.length} 个续块，保存时并入本题">续 ${conts.length}</span>` : ""}
+        <span style="flex:1 1 auto"></span>
         <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
         <button class="del" data-id="${b.id}">删</button>
       </div>
+      <div class="b-sub">${esc(b.chapter || "未分类")}${sum ? " · " + esc(sum) : ""}</div>
       <div class="bbody">${boxBodyHTML(b)}</div>
       ${conts.length ? `<div class="b-conts">
         <div class="b-conts-t">续块（${conts.length}）：同一道题，保存时会并入本题</div>
@@ -2379,15 +2396,15 @@ function contRowHTML(b, pid, gi) {
     <div class="b-cont" data-id="${b.id}" data-pid="${pid}">
       <span class="bc-no">续 ${gi.kOf[b.id] || 1}</span>
       <span class="bc-pg">${pageNo(pid)}</span>
-      <span class="bc-sum">${esc(b.chapter || "")}${sum ? " · " + esc(sum) : ""}</span>
-      ${b.savedCode ? `<span class="badge ok">已入库</span>` : '<span class="badge miss">待入库</span>'}
+      ${b.savedCode ? `<span class="badge ok" title="已入库 ${esc(b.savedCode)}">入库</span>` : ""}
       ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
       ${(b.note || "").trim()
-        ? `<span class="badge ok" title="${esc((b.note || "").slice(0, 300))}">文字 ${(b.note || "").trim().length} 字</span>`
+        ? `<span class="badge ok" title="${esc((b.note || "").slice(0, 300))}">文 ${(b.note || "").trim().length}</span>`
         : '<span class="badge miss">无文字</span>'}
-      <span style="flex:1"></span>
+      <span class="bc-sum">${esc(b.chapter || "")}${sum ? " · " + esc(sum) : ""}</span>
+      <span style="flex:1 1 auto"></span>
       <button type="button" class="mini bc-unlink" data-id="${b.id}" data-pid="${pid}"
-              title="取消续块：本块变回独立题目">取消续块</button>
+              title="取消续块：移除这一块（已裁的图块并回首块，文字随块一起消失），不会变成新题目">取消续块</button>
     </div>`;
 }
 

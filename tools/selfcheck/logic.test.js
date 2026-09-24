@@ -148,5 +148,15 @@ markSaved(pend, [{ code: "MA0002", box: { x: 40, y: 200, w: 300, h: 300 } }]);
 eq(pend[0].savedCode, "MA0002", "重复入库后记录最新编号（不再跳过）");
 eq(pend[0].savedTimes, 2, "入库次数累加（允许重复）");
 
+console.log("\n[6] 侧栏排版防溢出（布局回归护栏）");
+ok(/\.box-card \.bhead \{[^}]*flex-wrap: wrap/.test(src), "卡片头部(徽标/按钮)可换行");
+ok(/\.box-card \.brow \{[^}]*flex-wrap: wrap/.test(src), "按钮行可换行");
+ok(/\.b-cont \{[^}]*flex-wrap: wrap/.test(src), "续块行可换行");
+ok(/\.b-sub \{[^}]*text-overflow: ellipsis/.test(src), "摘要单行截断，不挤爆头部");
+ok(/\.side-top h3 \{[^}]*flex-wrap: wrap/.test(src), "侧栏标题可换行");
+ok(/#boxList \{[^}]*overflow-y: auto/.test(src), "列表自身滚动（顶部/底部固定）");
+ok(src.includes('class="side-top"') && src.includes('class="side-foot"'), "侧栏分上/中/下三段");
+ok(!src.includes('<span class="b-sum">'), "旧的不换行摘要已移除");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);
