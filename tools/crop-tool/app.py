@@ -711,7 +711,14 @@ async def crop(payload: dict):
     img = open_photo(srcs[0])
     r = page_ratio(page) or 1.0
     db = load_db()
-    saved = []
+    saved, merged = [], 0
+
+    def _remap_refs(text, mapping):
+        """文本里的 [图N|…] 按 mapping 重编号(mapping 里没有的不变)。"""
+        return re.sub(r"\[图(\d+)([^\]]*)\]",
+                      lambda m: f"[图{mapping.get(int(m.group(1)), int(m.group(1)))}{m.group(2)}]",
+                      text or "")
+
     for b in boxes:
         x, y, w, h = (max(0, int(b.get(k, 0) * r)) for k in ("x", "y", "w", "h"))
         if w < 20 or h < 20:
@@ -723,6 +730,75 @@ async def crop(payload: dict):
         subj_dir = ITEMS_DIR / sd
         subj_dir.mkdir(parents=True, exist_ok=True)
         crop_img = img.crop((x, y, x + w, y + h))
+        # ---- 续块: 并入同一组的首块(不单独成题) ----
+        gid = str(b.get("group") or "").strip()
+        head = next((q for q in db["items"]
+                     if gid and (q.get("group") or "") == gid
+                     and (q.get("subject") or "") == subject), None) if gid else None
+        if head is not None:
+            hdir = (ROOT / str(head.get("image") or "")).parent
+            hfigs = head.setdefault("figures", [])
+            nxt = [max([0] + [int(f.get("n", 0) or 0) for f in hfigs])]
+
+            def take():
+                nxt[0] += 1
+                return nxt[0]
+
+            mapping = {}                            # 续块图号 -> 并题后的新图号
+            W, H = crop_img.size
+            for fg in (b.get("figures") or []):
+                fx, fy, fw, fh = (int(fg.get(k, 0)) for k in ("x", "y", "w", "h"))
+                x0 = max(0, int(fx / 1000 * W)); y0 = max(0, int(fy / 1000 * H))
+                w0 = min(W - x0, max(20, int(fw / 1000 * W)))
+                h0 = min(H - y0, max(20, int(fh / 1000 * H)))
+                if x0 >= W or y0 >= H or w0 < 5 or h0 < 5:
+                    continue
+                try:
+                    fimg = trim_margins(crop_img.crop((x0, y0, x0 + w0, y0 + h0)))
+                except Exception:
+                    continue
+                if fimg.size[0] < 3 or fimg.size[1] < 3:
+                    continue
+                n_new = take()
+                fname = f"{head['id']}_fig{n_new}.jpg"
+                try:
+                    fimg.save(hdir / fname, "JPEG", quality=95)
+                except Exception:
+                    nxt[0] -= 1
+                    continue
+                mapping[int(fg.get("n", 0) or 0)] = n_new
+                hfigs.append({"n": n_new, "file": str((hdir / fname).relative_to(ROOT)),
+                              "x": fx, "y": fy, "w": fw, "h": fh,
+                              "t": int(time.time() * 1000)})
+            # 文本里引用了但还没裁的图号也分配新号, 避免与首块撞号
+            refs = str(b.get("note") or "") + " " + str(b.get("answer") or "") \
+                   + " " + str(b.get("analysis") or "")
+            for _m in {int(v) for v in re.findall(r"\[图(\d+)", refs)}:
+                if _m not in mapping:
+                    mapping[_m] = take()
+            cnote = _remap_refs(b.get("note") or "", mapping).strip()
+            if cnote:
+                head["note"] = ((head.get("note") or "").rstrip() + "\n" + cnote).strip()
+            else:                                   # 续块没文字 -> 存成图块, 内容不丢
+                nn = take()
+                fname = f"{head['id']}_fig{nn}.jpg"
+                crop_img.save(hdir / fname, "JPEG", quality=95)
+                hfigs.append({"n": nn, "file": str((hdir / fname).relative_to(ROOT)),
+                              "t": int(time.time() * 1000)})
+                head["note"] = ((head.get("note") or "").rstrip() + f"\n[图{nn}]").strip()
+            for k in ("answer", "analysis"):
+                add = _remap_refs(b.get(k) or "", mapping).strip()
+                if add:
+                    old = (head.get(k) or "").strip()
+                    head[k] = (old + "\n" + add) if old else add
+            head["keywords"] = ",".join(dict.fromkeys(
+                _kw_list(head.get("keywords")) + _kw_list(b.get("keywords"))))
+            head["star"] = max(int(head.get("star") or 0),
+                                max(0, min(5, int(b.get("star") or 0))))
+            if not (head.get("chapter") or "").strip():
+                head["chapter"] = chapter
+            merged += 1
+            continue
         item_id = f"q{int(time.time() * 1000)}{len(saved)}"
         img_name = f"{item_id}.jpg"
         img_path = subj_dir / img_name
@@ -765,7 +841,7 @@ async def crop(payload: dict):
             "keywords": b.get("keywords", ""),
             "star": max(0, min(5, int(b.get("star") or 0))),
             "figures": figs,
-            "group": b.get("group", ""),   # 续块分组: 同一组的多块视为一道题
+            "group": gid,                 # 续块分组: 同一组的多块合并为一道题
             "source_page": f"pages/{srcs[0].name}",
             "box": {k: int(b.get(k, 0)) for k in ("x", "y", "w", "h")},   # 取景框(缩略图坐标)
             "created": time.strftime("%Y-%m-%d %H:%M"),
@@ -775,7 +851,8 @@ async def crop(payload: dict):
     save_db(db)
     if saved:
         threading.Thread(target=_auto_ai_bg, args=(list(saved),), daemon=True).start()
-    return {"ok": True, "count": len(saved), "items": saved, "auto_ai": True}
+    return {"ok": True, "count": len(saved), "items": saved, "auto_ai": True,
+            "merged": merged}
 
 
 def trim_margins(img, tol=245):
@@ -1816,7 +1893,13 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
         else:
             lines.append(f'#text(size: BODY)[{typ_esc(ln)}] \\')
     lines.append('#v(0.45cm)')
-    n, prev_g = 0, None
+    flat = [it for _g, _items in groups.items() for it in _items]
+    grp_first = {}                    # 续块组 -> 卷面上该组第一块(用于判断「续」块)
+    for _it in flat:
+        _g0 = _it.get("group") or ""
+        if _g0 and _g0 not in grp_first:
+            grp_first[_g0] = _it["id"]
+    n = 0
     ordered = {}                      # 题号 -> [该题的块(含续块)]
     for gname, gitems in groups.items():
         if gname and gname not in ("未命名", "未分类", "无"):
@@ -1828,13 +1911,13 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                 # § 前缀 = 卷面分节块(大题标题/阅读材料), 黑体整行, 不参与编号
                 lines.append(f'#text(font: F_HEI, size: BODY, weight: "bold")'
                              f'[{typ_esc(t0[1:].strip())}] \\')
-            elif g and g == prev_g:
+            elif g and grp_first.get(g) != it["id"]:
+                # 同一续块组的后续块: 不重新编号(不要求与首块相邻, 跨页/中间插了别的题也能正确识别)
                 lines.append('#text(font: F_KAI, size: BODY)[(续)] \\')
             else:
                 n += 1
                 lines.append(f"{n}．")               # 题号顶格, 题干接同一行
             ordered.setdefault(n, []).append(it)
-            prev_g = g
             txt = (it.get("note") or "").strip()
             if txt:
                 # 清洗 AI 输出的 Markdown: 去代码块围栏和 # 标题标记, 避免 Typst 误渲染
@@ -2839,15 +2922,19 @@ def make_paper(ids: str = ""):
     # 按 ids 中的顺序排列
     order = {iid: n for n, iid in enumerate(wanted)}
     items.sort(key=lambda it: order.get(it["id"], 999))
-    cards, n, prev_g = [], 0, None
+    grp_first = {}                                  # 续块组 -> 首块 id(卷面顺序)
+    for it in items:
+        g0 = it.get("group") or ""
+        if g0 and g0 not in grp_first:
+            grp_first[g0] = it["id"]
+    cards, n = [], 0
     for it in items:
         g = it.get("group") or ""
-        if g and g == prev_g:                       # 同一续块组: 不重新编号
+        if g and grp_first.get(g) != it["id"]:     # 同一续块组: 不重新编号
             no = '<div class="qno cont">(续)</div>'
         else:
             n += 1
             no = f'<div class="qno">{n}.</div>'
-        prev_g = g
         cards.append(f'<div class="q">{no}'
                      f'<div class="qimg"><img src="/files/{it["image"]}"></div></div>')
     cards = "".join(cards)

@@ -2073,7 +2073,12 @@ function cvUp(e) {
   if (drag.mode === "new") {
     const b = boxes.find(x => x.id === "new");
     if (b && (b.w < 15 || b.h < 15)) boxes = boxes.filter(x => x.id !== "new");
-    else if (b) { b.id = uid(); if (pendingGroup) b.group = pendingGroup; needList = true; }
+    else if (b) {
+      b.id = uid();
+      if (pendingGroup) { b.group = pendingGroup; pendingGroup = null;   // 续块只接下一个新框(一次性)
+                         toast("新框已并入续块（卷面上算同一题号）", "ok"); }
+      needList = true;
+    }
   }
   drag = null; saveBoxes();
   if (needList) renderBoxList();      // 先持久化再刷新列表
@@ -2095,6 +2100,7 @@ cv.addEventListener("touchstart", e => {
 /* ---------- 框选列表(多页统一) + 续块分组 ---------- */
 let curSubject = localStorage.getItem("curSubject") || "数学";
 let pendingGroup = null;    // 跨页续块: 点某框「续块」后, 新框选自动并入该组
+let groupFirstIds = new Set(), groupCounts = {};   // 续块组显示用(renderBoxList 里算)
 let openBoxes = new Set();  // 展开编辑的框 id
 $("curSubj").innerHTML = SUBJECTS.map(s => `<option>${s}</option>`).join("") + "<option>未分类</option>";
 $("curSubj").value = curSubject;
@@ -2152,6 +2158,8 @@ function boxCardHTML(b, i, pid) {
         <span class="b-sum">${esc(b.chapter || "未分类")}${summary ? " · " + esc(summary) : ""}</span>
         ${(b.figures || []).length ? `<span class="badge">图 ${(b.figures || []).length}</span>` : ""}
         ${boxMissingFigs(b).length ? `<span class="badge miss" title="正文引用的 [图N] 还没裁图">缺图</span>` : ""}
+        ${b.group && (groupCounts[b.group] || 0) > 1
+            ? (groupFirstIds.has(b.id) ? '<span class="badge">含续块</span>' : '<span class="badge">续块</span>') : ""}
         <button class="b-toggle" data-id="${b.id}">${open ? "收起" : "编辑"}</button>
         <button class="del" data-id="${b.id}">删</button>
       </div>
@@ -2184,7 +2192,8 @@ function boxCardHTML(b, i, pid) {
         <div class="brow">
           <button class="mini b-ai" data-id="${b.id}" title="识别题干文字（静默填入；图形请在卡片里点「裁图」手动框选）">AI 识别</button>
           <button type="button" class="mini b-cfig" data-id="${b.id}" title="在题目框内框选图形，可连续裁多个">裁图</button>
-          <button class="mini cont ${pendingGroup === b.id ? "on" : ""}" data-id="${b.id}">续块</button>
+          <button type="button" class="mini cont ${pendingGroup && (pendingGroup === b.id || b.group === pendingGroup) ? "on" : ""}" data-id="${b.id}"
+            title="并入上一题 / 开启续块：点一下把本块接到上一题，之后新框选的块也会并入同一题；首块再点=结束续块">${pendingGroup === b.id ? "结束续块" : "续块"}</button>
         </div>
       </div>
     </div>`;
@@ -2202,6 +2211,15 @@ function renderBoxList() {
   const el = $("boxList");
   const keepScrollTop = el.scrollTop;                 // 记住滚动位置(重建后恢复)
   const groups = allPageBoxes();
+  groupFirstIds = new Set(); groupCounts = {};
+  groups.forEach(gp => {                       // 续块组: 首块/成员数(用于卡片标签)
+    const seen = {};
+    gp.boxes.forEach(b => {
+      if (!b.group) return;
+      groupCounts[b.group] = (groupCounts[b.group] || 0) + 1;
+      if (!(b.group in seen)) { seen[b.group] = b.id; groupFirstIds.add(b.id); }
+    });
+  });
   let total = 0;
   el.innerHTML = groups.map(g => {
     total += g.boxes.length;
@@ -2283,25 +2301,45 @@ function renderBoxList() {
       }
     });
   });
-  el.querySelectorAll(".cfig").forEach(btn => btn.onclick = () => {
-    const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
-    enterCropMode(pid, bid);
-  });
   el.querySelectorAll(".cont").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card"), pid = card.dataset.pid, bid = btn.dataset.id;
-    const bs = loadBoxes(pid);
-    const b = bs.find(x => x.id === bid);
-    if (pendingGroup === bid) {          // 再点一次: 取消续块
-      pendingGroup = null;
-      if (b && b.group === bid) b.group = "";
-      toast("已取消续块", "");
-    } else {
-      pendingGroup = bid;
-      if (b && !b.group) b.group = bid;  // 源框成为组首
-      toast("已标记续块：接下来在任意页新框选的框将并入此题（可跨页）", "ok");
+    // 同一次点击里只加载一次每页数组, 改完统一保存(避免多页互相覆盖)
+    const arrOf = {}, pageIds = [];
+    allPageBoxes().forEach(gp => { pageIds.push(gp.pid); arrOf[gp.pid] = loadBoxes(gp.pid); });
+    const flat = [];
+    pageIds.forEach(p => arrOf[p].forEach(x => flat.push({ pid: p, b: x })));
+    const b = (arrOf[pid] || []).find(x => x.id === bid);
+    if (!b) return;
+    const idx = flat.findIndex(x => x.b.id === bid);
+    if (b.group && b.group !== bid) {
+      b.group = "";                            // 本块是续块 -> 取消它
+      toast("已取消续块：本块不再属于上一题", "");
+    } else if (b.group === bid) {               // 本块是续块组首 -> 开/关「后续新框选并入」
+      if (pendingGroup === bid) {
+        const hasCont = flat.some(x => x.b.group === bid && x.b.id !== bid);
+        pendingGroup = null;
+        if (!hasCont) b.group = "";            // 没有续块了就别留个空组
+        toast("已结束续块（已并入的块不受影响）", "");
+      } else {
+        pendingGroup = bid;
+        toast("已开启续块：下一个新框选的框会并入此题；也可以框好后直接点那块卡片的「续块」", "ok");
+      }
+    } else {                                    // 普通块 -> 并入上一块, 并继续接收后续新框选
+      const prev = idx > 0 ? flat[idx - 1] : null;
+      if (!prev) {
+        b.group = bid; pendingGroup = bid;
+        toast("这是第一块，已作为续块首块；后面新框选的框会并入本题", "ok");
+      } else {
+        const head = prev.b.group || prev.b.id;
+        if (!prev.b.group) prev.b.group = head;
+        b.group = head;
+        pendingGroup = head;
+        toast("已把本块并入上一题（卷面上编同一题号）；再框选的新块也会并入本题", "ok");
+      }
     }
-    saveBoxesFor(pid, bs);
-    if (pid === curPage) { boxes = bs; renderCanvas(); }
+    pageIds.forEach(p => saveBoxesFor(p, arrOf[p]));
+    if (arrOf[curPage]) boxes = arrOf[curPage];
+    renderCanvas();
     renderBoxList();
   });
   el.querySelectorAll(".starclear").forEach(btn => btn.onclick = () => {
@@ -2917,7 +2955,7 @@ $("saveBtn").onclick = async () => {
   }
   const btn = $("saveBtn"); btn.disabled = true;
   btn.querySelector("span").textContent = "保存中…";
-  let saved = 0, failed = null;
+  let saved = 0, merged = 0, failed = null;
   for (const g of groups) {
     const payload = g.boxes.map(b => ({
       subject: curSubject, chapter: b.chapter, title: b.title,
@@ -2932,6 +2970,7 @@ $("saveBtn").onclick = async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ page: g.pid, boxes: payload }) });
       saved += d.count;
+      merged += (d.merged || 0);
       localStorage.removeItem("boxes_" + g.pid);
       localStorage.removeItem("boxes_at_" + g.pid);
       try { await api("/api/draft/" + encodeURIComponent(g.pid), { method: "DELETE" }); } catch (e) { }
@@ -2944,7 +2983,7 @@ $("saveBtn").onclick = async () => {
   }
   boxes = []; pendingGroup = null; renderBoxList(); renderCanvas(); saveBoxes();
   if (failed) toast("部分失败: " + failed, "err");
-  else toast(`已保存 ${saved} 道，AI 自动识别文字并裁剪题内图形…`, "ok");
+  else toast(`已保存 ${saved} 道` + (merged ? `（另有 ${merged} 个续块已并入对应题目）` : "") + "，AI 正在后台识别文字…", "ok");
   loadLibrary();
   setTimeout(loadLibrary, 8000);   // 后台 AI 识别完成后刷新显示文字
   btn.disabled = false; btn.querySelector("span").textContent = "保存到错题库";
