@@ -3870,6 +3870,11 @@ function removePaper(i) {
 }
 
 /* ---------- 组卷 ---------- */
+$("paperBtn").onclick = () => {
+  if (!selected.size) return toast("先在错题库勾选题目", "err");
+  sortPaperByChapter();
+  window.open("/api/paper?ids=" + [...selected].join(","), "_blank");
+};
 $("pdfBtn").onclick = async () => {
   if (!selected.size) return toast("先在错题库里勾选题目", "err");
   const btn = $("pdfBtn"); btn.disabled = true;

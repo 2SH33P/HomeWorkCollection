@@ -2,6 +2,9 @@
 
 本地/自托管的错题收集 WebUI：**拍整页试卷 → 框选题目 → AI 识别文字与公式 → 错题管理 → Typst 排版生成试卷 PDF**。手机、电脑浏览器均可使用，无需 Node / 数据库 / Docker，单 Python 进程即可运行。
 
+> 📖 **详细使用教程**（安装 / AI 配置 / 框选 / 图块 / 组卷 / 自动组卷 / 排版微调 / 数据仓库 / FAQ）：
+> <https://2sh33p.github.io/HomeWorkCollection/>　源文件在 [`docs/`](docs/)，用 MkDocs 构建。
+
 ## 功能特性
 
 ### 拍页与框选
@@ -219,7 +222,8 @@ python tools/crop-tool/app.py
 │   └── static/index.html     # 单页前端（原生 JS）
 ├── typst-packages/           # 本地 Typst 包（mitex: LaTeX → Typst）
 ├── fonts/                    # 内置排版字体（宋体/黑体/楷体/Times）——换字体就换这里的同名文件
-├── .github/workflows/build.yml  # GitHub Actions：编译 Windows exe / macOS 产物（仅 Artifacts）
+├── .github/workflows/        # build.yml 编译 Windows exe / macOS 产物；docs.yml 发布教程
+├── docs/ + mkdocs.yml        # 使用教程源文件与站点配置
 ├── start.bat / start.sh      # 一键启动
 ├── build.bat                 # 本地 PyInstaller 打包
 └── README-Windows.txt        # Windows 详细说明

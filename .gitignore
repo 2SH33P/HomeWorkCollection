@@ -18,6 +18,7 @@ __pycache__/
 *.pyc
 build/
 dist/
+site/
 *.spec
 download/
 downloads/

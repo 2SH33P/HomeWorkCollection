@@ -1,0 +1,69 @@
+site_name: 错题收集工具 · 使用教程
+site_description: 拍整页试卷 → 框选题目 → AI 识别文字与公式 → 错题管理 → Typst 排版生成试卷 PDF
+site_url: https://2sh33p.github.io/HomeWorkCollection/
+repo_url: https://github.com/2SH33P/HomeWorkCollection
+repo_name: 2SH33P/HomeWorkCollection
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  language: zh
+  logo: https://raw.githubusercontent.com/2SH33P/HomeWorkCollection/main/tools/crop-tool/static/icon-192.png
+  favicon: https://raw.githubusercontent.com/2SH33P/HomeWorkCollection/main/tools/crop-tool/static/icon-192.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: 切到深色
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: 切到浅色
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - toc.follow
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+
+nav:
+  - 首页: index.md
+  - 安装与启动: install.md
+  - 配置 AI 识别: ai-setup.md
+  - 整页框选与裁图: crop.md
+  - AI 识别与图片: figures.md
+  - 错题库与编号: library.md
+  - 组卷与打印: paper.md
+  - 自动组卷: auto-paper.md
+  - 排版微调速查: typography.md
+  - 数据与仓库: data-vault.md
+  - 常见问题 FAQ: faq.md
