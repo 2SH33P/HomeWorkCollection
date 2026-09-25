@@ -1,7 +1,7 @@
 name: build
 
 # push 到 main      : 只编译 + 上传 Actions 产物（Artifacts），不发布任何东西。
-# 打 tag（例：v1.0）: 编译 + 自动创建 GitHub Release，把 Windows / macOS 包作为附件传上去。
+# 打 tag（例：v1.0）: 编译 + 自动创建 GitHub Release，附件 + **自动生成的「更新内容」**。
 # 手动触发（Run workflow）: 同 push main（只出 Artifacts）。
 on:
   push:
@@ -80,7 +80,7 @@ jobs:
           if-no-files-found: error
           path: ${{ env.ARTIFACT }}
 
-  # 只有推 tag（v1.0 这类）才会跑：把上面两个产物整理成可直接解压使用的 zip，发 Release
+  # 只有推 tag（v1.0 这类）才会跑：整理产物 + 自动写「更新内容」+ 发 Release
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, macos]
@@ -88,6 +88,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                 # 需要完整历史 + tag，才能算出"上次发版到现在"的更新内容
       - uses: actions/download-artifact@v4
         with:
           path: dl
@@ -106,27 +109,47 @@ jobs:
             cp "$f" "out/HomeWorkCollection-${VER}-macos-${arch}.zip"
           done
           ls -lh out
+      - name: Build release notes
+        run: |
+          set -e
+          VER="${GITHUB_REF_NAME#v}"
+          PREV="$(git tag --sort=-v:refname | grep -vx "${GITHUB_REF_NAME}" | head -n1 || true)"
+          {
+            echo "## 错题收集工具 ${GITHUB_REF_NAME}"
+            echo
+            echo "### 更新内容"
+            if [ -n "$PREV" ]; then
+              echo "_（相对上一个版本 ${PREV}）_"
+              echo
+              git log --no-merges --pretty=format:'- %s' "${PREV}..${GITHUB_REF_NAME}"
+            else
+              echo
+              git log --no-merges --max-count=30 --pretty=format:'- %s' "${GITHUB_REF_NAME}"
+            fi
+            echo
+            echo
+            echo "### 用法"
+            echo '把下载的压缩包**完整解压**到一个目录（可执行文件必须和 `fonts/`、`typst-packages/` 在同一目录），'
+            echo 'Windows 双击 `HomeWorkCollection.exe`；macOS 先 `chmod +x HomeWorkCollection` 再运行；'
+            echo '然后浏览器打开 <http://localhost:8091>（手机同一 WiFi 访问 `http://电脑IP:8091`）。'
+            echo
+            echo "| 附件 | 内容 |"
+            echo "|---|---|"
+            echo "| \`HomeWorkCollection-${VER}-windows.zip\` | 单文件 exe + 内置字体 + Typst 包 |"
+            echo "| \`HomeWorkCollection-${VER}-macos-*.zip\` | macOS 可执行文件（Apple Silicon）+ 内置字体 + Typst 包 |"
+            echo
+            echo '**数据存在哪**：就在可执行文件所在目录（`library.json`、`items/`、`pages/`、`backups/`…），升级时只替换可执行文件即可，数据不动。'
+            echo
+            echo '📖 使用教程：<https://2sh33p.github.io/HomeWorkCollection/>'
+          } > RELEASE_NOTES.md
+          echo "----- RELEASE_NOTES.md -----"
+          cat RELEASE_NOTES.md
       - uses: softprops/action-gh-release@v2
         with:
           name: 错题收集工具 ${{ github.ref_name }}
           prerelease: false
-          overwrite_files: true            # 同版本重发时覆盖同名附件
-          generate_release_notes: true
+          overwrite_files: true          # 同版本重发时覆盖同名附件
+          generate_release_notes: false  # 更新内容由上面的步骤自动生成，不用 GitHub 默认列表
           fail_on_unmatched_files: true
           files: out/*
-          body: |
-            ## 错题收集工具 ${{ github.ref_name }}
-
-            **用法**：把下载的压缩包**完整解压**到一个目录（可执行文件必须和 `fonts/`、`typst-packages/` 在同一目录），
-            Windows 双击 `HomeWorkCollection.exe`；macOS 先 `chmod +x HomeWorkCollection` 再运行。
-            然后浏览器打开 <http://localhost:8091>（手机同一 WiFi 访问 `http://电脑IP:8091`）。
-
-            | 附件 | 内容 |
-            |---|---|
-            | `HomeWorkCollection-${{ github.ref_name }}-windows.zip` | 单文件 exe + 内置字体 + Typst 包 |
-            | `HomeWorkCollection-${{ github.ref_name }}-macos-*.zip` | macOS 可执行文件（Apple Silicon）+ 内置字体 + Typst 包 |
-
-            **数据存在哪**：就在可执行文件所在目录（`library.json`、`items/`、`pages/`、`backups/`…），
-            升级时只替换可执行文件即可，数据不动。
-
-            📖 使用教程：<https://2sh33p.github.io/HomeWorkCollection/>
+          body_path: RELEASE_NOTES.md
