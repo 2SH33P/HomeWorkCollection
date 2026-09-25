@@ -1426,6 +1426,17 @@ MAX_W_CM = 14.1          # 版心宽度 = 185mm - 左右页边距 2.2cm×2
 TEXT_H_CM = 22.0         # 版心高度 = 260mm - 上下页边距 2cm×2
 
 
+def posix(p):
+    """给 Typst 的路径必须用正斜杠: Windows 的反斜杠会被 Typst 拒绝(path must not contain a backslash),
+    而且会当成转义符(\n \t)把路径吃掉。"""
+    return str(p).replace("\\", "/")
+
+
+def typ_img(p):
+    """Typst 字符串里的图片路径(正斜杠 + 转义双引号)。"""
+    return posix(p).replace('"', '\\"')
+
+
 def fig_size_args(fp, spec, h_pct=24.0):
     """算图块的 Typst 尺寸参数。spec: 空 / '60%'(宽) / '8cm'(宽) / '24%h'(高) / '6cmh'(高)。
     默认按版心高度的 h_pct% 定高; 任何写法都保证不超版心宽/高(过长或过高的图自动换一种定尺寸方式)。"""
@@ -1546,7 +1557,7 @@ def render_simple(txt, it, lines, fig_h_pct=24.0):
             else:
                 out += md(seg)
         for i, (fp, sz) in enumerate(figs):
-            out = out.replace(f"@@F{i}@@", f'#image("{fp}", {sz})')
+            out = out.replace(f"@@F{i}@@", f'#image("{typ_img(fp)}", {sz})')
         if out.strip():
             lines.append(f"#align({align_mode})[{out}]" if align_mode else out + " \\")
         if cap:
@@ -2220,7 +2231,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         cap_in = (f" \\ #v(-0.12cm) #text(size: 0.88 * BODY)[{cap}]"
                                   if cap else "")
                         if len(infos) > 1:
-                            cells = "".join(f'[#image("{f0["file"]}", {f0["size"]})]'
+                            cells = "".join(f'[#image("{typ_img(f0["file"])}", {f0["size"]})]'
                                             for f0 in infos)
                             lines.append(f"#grid(columns: {len(infos)}, "
                                          f"column-gutter: 0.6em, row-gutter: 0.5em){cells}")
@@ -2230,14 +2241,14 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         else:
                             f0 = infos[0]
                             lines.append(f'#align({f0["align"]})'
-                                         f'[#image("{f0["file"]}", {f0["size"]}){cap_in}]')
+                                         f'[#image("{typ_img(f0["file"])}", {f0["size"]}){cap_in}]')
                         placed = True
                         first_ln = False
                         continue
                     out = esc_ln(ln2)
                     for i, f0 in enumerate(infos):       # 混排: 行内插图
                         out = out.replace(f"@@F{i}@@",
-                                          f'#image("{f0["file"]}", {f0["size"]})')
+                                          f'#image("{typ_img(f0["file"])}", {f0["size"]})')
                     if out.strip():
                         if align_mode:
                             flush_opts()
@@ -2266,7 +2277,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
             else:
                 # 未识别出文字: 保留原图(手动添加的纯文字题无图, 跳过)
                 if it.get("image"):
-                    lines.append(f'#image("{ROOT / it["image"]}", width: 50%)')
+                    lines.append(f'#image("{typ_img(ROOT / it["image"])}", width: 50%)')
             lines.append("#v(0.45cm)")          # 题目之间的间距
 
     # ---- 文末: 答案 / 解析 附录页 ----
@@ -2313,9 +2324,9 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
     pdf_path = typ_path.with_suffix(".pdf")
     typ_path.write_text("\n".join(lines), encoding="utf-8")
     try:
-        typst.compile(typ_path, output=pdf_path,
-                      font_paths=[str(FONTS_DIR)], root="/",
-                      package_path=str(TYPST_PKG_DIR))
+        typst.compile(posix(typ_path), output=posix(pdf_path),
+                      font_paths=[posix(FONTS_DIR)], root="/",
+                      package_path=posix(TYPST_PKG_DIR))
     except Exception as e:
         return JSONResponse({"ok": False,
                             "msg": "PDF生成失败: " + str(e)[:200]}, status_code=500)

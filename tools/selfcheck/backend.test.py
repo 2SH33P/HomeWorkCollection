@@ -294,6 +294,33 @@ ok((m.ROOT / fig_files[0]).exists(), "图块文件存在")
 ok(uit["figures"][0].get("upload") is True, "保留 upload 标记")
 ok(not up.exists(), "临时上传文件已删除")
 
+print("\n[15] Windows 路径安全：给 Typst 的路径不许有反斜杠")
+eq(m.posix(r"C:\Users\me\HomeWorkCollection\items\math\a.jpg"),
+   "C:/Users/me/HomeWorkCollection/items/math/a.jpg", "posix: 反斜杠 -> 正斜杠")
+eq(m.typ_img(r'C:\a\x".jpg'), 'C:/a/x\\".jpg', "typ_img: 正斜杠 + 转义双引号")
+import inspect as _ins
+_src = _ins.getsource(m.paper_pdf) + _ins.getsource(m.render_simple)
+eq(_src.count("#image("), _src.count("typ_img("), "每个 #image( 都走 typ_img()（防漏改）")
+# 抓一次真实编译参数, 确认没有反斜杠
+_w = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-W", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "Windows 路径测试",
+     "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+_wid = _w["items"][0]["id"]
+_real_compile = m.typst.compile
+_cap = {}
+def _fake(inp, output=None, **kw):
+    _cap.update({"in": inp, "out": output, **kw})
+m.typst.compile = _fake
+try:
+    _r = m.paper_pdf(ids=_wid, fig_height="24")
+finally:
+    m.typst.compile = _real_compile
+ok(isinstance(_r, dict) and _r.get("ok"), "抓参数时 PDF 流程正常返回")
+for _k in ("in", "out"):
+    ok("\\" not in str(_cap.get(_k, "")), f"编译参数 {_k} 无反斜杠：{_cap.get(_k)}")
+ok(all("\\" not in p for p in (_cap.get("font_paths") or [])), "font_paths 无反斜杠")
+ok("\\" not in str(_cap.get("package_path") or ""), "package_path 无反斜杠")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")
