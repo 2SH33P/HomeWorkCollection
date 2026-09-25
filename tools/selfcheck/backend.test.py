@@ -74,6 +74,13 @@ def dark_ratio(p):
 m.BASE_DIR = TMPROOT
 m.VAULT_FILE = TMPROOT / "vaults.json"
 m._bind_data_paths(VAULT)          # 数据全部落到临时目录
+# ⚠️ AI_CONFIG_FILE 是全局路径(不随仓库切换), 必须也指到临时目录, 否则测试会覆盖用户真实配置
+_REAL_AI_CFG = m.AI_CONFIG_FILE
+m.AI_CONFIG_FILE = TMPROOT / ".ai_config.json"
+for _nm, _p in (("ROOT", m.ROOT), ("DB_FILE", m.DB_FILE), ("ITEMS_DIR", m.ITEMS_DIR),
+                ("AI_CONFIG_FILE", m.AI_CONFIG_FILE)):
+    assert str(_p).startswith(str(TMPROOT)), f"自测保护: {_nm} 不在临时目录({_p}), 拒绝运行"
+print(f"自测隔离检查: 数据={m.ROOT} AI配置={m.AI_CONFIG_FILE}（真实配置未被触碰）")
 
 print("\n[1] fig_size_args: 图片尺寸/不超版心")
 make_page("PX", 600, 900, [(100, 100, 400, 200)])          # 宽图 3:1
@@ -412,7 +419,7 @@ eq(m.normalize_math("sqrt(lambda4-2lambda3)"), "\\sqrt{\\lambda4-2\\lambda3}", "
 ok(m.normalize_math("cases(a, b)").startswith("\\begin{cases}"), "cases(...) -> 分段函数环境")
 eq(m.normalize_math("𝑙𝑎𝑚𝑏𝑑𝑎"), "\\lambda", "Unicode 数学斜体字母折成 ASCII")
 eq(m.normalize_math("λ + ⊥ + ≤"), "\\lambda  + \\perp  + \\le ", "Unicode 希腊字母/符号也转")
-ok(int(m.ai_config().get("max_tokens") or 0) >= 8000, "AI 默认最大输出长度 >= 8000")
+eq(int(m.ai_config().get("max_tokens") or 0), 0, "AI 默认 max_tokens=0（不设限，用服务商最大值）")
 _ai_src = _ins.getsource(m.call_ai_vision)
 ok("max_tokens" in _ai_src, "识别请求带 max_tokens")
 ok("finish_reason" in _ai_src and "截断" in _ai_src, "识别被截断时会写日志告警")
@@ -468,7 +475,42 @@ for _fn, _name in ((m.ocr_ai, "ocr_ai"), (m.crop, "crop"), (m.paper_pdf, "paper_
     ok(not ({"txt", "self", "cls"} & _p - {"payload", "file"}),
        f"{_name} 签名干净：{sorted(_p)}")
 
+print("\n[21] 不设限: 超长答案完整保存 + AI 请求默认不带 max_tokens")
+_huge = "答" * 100000
+m.update_item(_items_first_id(), {"answer": _huge})
+_dbit2 = next(x for x in m.load_db()["items"] if x["id"] == _items_first_id())
+eq(len(_dbit2.get("answer") or ""), 100000, "10 万字答案完整保存（不设上限）")
+# 抓 AI 请求体: 默认(0)不应带 max_tokens; 设了值才带
+import numpy as _np
+_cap2 = {}
+class _Resp:
+    def __init__(self, p): self._p = p
+    def read(self): return __import__("json").dumps(self._p).encode()
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+_real_urlopen = m.urllib.request.urlopen
+def _fake_open(req, timeout=None):
+    _cap2["body"] = __import__("json").loads(req.data.decode())
+    return _Resp({"choices": [{"message": {"content": "【题干】x"}, "finish_reason": "stop"}],
+                  "usage": {"total_tokens": 1}})
+m.urllib.request.urlopen = _fake_open
+_cfgf = Path(m.AI_CONFIG_FILE)   # 已被隔离到临时目录
+try:
+    _cfgj = __import__("json").loads(_cfgf.read_text(encoding="utf-8")) if _cfgf.exists() else {}
+    _cfgj.update({"base_url": "http://x/v1", "model": "fake", "key": "fake-key", "max_tokens": 0})
+    _cfgf.write_text(__import__("json").dumps(_cfgj), encoding="utf-8")
+    m.call_ai_vision(_np.zeros((40, 40, 3), dtype="uint8"))
+    ok("max_tokens" not in _cap2["body"], "max_tokens=0 时请求里不带该参数（不设限）")
+    _cfgj["max_tokens"] = 12345
+    _cfgf.write_text(__import__("json").dumps(_cfgj), encoding="utf-8")
+    m.call_ai_vision(_np.zeros((40, 40, 3), dtype="uint8"))
+    eq(_cap2["body"].get("max_tokens"), 12345, "填了值才带 max_tokens")
+finally:
+    m.urllib.request.urlopen = _real_urlopen
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
+ok(not _REAL_AI_CFG.read_text("utf-8").count("fake-key") if _REAL_AI_CFG.exists() else True,
+   "真实 .ai_config.json 里没有被写入测试用的 fake-key")
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")
 sys.exit(1 if FAIL else 0)

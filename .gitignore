@@ -48,3 +48,6 @@ uploads/
 
 # 报错日志
 logs/
+
+# AI 配置备份
+.ai_config.json.bak

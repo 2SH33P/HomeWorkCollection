@@ -1228,8 +1228,9 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
             <option value="2200">高清 2200px（小字更准）</option>
             <option value="2800">超清 2800px（最准，最慢）</option>
           </select></label>
-        <label class="fld"><span>最大输出长度（识别的最大字符数；长题/长答案被截断时调大，上限 32000）</span>
-          <input type="number" id="aiMaxTokens" min="256" max="32000" step="512" value="8000"></label>
+        <label class="fld"><span>最大输出长度（**留空 = 不设限**，用服务商自己的最大值；填数字则最多这么长）</span>
+          <input type="number" id="aiMaxTokens" min="0" max="200000" step="1024"
+                 placeholder="留空 = 不设限"></label>
         <label class="chk" style="margin:4px 0 0"><input type="checkbox" id="aiFontMarks">
           识别原题字体差异（黑体/加粗 → <b>粗体</b>，楷体 → <i>斜体</i>，PDF 会对应排版）</label>
         <label class="chk" style="margin:4px 0 0"><input type="checkbox" id="aiProofread">
@@ -5043,7 +5044,7 @@ function renderAiCfg() {
   $("aiBaseUrl").value = AICFG.base_url || "";
   $("aiModel").value = AICFG.model || "";
   $("aiMaxPx").value = String(AICFG.max_px || 1600);
-  $("aiMaxTokens").value = String(AICFG.max_tokens || 8000);
+  $("aiMaxTokens").value = AICFG.max_tokens ? String(AICFG.max_tokens) : "";   // 空 = 不设限
   $("aiProofread").checked = !!AICFG.proofread;
   $("aiFontMarks").checked = AICFG.font_marks !== false;
 }
@@ -5237,7 +5238,7 @@ $("aiSave").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_url: url, model, key,
                              max_px: +$("aiMaxPx").value,
-                             max_tokens: +$("aiMaxTokens").value || 8000,
+                             max_tokens: +$("aiMaxTokens").value || 0,     // 0 = 不设限
                              proofread: $("aiProofread").checked,
                              font_marks: $("aiFontMarks").checked }) });
     toast("已保存", "ok");

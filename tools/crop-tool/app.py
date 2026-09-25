@@ -650,7 +650,7 @@ def ai_recognize_one(it, force=False):
         for x in db["items"]:
             if x["id"] == it["id"]:
                 if force or not (x.get("note") or "").strip():
-                    x["note"] = text[:20000]      # 不再 4000 字截断（长答案会写不下）
+                    x["note"] = text              # 不设上限：识别多少存多少
                 updated = dict(x)
                 break
         save_db(db)
@@ -1468,8 +1468,9 @@ def ai_proofread(img_rgb, draft):
                 {"type": "text", "text": prompt},
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
-            "temperature": 0,
-            "max_tokens": int(cfg.get("max_tokens") or 8000)}
+            "temperature": 0}
+    if int(cfg.get("max_tokens") or 0) > 0:
+        body["max_tokens"] = int(cfg.get("max_tokens"))
     if "deepseek" in (cfg["base_url"] or "").lower():
         body["reasoning_effort"] = "none"
     req = urllib.request.Request(
@@ -1483,7 +1484,7 @@ def ai_proofread(img_rgb, draft):
         fixed = (d["choices"][0]["message"]["content"] or "").strip()
         if (d["choices"][0].get("finish_reason") or "") == "length":
             log_ai("校对", cfg["model"], False, (time.time() - _t0) * 1000,
-                   "校对输出达到长度上限被截断：请调大「最大输出长度」或关闭校对")
+                   "校对输出被服务商长度上限截断：可填更大的「最大输出长度」或关闭校对")
         log_ai("校对", cfg["model"], bool(fixed), (time.time() - _t0) * 1000,
                f"{len(draft)} -> {len(fixed)} 字")
         return fixed
@@ -1550,8 +1551,9 @@ def call_ai_vision(img_rgb):
             {"type": "image_url",
              "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
         "temperature": 0.1,
-        "max_tokens": int(ai_config().get("max_tokens") or 8000),   # 长题/长答案需要更大的输出上限
     }
+    if int(ai_config().get("max_tokens") or 0) > 0:      # 0 = 不设限: 不发送, 用服务商最大值
+        body["max_tokens"] = int(ai_config().get("max_tokens"))
     if "deepseek" in (ai_config()["base_url"] or "").lower():
         body["reasoning_effort"] = "none"   # 识别是感知任务, 关思考可提速约 40%
     req = urllib.request.Request(
@@ -1565,7 +1567,7 @@ def call_ai_vision(img_rgb):
         text = d["choices"][0]["message"]["content"]
         if (d["choices"][0].get("finish_reason") or "") == "length":   # 被输出上限截断
             log_ai("识别", ai_config()["model"], False, (time.time() - _t0) * 1000,
-                   "AI 输出达到长度上限被截断：请在「设置 → 最大输出长度」调大后重试")
+                   "AI 输出被服务商的长度上限截断：可在「设置 → 最大输出长度」填更大的值（留空=不设限）")
         usage = d.get("usage") or {}
         log_ai("识别", ai_config()["model"], True, (time.time() - _t0) * 1000,
                f"{len(text)} 字" + (f" · {usage.get('total_tokens')} tokens" if usage.get("total_tokens") else ""))
@@ -2807,7 +2809,7 @@ def clear_logs():
 
 def ai_config():
     cfg = {"base_url": "", "key": "", "model": "", "proofread": False, "max_px": 1600,
-           "font_marks": True, "max_tokens": 8000}   # max_tokens: 单次识别最大输出长度
+           "font_marks": True, "max_tokens": 0}      # max_tokens: 0 = 不设限(不发送该参数, 用服务商最大值)
     # font_marks: AI 是否标记原题的加粗/楷体字体差异
     if AI_CONFIG_FILE.exists():
         try:
@@ -2834,7 +2836,7 @@ def get_ai_config():
     return {"ok": True, "base_url": cfg["base_url"], "model": cfg["model"],
             "key_set": bool(key),
             "key_hint": (key[:4] + "****" + key[-4:]) if len(key) > 10 else ("****" if key else ""),
-            "max_px": cfg.get("max_px", 1600), "max_tokens": int(cfg.get("max_tokens") or 8000),
+            "max_px": cfg.get("max_px", 1600), "max_tokens": int(cfg.get("max_tokens") or 0),
             "proofread": bool(cfg.get("proofread")),
             "font_marks": bool(cfg.get("font_marks", True)),
             "presets": AI_PRESETS}
@@ -2857,8 +2859,13 @@ def set_ai_config(payload: dict):
             pass
     if "max_tokens" in payload:
         try:
-            cfg["max_tokens"] = max(256, min(32000, int(payload["max_tokens"])))
+            cfg["max_tokens"] = max(0, min(200000, int(payload["max_tokens"])))
         except (TypeError, ValueError):
+            pass
+    if AI_CONFIG_FILE.exists():                 # 改配置前留一份 .bak（key 丢了很难找回来）
+        try:
+            shutil.copy2(AI_CONFIG_FILE, AI_CONFIG_FILE.with_suffix(".json.bak"))
+        except Exception:
             pass
     AI_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
                               encoding="utf-8")
@@ -3023,7 +3030,7 @@ def update_item(item_id: str, payload: dict):
             for k in ("title", "chapter", "reason", "note", "subject",
                       "answer", "analysis", "keywords"):
                 if k in payload:
-                    it[k] = str(payload[k])[:20000]
+                    it[k] = str(payload[k])        # 不设上限（答案/解析可以很长）
             if "star" in payload:
                 try:
                     it["star"] = max(0, min(5, int(payload["star"] or 0)))
