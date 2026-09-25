@@ -748,7 +748,9 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
 .pv-right textarea { min-height: 90px; }
 .pv-figs { border-top: 1px solid var(--sep); padding-top: 12px; }
 .pv-figs-head { display: flex; align-items: center; justify-content: space-between;
-                font-size: 12px; color: var(--t3); margin-bottom: 8px; gap: 8px; }
+                font-size: 12px; color: var(--t3); margin-bottom: 8px; gap: 8px; flex-wrap: wrap; }
+.ins-to { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.ins-to select { height: 28px; border-radius: 8px; font-size: 12px; padding: 0 4px; }
 .btn-sm { height: 32px; padding: 0 12px; font-size: 12px; border-radius: 9px; }
 .fig-item { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--r-sm);
             background: var(--elev); margin-bottom: 6px; }
@@ -1485,6 +1487,12 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         <div class="pv-figs">
           <div class="pv-figs-head">
             <span>图片附件（在题干/答案/解析中用 [图N] 引用；可调大小/对齐）</span>
+            <span class="ins-to">插入到
+              <select id="pvInsTo" title="点「插入」时把 [图N] 放进哪个框（在框里点一下也会自动切过来）">
+                <option value="note">题干</option>
+                <option value="answer">答案</option>
+                <option value="analysis">解析</option>
+              </select></span>
             <button class="btn ghost btn-sm" id="pvCap" title="在光标处插入 [图注:说明文字]，写在与图片同一行的下一行即可排在图片正下方">插入图注</button>
             <label class="btn ghost btn-sm">上传图片
               <input type="file" id="pvUpload" accept="image/*" style="display:none"></label>
@@ -2215,6 +2223,13 @@ function boxMissingFigs(b) {
 
 /* 草稿阶段图块缩略图: 用 /api/crop/preview 现算一张(按坐标缓存, 不写草稿) */
 const figPreviewCache = new Map();
+const lastFieldOf = {};                        // 每张卡片最后编辑的框: note/answer/analysis
+const BOX_FIELDS = ["note", "answer", "analysis"];
+const BOX_FIELD_NAME = { note: "题干", answer: "答案", analysis: "解析" };
+function boxInsField(bid) {                    // 图片引用插到哪个框(默认题干)
+  const f = lastFieldOf[bid];
+  return BOX_FIELDS.includes(f) ? f : "note";
+}
 const pageDimsCache = new Map();
 function pageDims(pid) {                       // 整页缩略图尺寸(全页图块的坐标基准)
   if (pageDimsCache.has(pid)) return pageDimsCache.get(pid);
@@ -2304,7 +2319,7 @@ function markSaved(boxes, items) {
 function figsHTML(b) {
   return ((b.figures || []).length || boxMissingFigs(b).length) ? `
         <div class="b-figs">
-          <span class="hint">图块（正文用 [图N] 引用；点图可插入引用）</span>
+          <span class="hint">图块（正文用 [图N] 引用；点图 = 插到你光标所在的框：题干/答案/解析）</span>
           <div class="b-fig-strip">
             ${(b.figures || []).map(f => `<figure class="b-fig" data-n="${f.n}">
               <img data-fig="1" loading="lazy" alt="[图${f.n}]">
@@ -2424,6 +2439,10 @@ $("boxList").addEventListener("focusin", e => {
   requestAnimationFrame(() => {
     if (window.scrollY !== y || window.scrollX !== x) window.scrollTo(x, y);
   });
+  // 记住每张卡片最后编辑的框(题干/答案/解析): 图片引用就插到这里
+  const card = e.target.closest && e.target.closest(".box-card");
+  const f = e.target.dataset ? e.target.dataset.f : "";
+  if (card && (f === "note" || f === "answer" || f === "analysis")) lastFieldOf[card.dataset.id] = f;
 }, true);
 
 function renderBoxList() {
@@ -2617,13 +2636,15 @@ function renderBoxList() {
     });
     fig.onclick = (e) => {
       if (e.target.closest(".b-fig-del")) return;
-      const ta = card.querySelector('textarea[data-f="note"]');
+      const f = boxInsField(card.dataset.id);          // 插到刚编辑的那个框(默认题干)
+      const ta = card.querySelector('textarea[data-f="' + f + '"]')
+              || card.querySelector('textarea[data-f="note"]');
       if (!ta) return;
       const tag = "[图" + n + "]";
       const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
       ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(pos);
       ta.dispatchEvent(new Event("input"));      // 走既有同步逻辑保存到草稿
-      toast("已插入 " + tag, "ok");
+      toast("已插入 " + tag + " 到「" + (BOX_FIELD_NAME[f] || "题干") + "」", "ok");
     };
   });
   el.querySelectorAll(".b-fig-del").forEach(btn => btn.onclick = (e) => {
@@ -4006,11 +4027,11 @@ function renderPvFigs(it) {
   });
   box.querySelectorAll("[data-ins]").forEach(b => b.onclick = () => {
     const tag = `[图${b.dataset.ins}]`;
-    const ta = $("pvNote");
+    const ta = pvTargetEl();
     const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
     ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(pos);
     ta.focus();
-    toast(`已在识别内容插入 ${tag}`, "ok");
+    toast(`已插入 ${tag} 到「${PV_FIELD_NAME[pvTarget()]}」`, "ok");
   });
   box.querySelectorAll("[data-bind]").forEach(s => s.onchange = async () => {
     const from = +s.dataset.bind, to = +s.value;
@@ -4038,12 +4059,29 @@ function renderPvFigs(it) {
     } catch (err) { toast("删除失败: " + err.message, "err"); }
   });
 }
+/* 图片引用插到哪个框：题干(note) / 答案(answer) / 解析(analysis)
+   预览窗用「插入到」下拉选择；在哪个框里点一下会自动切过去 */
+const PV_FIELDS = { note: "pvNote", answer: "pvAnswer", analysis: "pvAnalysis" };
+const PV_FIELD_NAME = { note: "题干", answer: "答案", analysis: "解析" };
+function pvInsField() {
+  const v = $("pvInsTo") ? $("pvInsTo").value : "note";
+  return PV_FIELDS[v] ? v : "note";
+}
+function pvTargetEl() { return $(PV_FIELDS[pvInsField()]); }
+["pvNote", "pvAnswer", "pvAnalysis"].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener("focusin", () => {
+    const f = Object.keys(PV_FIELDS).find(k => PV_FIELDS[k] === id);
+    if (f && $("pvInsTo")) $("pvInsTo").value = f;
+  });
+});
+
 $("pvCap").onclick = () => {
-  const ta = $("pvNote");
+  const ta = pvTargetEl();
   const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
   ta.value = ta.value.slice(0, pos) + "[图注:说明文字]" + ta.value.slice(pos);
   ta.focus();
-  toast("已插入 [图注:说明文字]，写在与图片同一行的下一行即可排在图片正下方", "");
+  toast(`已插入图注到「${PV_FIELD_NAME[pvInsField()]}」，写在与图片同一行的下一行即可排在图片正下方`, "");
 };
 $("pvUpload").onchange = async e => {
   const f = e.target.files[0];

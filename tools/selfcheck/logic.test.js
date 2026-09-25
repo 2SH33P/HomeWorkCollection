@@ -164,5 +164,17 @@ ok(src.includes("function setEdSideWidth") && src.includes('localStorage.setItem
    "分隔条可拖动并记住宽度");
 ok(/\.ed-split \{ display: none/.test(src), "手机单栏隐藏分隔条");
 
+console.log("\n[7] 图片引用可插入到 题干/答案/解析");
+eval(src.match(/const lastFieldOf[\s\S]*?function boxInsField\(bid\) \{[\s\S]*?\n\}/)[0].replace(/const /g, "var "));
+eq(boxInsField("none"), "note", "没记录过 -> 默认插到题干");
+lastFieldOf.x = "answer";  eq(boxInsField("x"), "answer", "刚编辑答案 -> 插到答案");
+lastFieldOf.y = "analysis"; eq(boxInsField("y"), "analysis", "刚编辑解析 -> 插到解析");
+lastFieldOf.z = "bogus";   eq(boxInsField("z"), "note", "非法字段 -> 回退题干");
+ok(src.includes('id="pvInsTo"') && (src.match(/value="(note|answer|analysis)"/g) || []).length >= 3,
+   "预览窗有「插入到：题干/答案/解析」选择器");
+ok(src.includes("function pvTargetEl") && src.includes("PV_FIELD_NAME"), "预览窗按选择器插入并提示目标框");
+ok(src.includes("data-f=\"answer\"") || src.includes("data-f=\"answer\""), "题干卡片里有答案输入框");
+ok(src.includes("renderPvFigs") && src.includes("figMissing"), "缺图提示覆盖答案/解析里的引用");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);
