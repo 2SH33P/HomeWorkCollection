@@ -1277,10 +1277,34 @@ def _parse_calls(t):
     return "".join(out)
 
 
+# 实测 mitex 不支持的写法 -> 可用替代（都用最小 typ 文件验证过）
+_BS = chr(92)          # 反斜杠
+_LATEX_FIX = [
+    (_BS + "left", ""), (_BS + "right", ""),        # \left/\right 完全不支持
+    (_BS + "langle", "⟨"), (_BS + "rangle", "⟩"),    # \langle 报 unknown symbol modifier
+    (_BS + "lvert", "|"), (_BS + "rvert", "|"), (_BS + "vert", "|"),
+    (_BS + "bigcap", "⋂"), (_BS + "bigcup", "⋃"),
+    (_BS + "bigvee", "⋁"), (_BS + "bigwedge", "⋀"),
+]
+
+
+def latex_fixups(t):
+    """把 mitex 不认识的 LaTeX 写法换成能渲染的等价写法；
+    不支持的 \\begin{...} 环境(矩阵/对齐/数组)去掉环境标签。cases 另有专门处理。"""
+    t = t or ""
+    for a, b in _LATEX_FIX:
+        t = t.replace(a, b)
+    t = re.sub(_BS * 2 + r"begin\{(?!cases)[a-zA-Z*]+\}", "", t)
+    t = re.sub(_BS * 2 + r"end\{(?!cases)[a-zA-Z*]+\}", "", t)
+    if _BS + "begin{cases}" not in t:            # 非 cases 环境里的换行(\\ )换成 ; 免得 mi() 报错
+        t = t.replace(_BS * 2, "; ")
+    return t
+
+
 def normalize_math(t):
     """把"无斜杠 LaTeX"补成标准 LaTeX（AI / Mathpix 常输出 frac(a,b)、arrow(SB)、2lambda、<= 这种）。
     纯函数, tools/selfcheck 会测它。"""
-    t = fold_math_unicode(t or "")
+    t = latex_fixups(fold_math_unicode(t or ""))
     t = t.replace("<=", "\\le ").replace(">=", "\\ge ").replace("!=", "\\ne ")
     t = t.replace("infinity", "infty")
     # 裸命令词: 前面排除字母/反斜杠/{, 后面排除字母, 且不能是函数调用(后面跟括号)
@@ -1288,6 +1312,18 @@ def normalize_math(t):
                lambda m: "\\" + _BARE_MAP.get(m.group(1), m.group(1)), t)
     t = _parse_calls(t)
     return t
+
+
+def math_typst(latex):
+    """一段 LaTeX 公式 -> Typst 片段。\begin{cases} 用 Typst 原生 cases()(mitex 不支持该环境),
+    其余交给 mitex 的 mi()。"""
+    t = normalize_math(latex)
+    if _BS + "begin{cases}" in t:
+        body = t.split(_BS + "begin{cases}", 1)[1].split(_BS + "end{cases}", 1)[0]
+        rows = [r.strip() for r in body.split(_BS * 2) if r.strip()]
+        if rows:
+            return ("$ cases(" + ", ".join('#mi("' + latex_var(r) + '")' for r in rows) + ") $")
+    return '#mi("' + latex_var(t) + '")'
 
 
 def unify_math_delims(t):
@@ -1837,13 +1873,13 @@ def render_simple(txt, it, lines, fig_h_pct=24.0):
                 continue
         ln = re.sub(r"\[图(\d+)(?:\|([\d.]+%?[hH]?))?\]", _fig, ln)
         ln = ln.replace("（图）", "").replace("(图)", "")
-        ln = unify_math_delims(ln)
+        ln = autowrap_math(unify_math_delims(ln))
         out = ""
         for seg in re.split(r"(\$[^$]+\$)", ln):
             if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
-                out += '#mi("' + latex_var(normalize_math(seg[1:-1])) + '")'
+                out += math_typst(seg[1:-1])
             else:
-                out += md(autowrap_math(seg))
+                out += md(seg)
         for i, (fp, sz) in enumerate(figs):
             out = out.replace(f"@@F{i}@@", f'#image("{typ_img(fp)}", {sz})')
         if out.strip():
@@ -2165,6 +2201,79 @@ def auto_export(payload: dict = None):
     return {"ok": True, "url": f"/files/.tmp/{zpath.name}", "count": made}
 
 
+def _math_snips(txt):
+    """列出 typ 里的公式片段(位置 + 可读原文), 用于出错时精确定位/降级。"""
+    snips = []
+    for m in re.finditer(r'#mi\("((?:[^"\\]|\\.)*)"\)', txt):
+        snips.append({"s": m.start(), "e": m.end(), "typ": m.group(0), "raw": m.group(1)})
+    for m in re.finditer(r"\$ cases\((.*?)\) \$", txt, re.S):
+        rows = re.findall(r'#mi\("((?:[^"\\]|\\.)*)"\)', m.group(1))
+        snips.append({"s": m.start(), "e": m.end(), "typ": m.group(0),
+                      "raw": " ; ".join(rows) or m.group(1)})
+    return snips
+
+
+def _typst_run(inp, pdf_path):
+    typst.compile(posix(inp), output=posix(pdf_path), font_paths=[posix(FONTS_DIR)],
+                  root=posix(ROOT), package_path=posix(TYPST_PKG_DIR))
+
+
+def _one_math_ok(typ_frag, probe, probe_pdf, pre):
+    """单独编译一个公式片段, 看它能不能渲染(mitex 不支持某些命令)。"""
+    probe.write_text(pre + typ_frag + "\n", encoding="utf-8")
+    try:
+        _typst_run(probe, probe_pdf)
+        return True
+    except Exception:
+        return False
+
+
+def _raw(inner):
+    """把公式原文包成 Typst 的 #raw(...)（转义字符串, 原样显示, 不会再编译失败）。"""
+    return '#raw("' + inner.replace(chr(92), chr(92) * 2).replace('"', chr(92) + '"') + '")'
+
+
+def compile_pdf(typ_path, pdf_path):
+    """编译 PDF，并保证「一定能出 PDF」：
+    1) 先整体编译（快路径）；
+    2) 失败时逐个公式体检，只把**渲染不了的那几个**降级成原文(#raw)，其余公式照常渲染；
+    3) 实在不行才整篇降级。
+    返回 (是否成功, 原始报错, 降级个数)"""
+    txt = Path(typ_path).read_text("utf-8")
+    try:
+        _typst_run(typ_path, pdf_path)
+        return True, "", 0
+    except Exception as e1:
+        err = str(e1)[:300]
+        pre = ('#import "@preview/mitex:0.2.4": mi\n'
+               '#set text(font: ("SimSun",), size: 10.5pt, lang: "zh")\n')
+        probe = TMP_DIR / "probe.typ"
+        probe_pdf = TMP_DIR / "probe.pdf"
+        snips = _math_snips(txt)
+        bad = []
+        for sn in snips[:400]:
+            if not _one_math_ok(sn["typ"], probe, probe_pdf, pre):
+                bad.append(sn)
+        soft = Path(typ_path).with_name(Path(typ_path).stem + "_soft.typ")
+        if bad:
+            new = txt
+            for sn in sorted(bad, key=lambda x: -x["s"]):          # 从后往前替换, 下标不失效
+                new = new[:sn["s"]] + _raw(sn["raw"]) + new[sn["e"]:]
+            soft.write_text(new, encoding="utf-8")
+            try:
+                _typst_run(soft, pdf_path)
+                return True, err, len(bad)
+            except Exception as e2:
+                err = str(e2)[:300]
+        try:                                                       # 最后兜底: 全部公式降级
+            soft.write_text(re.sub(r'#mi\("((?:[^"\\]|\\.)*)"\)',
+                                   lambda m: _raw(m.group(1)), txt), encoding="utf-8")
+            _typst_run(soft, pdf_path)
+            return True, err, len(snips)
+        except Exception:
+            return False, err, 0
+
+
 @app.get("/api/paper/pdf")
 def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = "",
               title: str = "", subject_line: str = "", notice: str = "",
@@ -2363,15 +2472,14 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
 
                 def esc_ln(s):
                     """公式 $..$ 转 Typst, 其余文本: markdown 字体标记 + 转义。
-                    同时容错: \\(...\\) 也算公式; 无斜杠写法(frac/arrow/lambda/<=)自动补正;
-                    正文里裸的 \\命令 / frac(a,b) 自动包成公式, 避免 Typst 报错。"""
-                    s = unify_math_delims(s)
+                    容错顺序: \\(...\\) -> $...$; 正文里裸 LaTeX 自动包成 $...$; 再切公式段渲染。"""
+                    s = autowrap_math(unify_math_delims(s))
                     out = ""
                     for seg in re.split(r"(\$[^$]+\$)", s):
                         if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
-                            out += '#mi("' + latex_var(normalize_math(seg[1:-1])) + '")'
+                            out += math_typst(seg[1:-1])
                         else:
-                            out += md_inline(autowrap_math(seg))
+                            out += md_inline(seg)
                     return out
 
                 def flush_opts():
@@ -2614,14 +2722,15 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
     typ_path = TMP_DIR / f"paper_{int(time.time() * 1000)}.typ"
     pdf_path = typ_path.with_suffix(".pdf")
     typ_path.write_text("\n".join(lines), encoding="utf-8")
-    try:
-        typst.compile(posix(typ_path), output=posix(pdf_path),
-                      font_paths=[posix(FONTS_DIR)], root=posix(ROOT),
-                      package_path=posix(TYPST_PKG_DIR))
-    except Exception as e:
-        return JSONResponse({"ok": False,
-                            "msg": "PDF生成失败: " + str(e)[:200]}, status_code=500)
-    return {"ok": True, "url": f"/files/.tmp/{pdf_path.name}", "count": len(items)}
+    ok2, warn, degraded = compile_pdf(typ_path, pdf_path)
+    if not ok2:
+        log_ai("PDF", "-", False, 0, f"PDF 生成失败: {warn}")
+        return JSONResponse({"ok": False, "msg": "PDF生成失败: " + warn}, status_code=500)
+    if degraded:                               # 出卷成功, 但有个别公式降级成原文显示了
+        log_ai("PDF", "-", False, 0,
+               f"有 {degraded} 个公式无法渲染, 已按原文显示（mitex 不支持其中某些命令）: {warn}")
+    return {"ok": True, "url": f"/files/.tmp/{pdf_path.name}", "count": len(items),
+            "warn": warn, "degraded": degraded}
 
 
 # ---------- AI 视觉识别 (公式 -> LaTeX, 走大模型 API 不吃本地内存) ----------

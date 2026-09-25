@@ -435,6 +435,39 @@ ok("#mi(" in _typ2, "答案里的公式走了 mitex 渲染")
 ok(r"\\perp" in _typ2, "答案里的 \\perp 进了公式（#mi）")
 ok("arrow(" not in _typ2 and "frac(S" not in _typ2, "无斜杠写法已被补正，没有原样输出")
 
+print("\n[19] 渲染兜底: mitex 不支持的公式只降级自己, 其余照常渲染, 保证出得来 PDF")
+_w2 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-SOFT", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "兜底测试 [图1]",
+     "x": 40, "y": 200, "w": 300, "h": 300,
+     "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270}]}]}))
+_sid = _w2["items"][0]["id"]
+m.update_item(_sid, {"analysis": "坏公式：\\(\\foobar{x}\\)，好公式：\\(\\frac{a}{b}\\)。"})
+_r3 = m.paper_pdf(ids=_sid, attach="both")
+ok(isinstance(_r3, dict) and _r3.get("ok"), "含不支持命令也能出 PDF：" + str(_r3.get("msg")))
+eq(_r3.get("degraded"), 1, "只降级了 1 个坏公式")
+ok("\\foobar" in (_r3.get("warn") or ""), "warn 里带了原始报错：" + str(_r3.get("warn")))
+_soft = sorted(m.TMP_DIR.glob("paper_*_soft.typ"))
+ok(_soft, "生成了降级版 typ")
+if _soft:
+    _st = _soft[-1].read_text(encoding="utf-8")
+    eq(_st.count("#raw("), 1, "只有坏公式变成 #raw()")
+    ok(("#mi(" + chr(34) + chr(92) * 2 + "frac{a}{b}" + chr(34) + ")") in _st, "同一个文档里的好公式仍然走 #mi() 渲染")
+ok(any("foobar" in (x["msg"] or "") or "公式无法渲染" in (x["msg"] or "") for x in m.AI_LOG),
+   "降级这件事写进了运行日志(可复制)")
+
+print("\n[20] 路由/签名守卫（防止装饰器挂错函数、参数被污染）")
+ok(any(getattr(r, "endpoint", None) is m.paper_pdf for r in m.app.routes),
+   "/api/paper/pdf 确实挂在 paper_pdf 上")
+_pset = set(_ins.signature(m.paper_pdf).parameters)
+_allowed = {"ids", "attach", "index", "header", "title", "subject_line", "notice",
+            "body_size", "leading", "subtitle", "first_indent", "fig_height"}
+eq(sorted(_pset - _allowed), [], "paper_pdf 没有多余参数（如被误加的 txt）")
+for _fn, _name in ((m.ocr_ai, "ocr_ai"), (m.crop, "crop"), (m.paper_pdf, "paper_pdf"),
+                   (m.test_ai_config, "test_ai_config"), (m.log_client, "log_client")):
+    _p = set(_ins.signature(_fn).parameters)
+    ok(not ({"txt", "self", "cls"} & _p - {"payload", "file"}),
+       f"{_name} 签名干净：{sorted(_p)}")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")

@@ -4491,7 +4491,8 @@ $("pdfBtn").onclick = async () => {
       first_indent: $("phIndent").value || "" });
     const d = await api("/api/paper/pdf?" + q.toString());
     window.open(d.url, "_blank");
-    toast(`已生成 ${d.count} 题的 PDF`, "ok");
+    if (d.degraded) toast(`已生成 ${d.count} 题的 PDF；有 ${d.degraded} 个公式渲染不了，已按原文显示（详见运行日志）`, "err");
+    else toast(`已生成 ${d.count} 题的 PDF`, "ok");
   } catch (err) { toast("生成失败: " + err.message, "err"); }
   btn.disabled = false; btn.querySelector("span").textContent = "生成 PDF（Typst）";
 };
