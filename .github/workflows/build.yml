@@ -110,6 +110,7 @@ jobs:
         with:
           name: 错题收集工具 ${{ github.ref_name }}
           prerelease: false
+          overwrite_files: true            # 同版本重发时覆盖同名附件
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: out/*
