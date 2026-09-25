@@ -346,6 +346,37 @@ ok("/api/log/client" in _paths, "前端报错上报接口已注册")
 ok(any(getattr(r, "path", "") == "/api/logs" for r in m.app.routes), "日志查询接口在")
 ok(m.LOG_DIR == m.ROOT / "logs" and m.ERROR_LOG.parent == m.LOG_DIR, "日志目录随仓库切换")
 
+print("\n[17] 名字叫 .jpg 的 PNG 不能再把 PDF 弄挂（Illegal start bytes:8950）")
+import io as _io
+_buf = _io.BytesIO()
+_Img.new("RGB", (60, 40), (200, 30, 30)).save(_buf, "PNG")     # 真 PNG
+_png = _buf.getvalue()
+_d = m.save_upload_jpeg(_png, m.UPLOADS_DIR, "up_png_as_jpg")
+ok(_d is not None and _d.suffix == ".jpg", "上传规范化: 存成 .jpg")
+with _Img.open(_d) as _im:
+    eq((_im.format or "").lower(), "jpeg", "存的是**真 JPEG**（不是 PNG 内容配 .jpg 名字）")
+ok(m.save_upload_jpeg(b"not an image at all", m.UPLOADS_DIR, "up_bad") is None, "非图片内容被拒")
+# 旧数据自愈: 直接造一个 PNG 内容但叫 .jpg 的图块, 看 PDF 还能不能生成
+_bad = m.ITEMS_DIR / "math" / "legacy_png_as_jpg.jpg"
+_bad.parent.mkdir(parents=True, exist_ok=True)
+_bad.write_bytes(_png)
+_r = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-BAD", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "坏图测试 [图1]",
+     "x": 40, "y": 200, "w": 300, "h": 300,
+     "figures": [{"n": 1, "file": "items/math/legacy_png_as_jpg.jpg", "upload": True}]}]}))
+_it = _r["items"][0]
+_figrel = _it["figures"][0]["file"]
+with _Img.open(m.ROOT / _figrel) as _im2:
+    eq((_im2.format or "").lower(), "jpeg", "入库时已按真实内容重存为真 JPEG（PNG 上传也被规范化）")
+# 模拟"修复前就已经存在的坏数据": 把已入库的图块换成 PNG 字节但仍叫 .jpg
+(m.ROOT / _figrel).write_bytes(_png)
+for _f in m.TMP_DIR.glob("fixed_*.jpg"):
+    _f.unlink(missing_ok=True)
+_eq_saved = m.paper_pdf(ids=_it["id"], fig_height="24", attach="both")
+ok(isinstance(_eq_saved, dict) and _eq_saved.get("ok"),
+   "坏数据（PNG 内容 + .jpg 名字）仍能生成 PDF：" + str(_eq_saved.get("msg")))
+ok(list(m.TMP_DIR.glob("fixed_*.jpg")), "坏图被自愈转存到 .tmp（fixed_*.jpg）")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")

@@ -751,13 +751,19 @@ async def crop(payload: dict):
             src = ROOT / src_rel
             if not src.exists():
                 return None
-            dest = dest_dir / f"{stem}{src.suffix or '.jpg'}"
-            try:
-                shutil.copy2(src, dest)
-                if UPLOADS_DIR in src.parents:      # 临时上传文件用完即删
-                    src.unlink(missing_ok=True)
-            except OSError:
-                return None
+            dest = None
+            try:                                    # 按真实内容重存为真 JPEG(旧数据里 PNG 存成 .jpg 也能救回)
+                dest = save_upload_jpeg(src.read_bytes(), dest_dir, stem)
+            except Exception:
+                dest = None
+            if dest is None:                        # 兜底: 原样复制
+                dest = dest_dir / f"{stem}{src.suffix or '.jpg'}"
+                try:
+                    shutil.copy2(src, dest)
+                except OSError:
+                    return None
+            if UPLOADS_DIR in src.parents:          # 临时上传文件用完即删
+                src.unlink(missing_ok=True)
             return {"n": n_new, "file": f"{rel_prefix}/{dest.name}", "upload": True,
                     "t": int(time.time() * 1000)}
         got = _crop_fig(box_img, fg)
@@ -1428,6 +1434,62 @@ MAX_W_CM = 14.1          # 版心宽度 = 185mm - 左右页边距 2.2cm×2
 TEXT_H_CM = 22.0         # 版心高度 = 260mm - 上下页边距 2cm×2
 
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024          # 单张上传上限(超了直接拒, 别把内存撑爆)
+
+
+def save_upload_jpeg(data, dest_dir, stem, max_side=3000):
+    """把上传的图片**按真实内容**规范化成 JPEG 落盘, 返回路径(失败 None)。
+    只看文件名的后缀是不行的: 名字叫 .jpg 的 PNG 会让 Typst 用 JPEG 解码器解 PNG,
+    报 "Illegal start bytes:8950" (0x89 0x50 = PNG 头)。"""
+    im = None
+    try:
+        im = Image.open(io.BytesIO(data))
+        im = ImageOps.exif_transpose(im)          # 手机照片按 EXIF 摆正
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        w, h = im.size
+        if max(w, h) > max_side:
+            sc = max_side / max(w, h)
+            im = im.resize((max(1, int(w * sc)), max(1, int(h * sc))), Image.LANCZOS)
+        dest = Path(dest_dir) / f"{stem}.jpg"
+        im.save(dest, "JPEG", quality=92)
+        return dest
+    except Exception:
+        return None
+    finally:
+        try:
+            if im is not None:
+                im.close()
+        except Exception:
+            pass
+
+
+def safe_img_path(p):
+    """Typst 按扩展名选解码器。若文件内容与扩展名不符(例如 PNG 存成了 .jpg), 就先转存一份
+    正确的 .jpg 到 .tmp 再交给 Typst —— 这样**已有的坏数据也能自动被救回来**。"""
+    p = Path(p)
+    try:
+        with Image.open(p) as im:
+            fmt = (im.format or "").lower()
+    except Exception:
+        return p                                  # 打不开就原样交给 Typst, 让它去报错
+    want = p.suffix.lower().lstrip(".")
+    same = ((want in ("jpg", "jpeg") and fmt in ("jpeg", "mpg", "jpg")) or
+            (want == "png" and fmt == "png") or (want == "webp" and fmt == "webp") or
+            (want == "gif" and fmt == "gif") or (want == "bmp" and fmt == "bmp") or
+            (want == "svg" and fmt == "svg"))
+    if same:
+        return p
+    dest = TMP_DIR / ("fixed_" + p.stem + ".jpg")
+    try:
+        if not dest.exists() or dest.stat().st_mtime < p.stat().st_mtime:
+            with Image.open(p) as im:
+                ImageOps.exif_transpose(im).convert("RGB").save(dest, "JPEG", quality=92)
+        return dest
+    except Exception:
+        return p
+
+
 def posix(p):
     """给 Typst 的路径必须用正斜杠: Windows 的反斜杠会被 Typst 拒绝(path must not contain a backslash),
     而且会当成转义符(\n \t)把路径吃掉。"""
@@ -1446,8 +1508,8 @@ def typ_file(p):
 
 
 def typ_img(p):
-    """Typst 字符串里的图片路径(相对 root + 转义双引号)。"""
-    return typ_file(p).replace('"', '\\"')
+    """Typst 字符串里的图片路径(相对 root + 转义双引号); 内容与扩展名不符时先自愈。"""
+    return typ_file(safe_img_path(p)).replace('"', '\\"')
 
 
 def fig_size_args(fp, spec, h_pct=24.0):
@@ -2654,6 +2716,8 @@ async def upload_figure(item_id: str, file: UploadFile = File(...), n: str = For
             data = await file.read()
             if len(data) < 100:
                 return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
+            if len(data) > MAX_UPLOAD_BYTES:
+                return JSONResponse({"ok": False, "msg": "图片太大了（上限 25MB）"}, status_code=400)
             figs = list(it.get("figures") or [])
             try:
                 want = int(str(n).strip())
@@ -2669,14 +2733,13 @@ async def upload_figure(item_id: str, file: UploadFile = File(...), n: str = For
                 num = want
             else:
                 num = max((f.get("n", 0) for f in figs), default=0) + 1
-            suffix = Path(file.filename or "img.jpg").suffix.lower()
-            if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
-                suffix = ".jpg"
-            fname = f"{item_id}_fig{num}{suffix}"
             fdir = src.parent
-            (fdir / fname).write_bytes(data)
-            figs.append({"n": num, "file": str((fdir / fname).relative_to(ROOT)),
-                         "upload": True})
+            dest = save_upload_jpeg(data, fdir, f"{item_id}_fig{num}")   # 按真实内容存成真 JPEG
+            if dest is None:
+                return JSONResponse({"ok": False,
+                                     "msg": "不是有效的图片文件（支持 jpg/png/webp/gif/bmp）"},
+                                    status_code=400)
+            figs.append({"n": num, "file": str(dest.relative_to(ROOT)), "upload": True})
             figs.sort(key=lambda f: int(f.get("n", 0)))
             it["figures"] = figs
             save_db(db)
@@ -3011,22 +3074,22 @@ async def draft_upload(file: UploadFile = File(...)):
     """框选页（还没入库）「上传图片」：先落到 uploads/ 并返回相对路径；
     保存入库时会被复制进 items/（临时文件同时删除），所以草稿里只存一个路径。"""
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename or "img.jpg").suffix.lower()
-    if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
-        suffix = ".jpg"
-    dest = UPLOADS_DIR / f"up{int(time.time() * 1000)}{suffix}"
-    written = 0
-    with dest.open("wb") as fh:                 # 分块写盘, 不把整张图读进内存
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            fh.write(chunk)
-            written += len(chunk)
-    if written < 100:
-        dest.unlink(missing_ok=True)
+    buf = io.BytesIO()
+    while True:                                 # 分块读, 带体积上限
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        buf.write(chunk)
+        if buf.tell() > MAX_UPLOAD_BYTES:
+            return JSONResponse({"ok": False, "msg": "图片太大了（上限 25MB）"}, status_code=400)
+    data = buf.getvalue()
+    if len(data) < 100:
         return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
-    return {"ok": True, "file": f"uploads/{dest.name}", "size": written}
+    dest = save_upload_jpeg(data, UPLOADS_DIR, f"up{int(time.time() * 1000)}")
+    if dest is None:
+        return JSONResponse({"ok": False, "msg": "不是有效的图片文件（支持 jpg/png/webp/gif/bmp）"},
+                            status_code=400)
+    return {"ok": True, "file": f"uploads/{dest.name}", "size": dest.stat().st_size}
 
 
 @app.get("/api/drafts")
