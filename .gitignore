@@ -42,3 +42,6 @@ AGENT.md
 # 数据仓库
 vaults.json
 vaults/
+
+# 框选页上传图片的临时目录（入库后会搬进 items/）
+uploads/

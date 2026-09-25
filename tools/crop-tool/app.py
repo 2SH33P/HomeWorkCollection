@@ -38,6 +38,7 @@ else:
     ROOT = Path(__file__).resolve().parents[2]      # HomeWorkCollection/
 PAGES_DIR = ROOT / "pages"                           # 整页照片
 ITEMS_DIR = ROOT / "items"                           # 裁剪出的错题图
+UPLOADS_DIR = ROOT / "uploads"                       # 框选页「上传图片」的临时落盘(入库时搬进 items/)
 DB_FILE = ROOT / "library.json"
 
 # 科目 -> 英文目录名(界面仍显示中文)。内置科目用固定英文名, 新增科目自动分配 customN
@@ -101,7 +102,7 @@ if getattr(sys, "frozen", False):
 else:
     STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-for d in (PAGES_DIR, ITEMS_DIR, TMP_DIR):
+for d in (PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, TMP_DIR):
     d.mkdir(parents=True, exist_ok=True)
 FONTS_DIR = ROOT / "fonts"
 TYPST_PKG_DIR = ROOT / "typst-packages"          # 本地 Typst 包(mitex)
@@ -741,6 +742,35 @@ async def crop(payload: dict):
         except Exception:
             return note or ""
 
+    def _use_fig(fg, box_img, dest_dir, stem, n_new, rel_prefix):
+        """落一个图块并返回记录: fg 带 file(框选页上传的图) 就复制过来, 否则按坐标裁。"""
+        src_rel = str(fg.get("file") or "")
+        if src_rel:
+            src = ROOT / src_rel
+            if not src.exists():
+                return None
+            dest = dest_dir / f"{stem}{src.suffix or '.jpg'}"
+            try:
+                shutil.copy2(src, dest)
+                if UPLOADS_DIR in src.parents:      # 临时上传文件用完即删
+                    src.unlink(missing_ok=True)
+            except OSError:
+                return None
+            return {"n": n_new, "file": f"{rel_prefix}/{dest.name}", "upload": True,
+                    "t": int(time.time() * 1000)}
+        got = _crop_fig(box_img, fg)
+        if not got:
+            return None
+        fimg, coord = got
+        dest = dest_dir / f"{stem}.jpg"
+        try:
+            fimg.save(dest, "JPEG", quality=95)
+        except Exception:
+            return None
+        rec = {"n": n_new, "file": f"{rel_prefix}/{dest.name}", "t": int(time.time() * 1000)}
+        rec.update(coord)
+        return rec
+
     def _crop_fig(box_img, fg):
         """按 fg 的坐标裁出图块图。fg 带 px/py/pw/ph 时坐标相对**整页原图**(全页裁图),
         否则相对题目图。返回 (PIL 图, 坐标字段) 或 None。"""
@@ -799,21 +829,13 @@ async def crop(payload: dict):
                 continue
             mapping = {}                            # 续块图号 -> 并题后的新图号
             for fg in figs_in:
-                got = _crop_fig(crop_img, fg)
-                if not got:
-                    continue
-                fimg, coord = got
                 n_new = take()
-                fname = f"{head['id']}_fig{n_new}.jpg"
-                try:
-                    fimg.save(hdir / fname, "JPEG", quality=95)
-                except Exception:
+                rec = _use_fig(fg, crop_img, hdir, f"{head['id']}_fig{n_new}", n_new,
+                               str(hdir.relative_to(ROOT)))
+                if not rec:
                     nxt[0] -= 1
                     continue
                 mapping[int(fg.get("n", 0) or 0)] = n_new
-                rec = {"n": n_new, "file": str((hdir / fname).relative_to(ROOT)),
-                       "t": int(time.time() * 1000)}
-                rec.update(coord)
                 hfigs.append(rec)
             # 文字里引用了但还没裁的图号也分配新号, 避免与首块撞号
             refs = str(b.get("note") or "") + " " + str(b.get("answer") or "") \
@@ -842,23 +864,13 @@ async def crop(payload: dict):
         img_name = f"{item_id}.jpg"
         img_path = subj_dir / img_name
         crop_img.save(img_path, "JPEG", quality=95)
-        # 图块: box.figures 里的相对坐标(0-1000) -> 裁出图块文件(支持整页坐标)
+        # 图块: 上传的图直接复制, 其余按坐标(题图内/整页)裁出图块文件
         figs = []
         for fg in (b.get("figures") or []):
-            got = _crop_fig(crop_img, fg)
-            if not got:
-                continue                      # 坐标越界/太小: 跳过该图块, 不中断保存
-            fimg, coord = got
-            n_new = len(figs) + 1
-            fname = f"{item_id}_fig{n_new}.jpg"
-            try:
-                fimg.save(subj_dir / fname, "JPEG", quality=95)
-            except Exception:
-                continue
-            rec = {"n": n_new, "file": f"items/{sd}/{fname}",
-                   "t": int(time.time() * 1000)}
-            rec.update(coord)
-            figs.append(rec)
+            rec = _use_fig(fg, crop_img, subj_dir, f"{item_id}_fig{len(figs) + 1}",
+                           len(figs) + 1, f"items/{sd}")
+            if rec:
+                figs.append(rec)
         item = {
             "id": item_id,
             "code": next_code(db, subject),
@@ -2927,6 +2939,29 @@ def recrop_item(item_id: str, payload: dict = None):
             "figures_kept": len(it.get("figures") or [])}
 
 
+@app.post("/api/draft/upload")
+async def draft_upload(file: UploadFile = File(...)):
+    """框选页（还没入库）「上传图片」：先落到 uploads/ 并返回相对路径；
+    保存入库时会被复制进 items/（临时文件同时删除），所以草稿里只存一个路径。"""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "img.jpg").suffix.lower()
+    if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
+        suffix = ".jpg"
+    dest = UPLOADS_DIR / f"up{int(time.time() * 1000)}{suffix}"
+    written = 0
+    with dest.open("wb") as fh:                 # 分块写盘, 不把整张图读进内存
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            fh.write(chunk)
+            written += len(chunk)
+    if written < 100:
+        dest.unlink(missing_ok=True)
+        return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
+    return {"ok": True, "file": f"uploads/{dest.name}", "size": written}
+
+
 @app.get("/api/drafts")
 def get_drafts():
     """所有页的框选草稿(每页最近一次)."""
@@ -3021,11 +3056,12 @@ DEFAULT_VAULT_NAME = "默认仓库"
 
 def _bind_data_paths(root):
     """把全部数据路径指向某个仓库目录(切换仓库时调用)。字体/Typst 包仍用程序目录。"""
-    global ROOT, PAGES_DIR, ITEMS_DIR, DB_FILE, TMP_DIR, PREFIX_FILE, TPL_PATH, \
-        AUTO_LAST_FILE, DRAFT_FILE, BACKUP_DIR, TRASH_DIR, SUBJ_FILE, _SUBJ_CACHE
+    global ROOT, PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, DB_FILE, TMP_DIR, PREFIX_FILE, \
+        TPL_PATH, AUTO_LAST_FILE, DRAFT_FILE, BACKUP_DIR, TRASH_DIR, SUBJ_FILE, _SUBJ_CACHE
     ROOT = Path(root)
     PAGES_DIR = ROOT / "pages"
     ITEMS_DIR = ROOT / "items"
+    UPLOADS_DIR = ROOT / "uploads"
     DB_FILE = ROOT / "library.json"
     TMP_DIR = ROOT / ".tmp"
     PREFIX_FILE = ROOT / "code_prefix.json"
@@ -3036,7 +3072,7 @@ def _bind_data_paths(root):
     TRASH_DIR = ROOT / ".trash"
     SUBJ_FILE = ROOT / "subjects.json"
     _SUBJ_CACHE = None
-    for d in (PAGES_DIR, ITEMS_DIR, TMP_DIR, BACKUP_DIR, TRASH_DIR):
+    for d in (PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, TMP_DIR, BACKUP_DIR, TRASH_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 

@@ -176,5 +176,11 @@ ok(src.includes("function pvTargetEl") && src.includes("PV_FIELD_NAME"), "预览
 ok(src.includes("data-f=\"answer\"") || src.includes("data-f=\"answer\""), "题干卡片里有答案输入框");
 ok(src.includes("renderPvFigs") && src.includes("figMissing"), "缺图提示覆盖答案/解析里的引用");
 
+ok(src.includes('class="mini b-up"') && src.includes("裁图</button>\n          <button type=\"button\" class=\"mini b-up\""),
+   "框选页卡片: 裁图旁边有「上传图片」");
+ok(src.includes('id="edUpload"') && src.includes("/api/draft/upload"), "框选页上传走 draft/upload 接口");
+ok(src.includes('id="pvUploadBtn2"'), "预览窗: 裁图旁边也有「上传图片」");
+ok(/if \(f && f\.file\)/.test(src), "上传的图直接用原图做缩略图(不裁剪预览)");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);

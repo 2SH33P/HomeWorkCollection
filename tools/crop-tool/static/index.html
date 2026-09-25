@@ -984,6 +984,7 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         </div>
         <canvas id="cv"></canvas>
       </div>
+      <input type="file" id="edUpload" accept="image/*" style="display:none">
       <div class="ed-split" id="edSplit" title="拖动调整框选列表宽度（双击恢复默认）"></div>
       <div class="side">
         <div class="side-top">
@@ -1502,6 +1503,7 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         <div class="prev-ops">
           <button class="btn ghost" id="pvAi"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 识别</span></button>
           <button class="btn ghost" id="pvCropBtn">裁图</button>
+          <button class="btn ghost" id="pvUploadBtn2" title="上传本地图片作为图块（插到「插入到」选中的框）">上传图片</button>
           <label class="chk" id="pvFromPageWrap" style="display:none"
                  title="从这张试卷的整页原图里裁（图形画在题目框外时用）">
             <input type="checkbox" id="pvFromPage"> 从整页原图裁</label>
@@ -2249,6 +2251,11 @@ function figPreview(pid, box, f) {
   const key = [pid, box.x, box.y, box.w, box.h, f.n, full ? "p" : "b",
                f.x, f.y, f.w, f.h, f.px, f.py, f.pw, f.ph].join("|");
   if (figPreviewCache.has(key)) return Promise.resolve(figPreviewCache.get(key));
+  if (f && f.file) {                          // 上传的图: 直接显示原图
+    const u = "/files/" + f.file + "?t=" + Date.now();
+    figPreviewCache.set(key, u);
+    return Promise.resolve(u);
+  }
   const ask = (pc) => api("/api/crop/preview", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ page: pid, box: pc }) })
@@ -2378,6 +2385,7 @@ function boxBodyHTML(b) {                // 首块卡片主体: 完整字段
         <div class="brow">
           <button class="mini b-ai" data-id="${b.id}" title="识别题干文字（有续块时连同续块一起识别）">AI 识别</button>
           <button type="button" class="mini b-cfig" data-id="${b.id}" title="框选图形，可连续裁多个（页面上任意位置都能框选）">裁图</button>
+          <button type="button" class="mini b-up" data-id="${b.id}" title="上传本地图片作为本题图块（插到你光标所在的框：题干/答案/解析）">上传图片</button>
           <button type="button" class="mini cont ${pendingGroup && (pendingGroup === b.id || b.group === pendingGroup) ? "on" : ""}" data-id="${b.id}"
             title="并入上一题 / 开启续块：点一下把本块接到上一题；首块再点=结束「自动接下一框」">${pendingGroup === b.id ? "结束续块" : "续块"}</button>
         </div>`;
@@ -2661,6 +2669,11 @@ function renderBoxList() {
     if (pid === curPage) boxes = bs;
     renderBoxList();
     toast("已删除 [图" + n + "]", "ok");
+  });
+  el.querySelectorAll(".b-up").forEach(btn => btn.onclick = () => {
+    const card = btn.closest(".box-card");
+    boxUploadTarget = { pid: card.dataset.pid, bid: btn.dataset.id };
+    $("edUpload").click();
   });
   el.querySelectorAll(".b-fig-miss").forEach(btn => btn.onclick = () => {
     const card = btn.closest(".box-card");
@@ -4083,6 +4096,38 @@ $("pvCap").onclick = () => {
   ta.focus();
   toast(`已插入图注到「${PV_FIELD_NAME[pvInsField()]}」，写在与图片同一行的下一行即可排在图片正下方`, "");
 };
+/* 框选页「上传图片」: 传到 uploads/ -> 追加为本题图块 -> 插到你刚编辑的框 */
+let boxUploadTarget = null;
+$("edUpload").onchange = async e => {
+  const f = e.target.files[0], t = boxUploadTarget;
+  boxUploadTarget = null;
+  if (!f || !t) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const d = await api("/api/draft/upload", { method: "POST", body: fd });
+    const bs = loadBoxes(t.pid);
+    const b = bs.find(x => x.id === t.bid);
+    if (!b) return;
+    b.figures = b.figures || [];
+    const n = b.figures.reduce((m, x) => Math.max(m, +x.n || 0), 0) + 1;
+    b.figures.push({ n: n, file: d.file, upload: true });
+    b.figures.sort((x, y) => (+x.n) - (+y.n));
+    const fld = boxInsField(b.id);                       // 光标所在的框(默认题干)
+    const ta = document.querySelector('.box-card[data-id="' + b.id + '"] textarea[data-f="' + fld + '"]');
+    if (ta) {
+      const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+      ta.value = ta.value.slice(0, pos) + "[图" + n + "]" + ta.value.slice(pos);
+      b[fld] = ta.value;
+    }
+    saveBoxesFor(t.pid, bs);
+    if (t.pid === curPage) { boxes = bs; renderCanvas(); }
+    renderBoxList();
+    toast("已上传为 [图" + n + "] 并插入「" + (BOX_FIELD_NAME[fld] || "题干") + "」", "ok");
+  } catch (err) { toast("上传失败: " + err.message, "err"); }
+  e.target.value = "";
+};
+
 $("pvUpload").onchange = async e => {
   const f = e.target.files[0];
   if (!f || !pvItem) return;
@@ -4233,6 +4278,7 @@ $("pvCropBtn").onclick = () => {
   } else { pvctx.clearRect(0, 0, pvcv.width, pvcv.height); }
 };
 $("pvCropCancel").onclick = () => { $("pvCropBtn").click(); };     // 取消 = 退出裁图模式
+$("pvUploadBtn2").onclick = () => $("pvUpload").click();            // 裁图旁边的「上传图片」
 
 $("pvFromPage").onchange = () => {          // 题目图 / 整页原图 之间切换
   pvFromPage = $("pvFromPage").checked;

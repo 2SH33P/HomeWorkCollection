@@ -275,6 +275,25 @@ eq(m.real_text("【题干】"), "", "real_text: 纯噪声 = 没文字")
 eq(m.real_text("[图1]  "), "", "real_text: 只有图标签 = 没文字")
 ok(m.real_text("A．选项内容") != "", "real_text: 真文字能识别出来")
 
+print("\n[14] 框选页上传的图片能正常入库（复制而非裁剪）")
+from PIL import Image as _Img
+(Path(m.UPLOADS_DIR)).mkdir(parents=True, exist_ok=True)
+up = Path(m.UPLOADS_DIR) / "up_selftest.png"
+_Img.new("RGB", (120, 80), (10, 120, 200)).save(up)
+ru = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-UP", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "带上传图 [图1]", "group": "",
+     "x": 40, "y": 200, "w": 300, "h": 300,
+     "figures": [{"n": 1, "file": "uploads/" + up.name, "upload": True}]},
+]}))
+eq(ru["count"], 1, "入库 1 条")
+uit = ru["items"][0]
+fig_files = [f["file"] for f in uit["figures"]]
+eq(len(fig_files), 1, "上传的图成为该题的图块")
+ok(fig_files and fig_files[0].startswith("items/"), "图块复制到了 items/ 下：" + str(fig_files))
+ok((m.ROOT / fig_files[0]).exists(), "图块文件存在")
+ok(uit["figures"][0].get("upload") is True, "保留 upload 标记")
+ok(not up.exists(), "临时上传文件已删除")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")
