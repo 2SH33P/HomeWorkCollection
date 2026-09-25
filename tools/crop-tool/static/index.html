@@ -1062,8 +1062,8 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
     <div class="card">
       <h3 style="margin-bottom:8px"> 错题重组试卷</h3>
       <p style="font-size:13px;color:var(--t2);line-height:1.8">
-        在「② 错题库」勾选要组卷的题目  生成试卷页面：
-        自动编号、按勾选顺序排列，可直接打印或另存为 PDF。
+        在「② 错题库」勾选要组卷的题目 → 生成 PDF：
+        自动编号、按勾选顺序排列，可直接打印或存档。
         同一题的「续块」会合并编号，显示为 (续)。
       </p>
       <div class="paper-add" style="margin-top:12px">
@@ -1166,10 +1166,9 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         <label class="chk"><input type="checkbox" id="paperIndex"> 附编号对照页</label>
       </div>
       <div class="actions" style="margin-top:12px">
-        <button class="btn" id="paperBtn"><svg class="ic"><use href="#ic-doc"/></svg><span>生成试卷（网页打印）</span></button>
-        <button class="btn" id="pdfBtn"><svg class="ic"><use href="#ic-doc"/></svg><span>生成 PDF（Typst）</span></button>
+        <button class="btn" id="pdfBtn"><svg class="ic"><use href="#ic-doc"/></svg><span>生成 PDF</span></button>
       </div>
-      <div class="hint" style="margin-top:8px">打印对话框选「另存为 PDF」即导出电子版；答案/解析会自动分页排在文末</div>
+      <div class="hint" style="margin-top:8px">生成的是 16 开高考卷风格的 PDF（文字可复制）；答案/解析会自动分页排在文末</div>
     </div>
     <div class="card paper-card" style="margin-top:14px">
       <h3 style="margin-bottom:6px">已选题目（按顺序编号）
@@ -4443,11 +4442,6 @@ function removePaper(i) {
 }
 
 /* ---------- 组卷 ---------- */
-$("paperBtn").onclick = () => {
-  if (!selected.size) return toast("先在错题库勾选题目", "err");
-  sortPaperByChapter();
-  window.open("/api/paper?ids=" + [...selected].join(","), "_blank");
-};
 $("pdfBtn").onclick = async () => {
   if (!selected.size) return toast("先在错题库里勾选题目", "err");
   const btn = $("pdfBtn"); btn.disabled = true;

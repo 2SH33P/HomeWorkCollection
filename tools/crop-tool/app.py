@@ -3006,57 +3006,6 @@ def delete_draft(page_id: str):
     return {"ok": True}
 
 
-@app.get("/api/paper", response_class=HTMLResponse)
-def make_paper(ids: str = ""):
-    """ids: 逗号分隔, 顺序即试卷顺序。生成可打印的试卷页面。"""
-    db = load_db()
-    wanted = [i for i in ids.split(",") if i]
-    items = [it for it in db["items"] if it["id"] in wanted]
-    # 按 ids 中的顺序排列
-    order = {iid: n for n, iid in enumerate(wanted)}
-    items.sort(key=lambda it: order.get(it["id"], 999))
-    grp_first = {}                                  # 续块组 -> 首块 id(卷面顺序)
-    for it in items:
-        g0 = it.get("group") or ""
-        if g0 and g0 not in grp_first:
-            grp_first[g0] = it["id"]
-    cards, n = [], 0
-    for it in items:
-        g = it.get("group") or ""
-        if g and grp_first.get(g) != it["id"]:     # 同一续块组: 不重新编号
-            no = '<div class="qno cont">(续)</div>'
-        else:
-            n += 1
-            no = f'<div class="qno">{n}.</div>'
-        cards.append(f'<div class="q">{no}'
-                     f'<div class="qimg"><img src="/files/{it["image"]}"></div></div>')
-    cards = "".join(cards)
-    return f"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
-<title>错题重组试卷</title>
-<style>
-  body {{ font-family: "Songti SC","SimSun",serif; margin: 24px; }}
-  h1 {{ text-align: center; font-size: 18px; margin: 8px 0 4px; }}
-  .meta {{ text-align: center; color:#666; font-size: 12px; margin-bottom: 16px; }}
-  .q {{ display: flex; gap: 8px; margin-bottom: 18px; page-break-inside: avoid; }}
-  .qno {{ font-size: 15px; font-weight: bold; min-width: 26px; }}
-  .qno.cont {{ color: #999; font-weight: normal; font-size: 13px; min-width: 26px; }}
-  .qimg img {{ max-width: 620px; border: 1px solid #ddd; }}
-  .print {{ position: fixed; top: 12px; right: 12px; padding: 8px 16px;
-           font-size: 14px; cursor: pointer; }}
-  @media print {{
-    .print {{ display: none; }}
-    body {{ margin: 0; }}
-    .qimg img {{ max-width: 100%; border: none; }}
-  }}
-  @page {{ size: A4; margin: 15mm; }}
-</style></head><body>
-<button class="print" onclick="window.print()">🖨 打印 / 存为 PDF</button>
-<h1>错题重组试卷</h1>
-<div class="meta">共 {n} 题 · 由错题自动编排生成 · (续) 表示同一道题的接续部分</div>
-{cards or "<p>未选中任何题目</p>"}
-</body></html>"""
-
-
 # ---------- 数据仓库(类似 Obsidian 的仓库): 切换 / 新建 / 合并 ----------
 # 编译成 exe 后, 数据(图片/题库/配置)就存在 exe 所在目录; 可再建多个仓库子目录切换。
 BASE_DIR = ROOT                     # 程序所在目录: 仓库注册表、字体、Typst 包都放这里
