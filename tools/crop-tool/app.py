@@ -1432,9 +1432,20 @@ def posix(p):
     return str(p).replace("\\", "/")
 
 
+def typ_file(p):
+    """Typst 里的图片路径: 转成相对 root(数据目录) 的 "/items/..." 形式。
+    不能直接用 Windows 绝对路径 —— Typst 的路径不许含盘符(D:)这种非法段, 会报
+    "path contains invalid component"。"""
+    try:
+        rel = Path(p).resolve().relative_to(Path(ROOT).resolve())
+        return "/" + rel.as_posix()
+    except Exception:
+        return posix(p)
+
+
 def typ_img(p):
-    """Typst 字符串里的图片路径(正斜杠 + 转义双引号)。"""
-    return posix(p).replace('"', '\\"')
+    """Typst 字符串里的图片路径(相对 root + 转义双引号)。"""
+    return typ_file(p).replace('"', '\\"')
 
 
 def fig_size_args(fp, spec, h_pct=24.0):
@@ -2325,7 +2336,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
     typ_path.write_text("\n".join(lines), encoding="utf-8")
     try:
         typst.compile(posix(typ_path), output=posix(pdf_path),
-                      font_paths=[posix(FONTS_DIR)], root="/",
+                      font_paths=[posix(FONTS_DIR)], root=posix(ROOT),
                       package_path=posix(TYPST_PKG_DIR))
     except Exception as e:
         return JSONResponse({"ok": False,

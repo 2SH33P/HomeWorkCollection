@@ -303,8 +303,9 @@ _src = _ins.getsource(m.paper_pdf) + _ins.getsource(m.render_simple)
 eq(_src.count("#image("), _src.count("typ_img("), "每个 #image( 都走 typ_img()（防漏改）")
 # 抓一次真实编译参数, 确认没有反斜杠
 _w = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-W", "boxes": [
-    {"subject": "数学", "chapter": "一、选择题", "note": "Windows 路径测试",
-     "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+    {"subject": "数学", "chapter": "一、选择题", "note": "Windows 路径测试 [图1]",
+     "x": 40, "y": 200, "w": 300, "h": 300,
+     "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270}]}]}))
 _wid = _w["items"][0]["id"]
 _real_compile = m.typst.compile
 _cap = {}
@@ -320,6 +321,15 @@ for _k in ("in", "out"):
     ok("\\" not in str(_cap.get(_k, "")), f"编译参数 {_k} 无反斜杠：{_cap.get(_k)}")
 ok(all("\\" not in p for p in (_cap.get("font_paths") or [])), "font_paths 无反斜杠")
 ok("\\" not in str(_cap.get("package_path") or ""), "package_path 无反斜杠")
+# root 必须是数据目录, 图片必须是相对 root 的 /items/... （否则 Windows 盘符会成非法路径段）
+eq(_cap.get("root"), m.posix(m.ROOT), "Typst root = 数据目录")
+_typ = Path(_cap["in"]).read_text(encoding="utf-8")      # 本次编译的那份 .typ
+_imgs = [l.split('"')[1] for l in _typ.splitlines() if "#image(" in l]
+ok(_imgs and all(x.startswith("/") for x in _imgs), "图片路径都是 / 开头的 root 相对路径：" + str(_imgs[:2]))
+ok(all(":" not in x for x in _imgs), "图片路径里没有盘符(冒号)：" + str(_imgs[:2]))
+eq(m.typ_file(m.ROOT / "items" / "x.jpg"), "/items/x.jpg", "typ_file: 数据目录内 -> /相对路径")
+eq(m.typ_file(r"D:\OCR\HWC\items\x.jpg") if False else m.typ_file(m.ROOT / "uploads" / "a.png"),
+   "/uploads/a.png", "typ_file: 上传目录同样相对化")
 
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
