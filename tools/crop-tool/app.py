@@ -1151,43 +1151,143 @@ def ce_to_latex(s):
     return fix_mitex_compat("".join(out))
 
 
+def _build_math_alnum():
+    """Unicode 数学字母(斜体/粗体/无衬线/等宽) -> ASCII。从 Mathpix / PDF 复制的公式常是这种。"""
+    m = {}
+    for up, lo, dg in [(0x1D400, 0x1D41A, 0x1D7CE),    # bold
+                       (0x1D434, 0x1D44E, None),        # italic
+                       (0x1D468, 0x1D482, None),        # bold italic
+                       (0x1D5A0, 0x1D5BA, 0x1D7E2),    # sans
+                       (0x1D5D4, 0x1D5EE, 0x1D7EC),    # sans bold
+                       (0x1D670, 0x1D68A, 0x1D7F6)]:   # mono
+        for i in range(26):
+            m[up + i] = chr(ord("A") + i)
+            m[lo + i] = chr(ord("a") + i)
+        if dg:
+            for i in range(10):
+                m[dg + i] = str(i)
+    m[0x210E] = "h"                                     # 斜体小 h 的特殊码位
+    return m
+
+
+MATH_ALPHANUM = _build_math_alnum()
+MATH_SYMBOLS = {"−": "-", "–": "-", "≤": "\\le ", "≥": "\\ge ", "≠": "\\ne ",
+                "∈": "\\in ", "∞": "\\infty ", "∠": "\\angle ", "⊥": "\\perp ",
+                "∥": "\\parallel ", "⋅": "\\cdot ", "·": "\\cdot ", "×": "\\times ",
+                "÷": "\\div ", "±": "\\pm ", "∓": "\\mp ", "→": "\\to ",
+                "π": "\\pi ", "λ": "\\lambda ", "θ": "\\theta ", "α": "\\alpha ",
+                "β": "\\beta ", "γ": "\\gamma ", "δ": "\\delta ", "φ": "\\phi ",
+                "ω": "\\omega ", "μ": "\\mu ", "ρ": "\\rho ", "σ": "\\sigma ",
+                "⋅": "\\cdot "}
+
+
+def fold_math_unicode(t):
+    """把 Unicode 数学字母/常见数学符号折成 ASCII + LaTeX 命令（公式里用）。"""
+    out = []
+    for ch in t or "":
+        o = ord(ch)
+        out.append(MATH_ALPHANUM.get(o, MATH_SYMBOLS.get(ch, ch)))
+    return "".join(out)
+
+
+# 无斜杠的"函数写法": func(a, b) -> LaTeX（带括号，可嵌套）
+_FUNC = ("frac", "dfrac", "tfrac", "sqrt", "abs", "arrow", "overrightarrow", "vec",
+         "overline", "underline", "bar", "hat", "cases", "dot", "times", "div",
+         "pm", "mp", "angle", "triangle", "text", "mathrm", "cos", "sin", "tan",
+         "cot", "sec", "csc", "arcsin", "arccos", "arctan", "log", "ln", "lg",
+         "lim", "max", "min", "exp")
+# 裸词写法（不带括号）要补成哪个命令；dot 要变 cdot
 _BARE_CMD = ("lambda", "alpha", "beta", "gamma", "delta", "epsilon", "theta", "pi",
              "sigma", "omega", "phi", "mu", "rho", "tau", "perp", "parallel", "cdot",
-             "times", "approx", "equiv", "angle", "triangle", "cup", "cap", "subset",
-             "infty", "le", "ge", "ne", "in")
-_FUNC_CMD = ("frac", "dfrac", "tfrac", "sqrt", "arrow", "overrightarrow", "vec")
+             "dot", "times", "approx", "equiv", "angle", "triangle", "cup", "cap",
+             "subset", "infty", "le", "ge", "ne", "in", "cos", "sin", "tan", "log",
+             "ln", "lg", "lim", "max", "min", "sum", "prod", "int", "div", "pm", "mp",
+             "partial", "nabla", "forall", "exists", "mid", "exp")
+_BARE_MAP = {"dot": "cdot"}
+_FUNC_CALL_RE = r"(?<![\\A-Za-z])(" + "|".join(_FUNC) + r")\s*\("
 
 
-def normalize_math(t):
-    """把"无斜杠 LaTeX"补成标准 LaTeX（AI 有时会输出 frac(a,b) / arrow(SB) / lambda / <= 这种）。
-    纯函数, tools/selfcheck 会测它。"""
-    t = t or ""
-    t = t.replace("<=", "\\le ").replace(">=", "\\ge ").replace("!=", "\\ne ")
-    t = t.replace("infinity", "infty")
-    for _ in range(4):                                  # frac(sqrt(3), 2) 这种嵌套多跑几轮
-        new = re.sub(r"\b(frac|dfrac|tfrac|overrightarrow|arrow|vec|sqrt)\s*\(([^()]*)\)",
-                     lambda m: _bare_cmd(m.group(1), m.group(2)), t)
-        if new == t:
-            break
-        t = new
-    t = re.sub(r"(?<![\w\\])(" + "|".join(_BARE_CMD) + r")\b", lambda m: "\\" + m.group(1), t)
-    return t
+def _split_top(t, sep=","):
+    """按顶层分隔符切分（括号里面的不切）。"""
+    out, depth, cur = [], 0, ""
+    for ch in t or "":
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == sep and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return out
 
 
 def _bare_cmd(name, args):
-    """frac(a,b) -> \\frac{a}{b}; sqrt(x) -> \\sqrt{x}; arrow(SB) -> \\overrightarrow{SB}"""
+    """frac(a,b)->\\frac{a}{b}; sqrt(3)->\\sqrt{3}; abs(x)->|x|;
+    cases(a,b)->分段函数; arrow(SB)->\\overrightarrow{SB}; cos(x)->\\cos(x)"""
+    a = (args or "").strip()
     if name in ("frac", "dfrac", "tfrac"):
-        parts = [x.strip() for x in args.split(",", 1)]
+        parts = _split_top(a)
         if len(parts) == 2:
-            return "\\" + name + "{" + parts[0] + "}{" + parts[1] + "}"
-        return "\\" + name + "{" + args.strip() + "}"
+            return "\\" + name + "{" + parts[0].strip() + "}{" + parts[1].strip() + "}"
+        return "\\" + name + "{" + a + "}"
     if name == "sqrt":
-        return "\\sqrt{" + args.strip() + "}"
+        return "\\sqrt{" + a + "}"
+    if name == "abs":
+        return "\\left|" + a + "\\right|"
+    if name == "cases":
+        rows = [x.strip() for x in _split_top(a) if x.strip()]
+        return "\\begin{cases}" + " \\\\ ".join(rows) + "\\end{cases}"
     if name in ("arrow", "overrightarrow"):
-        return "\\overrightarrow{" + re.sub(r"\s+", "", args) + "}"
+        return "\\overrightarrow{" + re.sub(r"\s+", "", a) + "}"
     if name == "vec":
-        return "\\vec{" + re.sub(r"\s+", "", args) + "}"
-    return "\\" + name + "{" + args + "}"
+        return "\\vec{" + re.sub(r"\s+", "", a) + "}"
+    if name in ("overline", "underline", "bar", "hat"):
+        return "\\" + name + "{" + a + "}"
+    if name in ("dot", "times", "div", "pm", "mp"):
+        return " \\" + name + " ".join(x.strip() for x in _split_top(a)) + " "
+    if name in ("cos", "sin", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+                "log", "ln", "lg", "lim", "max", "min", "exp"):
+        return "\\" + name + "(" + a + ")"
+    return "\\" + name + "{" + a + "}"
+
+
+def _parse_calls(t):
+    """把 func(嵌套(参数)) 递归转成 LaTeX（先归一化最内层参数）。"""
+    out, i, n = [], 0, len(t or "")
+    while i < n:
+        m = re.match(_FUNC_CALL_RE, t[i:])
+        if m:
+            j = i + m.end()
+            depth, k = 1, j
+            while k < n and depth:
+                if t[k] == "(":
+                    depth += 1
+                elif t[k] == ")":
+                    depth -= 1
+                k += 1
+            if depth == 0:
+                out.append(_bare_cmd(m.group(1), normalize_math(t[j:k - 1])))
+                i = k
+                continue
+        out.append(t[i])
+        i += 1
+    return "".join(out)
+
+
+def normalize_math(t):
+    """把"无斜杠 LaTeX"补成标准 LaTeX（AI / Mathpix 常输出 frac(a,b)、arrow(SB)、2lambda、<= 这种）。
+    纯函数, tools/selfcheck 会测它。"""
+    t = fold_math_unicode(t or "")
+    t = t.replace("<=", "\\le ").replace(">=", "\\ge ").replace("!=", "\\ne ")
+    t = t.replace("infinity", "infty")
+    # 裸命令词: 前面排除字母/反斜杠/{, 后面排除字母, 且不能是函数调用(后面跟括号)
+    t = re.sub(r"(?<![A-Za-z\\{])(" + "|".join(_BARE_CMD) + r")(?![A-Za-z])(?![ \t]*\()",
+               lambda m: "\\" + _BARE_MAP.get(m.group(1), m.group(1)), t)
+    t = _parse_calls(t)
+    return t
 
 
 def unify_math_delims(t):
@@ -1205,14 +1305,13 @@ def _known_cmd(name):
     """是不是我们认识(能被 mitex 渲染)的 LaTeX 命令。"""
     global _KNOWN_LATEX
     if _KNOWN_LATEX is None:
-        _KNOWN_LATEX = set(MATH_KEYWORDS) | {
-            "ce", "vec", "overrightarrow", "dfrac", "tfrac", "le", "ge", "ne", "perp",
-            "parallel", "cdot", "times", "infty", "triangle", "angle", "displaystyle",
-            "quad", "qquad", "overline", "underline", "hat", "bar", "partial", "nabla",
-            "cup", "cap", "subset", "subseteq", "forall", "exists", "mid", "to",
-            "rightarrow", "leftarrow", "Rightarrow", "Leftrightarrow", "pm", "mp",
-            "div", "ast", "circ", "bullet", "propto", "sim", "simeq", "cong", "lg",
-            "cot", "sec", "csc", "arcsin", "arccos", "arctan", "dfrac", "limits"}
+        _KNOWN_LATEX = set(MATH_KEYWORDS) | set(_BARE_CMD) | set(_FUNC) | {
+            "ce", "dfrac", "tfrac", "overrightarrow", "overline", "underline", "hat",
+            "bar", "partial", "nabla", "cup", "cap", "subset", "subseteq", "forall",
+            "exists", "mid", "to", "rightarrow", "leftarrow", "Rightarrow",
+            "Leftrightarrow", "pm", "mp", "div", "ast", "circ", "bullet", "propto",
+            "sim", "simeq", "cong", "lg", "cot", "sec", "csc", "arcsin", "arccos",
+            "arctan", "limits", "begin", "end", "left", "right", "quad", "qquad"}
     return name in _KNOWN_LATEX
 
 
@@ -1234,7 +1333,7 @@ def autowrap_math(t):
 
         seg = re.sub(r"\\(?![a-zA-Z])", "", seg)     # 先清掉野反斜杠(如 \, \; \()
         seg = re.sub(r"\\([a-zA-Z]+)(?:\{[^{}]*\})*", _cmd, seg)   # 再处理 \命令(...)
-        seg = re.sub(r"\b(frac|dfrac|tfrac|overrightarrow|arrow|vec|sqrt)\s*\(([^()]*)\)",
+        seg = re.sub(r"\b(" + "|".join(_FUNC) + r")\s*\(([^()]*)\)",
                      lambda m: "$" + _bare_cmd(m.group(1), m.group(2)) + "$", seg)
         seg = re.sub(r"(?<![$\w])(<=|>=|!=)",
                      lambda m: "$" + {"<=": "\\le", ">=": "\\ge", "!=": "\\ne"}[m.group(1)] + "$", seg)
@@ -1318,12 +1417,16 @@ def ai_proofread(img_rgb, draft):
               "1) 文字错别字、漏字、多余字（只能改图片里能看到的内容）；\n"
               "2) 公式/化学式的下标、电荷、系数配平、括号是否配对；\n"
               "3) LaTeX 语法（花括号是否配对、命令拼写）；\n"
-              "4) **图片里看不到的内容必须删掉**：尤其不要凭记忆补出选项、答案、图注；\n"
+              "4) **公式写法必须改成标准 LaTeX**：定界符一律用 $...$（把 \\(...\\) 、\\[...\\] 和小括号参数写法都改掉）；\n"
+              "   frac(a,b) -> $\\frac{a}{b}$、sqrt(3) -> $\\sqrt{3}$、arrow(AB) -> $\\overrightarrow{AB}$、\n"
+              "   abs(x) -> $\\left|x\\right|$、cases(a,b) -> $\\begin{cases}a\\\\ b\\end{cases}$、cos(x) -> $\\cos(x)$、\n"
+              "   m dot n -> $m\\cdot n$、lambda/theta 等希腊字母补上反斜杠、<= >= != 改成 \\le \\ge \\ne、\n"
+              "   一堆 Unicode 数学斜体字母（如 𝑙𝑎𝑚𝑏𝑑𝑎）改回 ASCII 并补上反斜杠命令；\n"
+              "5) **图片里看不到的内容必须删掉**：尤其不要凭记忆补出选项、答案、图注；\n"
               "   图片里没有选项就不要添 A．B．C．D．；题目被截断就在截断处结束；\n"
-              "5) 与图片不符之处。\n"
-              "保持原格式：【题干】标记、公式用 $...$；不要新增任何图块标记"
-              "（[图…]、【图…】、（图…）等一律不要）、不要输出解释。\n"
-              "只输出修正后的完整结果（不得比原文多出图片里看不到的内容）。\n\n识别结果：\n" + draft)
+              "6) 与图片不符之处。\n"
+              "保持原格式：【题干】标记、不要新增任何图块标记（[图…]、【图…】等一律不要）、不要输出解释。\n"
+              "只输出修正后的完整结果（不得多出图片里看不到的内容）。\n\n识别结果：\n" + draft)
     body = {"model": cfg["model"] or "glm-4v-flash",
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": prompt},
@@ -1366,8 +1469,18 @@ AI_PROMPT_STRICT = (
     "7. 第一行输出【题干】，后跟题干文字；\n"
     "8. 绝对不要输出任何形式的图块/图片标记（[图1]、【图1】、（图1）、(图1)、[图 1]、[图片]、"
     "![图片](...)、[图@…] 等全都不要），也不要描述图形；图片里的图形一律留给用户自己裁图后引用；\n"
-    "9. 所有数学公式/化学式用 $...$ LaTeX。\n"
-    "输出前自查：你要输出的每一行，都能在图片里逐字找到吗？找不到就删掉。\n"
+    "9. 数学公式一律写成 $标准 LaTeX$（行内，定界符只能用 $...$）：必须用「反斜杠命令名 + 花括号参数」的写法。\n"
+    "   必须这样写：$\\frac{a}{b}$、$\\sqrt{3}$、$x^2$、$a_1$、$S_{n}$、$\\overrightarrow{AB}$、$\\vec{n}$、"
+    "$\\lambda$、$\\theta$、$\\alpha$、$\\perp$、$\\parallel$、$\\cdot$、$\\times$、$\\pm$、"
+    "$\\le$、$\\ge$、$\\ne$、$\\in$、$\\infty$、$\\angle ABC$、$\\left|m\\right|$、$\\cos\\theta$、"
+    "$\\ln x$、$\\lim_{x\\to0}$、$m\\cdot n$、$\\begin{cases}x=1\\\\ y=2\\end{cases}$；\n"
+    "   绝对禁止这些写法：frac(a,b)、sqrt(3)、arrow(AB)、vec(n)、abs(x)、cases(a,b)、cos(x)、"
+    "m dot n、x <= y、>=、!=、lambda、theta；也禁止用 \\(...\\) 或 \\[...\\] 当定界符；\n"
+    "   禁止把公式写成纯文本（如 x^2、a/b、根号3、a 的平方）或用 Unicode 数学字母（如 𝑙𝑎𝑚𝑏𝑑𝑎、𝑆⃗）；\n"
+    "   分数必须用 $\\frac{}{}$ 不能写成 a/b；下标用 _、上标用 ^；"
+    "方程组/分段函数用 $\\begin{cases}…\\\\ …\\end{cases}$。\n"
+    "10. 化学式也用 $...$：用 $\\mathrm{H_2SO_4}$ 或 $\\ce{2H2 + O2 -> 2H2O}$ 这种写法，不要写成普通文字。\n"
+    "输出前自查：你要输出的每一行，都能在图片里逐字找到吗？找不到就删掉；公式是不是标准 LaTeX？不是就改写。\n"
     "只输出识别结果，不要解释。"
 )
 

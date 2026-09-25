@@ -213,6 +213,15 @@ for _c, _want in [("题干 [图1] 继续", "题干 继续"),
     eq(m.strip_fig_marks(_c), _want, "AI 结果里的图标签会被清掉：" + _c)
 ok("绝对不要输出任何形式的图块" in m.AI_PROMPT_STRICT, "识别提示词点名禁止所有形式的图标签")
 _pf = __import__("inspect").getsource(m.ai_proofread)
+# 提示词必须把"公式写法规范"讲清楚（这是源头修复：AI 直接输出标准 LaTeX）
+_P = m.AI_PROMPT_STRICT
+ok("$\\frac{a}{b}$" in _P, "提示词给了标准写法正例：$\\frac{a}{b}$")
+ok("frac(a,b)" in _P and "arrow(AB)" in _P and "abs(x)" in _P, "提示词点名禁止无斜杠写法")
+ok("禁止用 \\(...\\)" in _P or "\\(...\\)" in _P, "提示词禁止 \\(...\\) 定界符")
+ok("Unicode 数学字母" in _P, "提示词禁止 Unicode 数学斜体字母")
+ok("\\begin{cases}" in _P, "提示词给了分段函数写法")
+ok("\\ce{" in _P, "提示词给了化学式写法")
+ok("标准 LaTeX" in _pf and "frac(a,b) ->" in _pf, "校对提示词会把非标准写法改成标准 LaTeX")
 ok("[图N] 及其位置保持不变" not in _pf and "不要新增任何图块标记" in _pf,
    "校对提示词不再教模型 [图N] 格式")
 ok("插入 [图1]" not in m.AI_PROMPT_STRICT, "提示词里没有“插入 [图1]”这种指令")
@@ -395,6 +404,14 @@ eq(m.autowrap_math(r"与 \perp 以及 frac(a,b) 和 <= 关系"),
    "与 $\\perp$ 以及 $\\frac{a}{b}$ 和 $\\le$ 关系", "正文里裸的 LaTeX 自动包成公式")
 eq(m.autowrap_math(r"未知命令 \foobar 与文字"), "未知命令 foobar 与文字", "不认识的命令只去掉反斜杠，不炸")
 eq(m.autowrap_math(r"已是公式 $x^2$"), "已是公式 $x^2$", "已是公式的原样不动")
+# 用户实际遇到的那些写法（数字后跟 lambda、嵌套函数、cases、Unicode 数学斜体）
+eq(m.normalize_math("2lambda"), "2\\lambda", "数字后面的 lambda 也要补：2lambda")
+eq(m.normalize_math("abs(cos(lm, n))"), "\\left|\\cos(lm, n)\\right|", "嵌套 abs(cos(...))")
+eq(m.normalize_math("m dot n"), "m \\cdot n", "裸 dot -> cdot")
+eq(m.normalize_math("sqrt(lambda4-2lambda3)"), "\\sqrt{\\lambda4-2\\lambda3}", "sqrt 里的 lambda4")
+ok(m.normalize_math("cases(a, b)").startswith("\\begin{cases}"), "cases(...) -> 分段函数环境")
+eq(m.normalize_math("𝑙𝑎𝑚𝑏𝑑𝑎"), "\\lambda", "Unicode 数学斜体字母折成 ASCII")
+eq(m.normalize_math("λ + ⊥ + ≤"), "\\lambda  + \\perp  + \\le ", "Unicode 希腊字母/符号也转")
 ok(int(m.ai_config().get("max_tokens") or 0) >= 8000, "AI 默认最大输出长度 >= 8000")
 _ai_src = _ins.getsource(m.call_ai_vision)
 ok("max_tokens" in _ai_src, "识别请求带 max_tokens")
