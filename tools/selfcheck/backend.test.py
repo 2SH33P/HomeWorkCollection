@@ -331,6 +331,21 @@ eq(m.typ_file(m.ROOT / "items" / "x.jpg"), "/items/x.jpg", "typ_file: 数据目�
 eq(m.typ_file(r"D:\OCR\HWC\items\x.jpg") if False else m.typ_file(m.ROOT / "uploads" / "a.png"),
    "/uploads/a.png", "typ_file: 上传目录同样相对化")
 
+print("\n[16] 报错都进日志（可一键复制）")
+_before = m.ERROR_LOG.read_text("utf-8", errors="ignore") if m.ERROR_LOG.exists() else ""
+m.log_ai("自检失败", "-", False, 0, "这是一条测试错误 E1234")
+_after = m.ERROR_LOG.read_text("utf-8", errors="ignore")
+ok("E1234" in _after and "自检失败" in _after, "失败日志写入了 error.log")
+ok("E1234" in _after.replace(_before, ""), "是本次追加进去的")
+ok(any(x["msg"].find("E1234") >= 0 for x in m.AI_LOG), "内存日志里也有（设置页可见）")
+_n = len(list(m.AI_LOG))
+m.log_ai("自检成功", "-", True, 1, "不该落盘 OK1234")
+ok(not m.ERROR_LOG.read_text("utf-8", errors="ignore").rstrip().endswith("OK1234"), "成功日志不写 error.log")
+_paths = [getattr(r, "path", "") for r in m.app.routes]
+ok("/api/log/client" in _paths, "前端报错上报接口已注册")
+ok(any(getattr(r, "path", "") == "/api/logs" for r in m.app.routes), "日志查询接口在")
+ok(m.LOG_DIR == m.ROOT / "logs" and m.ERROR_LOG.parent == m.LOG_DIR, "日志目录随仓库切换")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 print(f"\n结果: {PASS} 通过, {FAIL} 失败")

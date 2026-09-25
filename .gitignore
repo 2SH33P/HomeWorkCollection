@@ -45,3 +45,6 @@ vaults/
 
 # 框选页上传图片的临时目录（入库后会搬进 items/）
 uploads/
+
+# 报错日志
+logs/

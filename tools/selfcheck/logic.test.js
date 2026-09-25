@@ -182,5 +182,11 @@ ok(src.includes('id="edUpload"') && src.includes("/api/draft/upload"), "框选�
 ok(src.includes('id="pvUploadBtn2"'), "预览窗: 裁图旁边也有「上传图片」");
 ok(/if \(f && f\.file\)/.test(src), "上传的图直接用原图做缩略图(不裁剪预览)");
 
+ok(src.includes("function reportErr") && src.includes("/api/log/client"), "前端有报错上报(reportErr -> /api/log/client)");
+ok(src.includes('addEventListener("error"') && src.includes('addEventListener("unhandledrejection"'),
+   "全局异常/未处理 Promise 也会上报");
+ok(src.includes('id="logCopy"') && src.includes("navigator.clipboard.writeText"), "设置页有「复制日志」按钮");
+ok(src.includes("execCommand(\"copy\")"), "剪贴板不可用时用 execCommand 兜底");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);

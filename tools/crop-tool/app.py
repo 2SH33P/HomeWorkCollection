@@ -39,6 +39,8 @@ else:
 PAGES_DIR = ROOT / "pages"                           # 整页照片
 ITEMS_DIR = ROOT / "items"                           # 裁剪出的错题图
 UPLOADS_DIR = ROOT / "uploads"                       # 框选页「上传图片」的临时落盘(入库时搬进 items/)
+LOG_DIR = ROOT / "logs"                              # 报错日志(纯文本, 方便直接复制粘贴)
+ERROR_LOG = LOG_DIR / "error.log"
 DB_FILE = ROOT / "library.json"
 
 # 科目 -> 英文目录名(界面仍显示中文)。内置科目用固定英文名, 新增科目自动分配 customN
@@ -102,7 +104,7 @@ if getattr(sys, "frozen", False):
 else:
     STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-for d in (PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, TMP_DIR):
+for d in (PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, LOG_DIR, TMP_DIR):
     d.mkdir(parents=True, exist_ok=True)
 FONTS_DIR = ROOT / "fonts"
 TYPST_PKG_DIR = ROOT / "typst-packages"          # 本地 Typst 包(mitex)
@@ -2354,11 +2356,54 @@ AI_LOG = collections.deque(maxlen=300)
 
 
 def log_ai(kind, model, ok, ms, msg=""):
+    msg = str(msg)[:500]
     AI_LOG.append({
         "time": time.strftime("%m-%d %H:%M:%S"),
         "kind": kind, "model": model or "-", "ok": bool(ok),
-        "ms": int(ms), "msg": str(msg)[:200],
+        "ms": int(ms), "msg": msg[:200],
     })
+    if not ok:                                  # 报错一律落盘(设置页可一键复制, 重启也不丢)
+        try:
+            ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with ERROR_LOG.open("a", encoding="utf-8") as fh:
+                fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {kind} | {msg}\n")
+            if ERROR_LOG.stat().st_size > 512 * 1024:
+                keep = ERROR_LOG.read_text("utf-8", errors="ignore").splitlines()[-1000:]
+                ERROR_LOG.write_text("\n".join(keep) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+
+@app.post("/api/log/client")
+def log_client(payload: dict = None):
+    """前端报错/接口失败上报（会出现在设置页「运行日志」里，便于复制）。"""
+    p = payload or {}
+    txt = f"{p.get('where') or ''} {p.get('msg') or ''}".strip()
+    if txt:
+        log_ai(p.get("kind") or "前端报错", "-", False, 0, txt[:400])
+    return {"ok": True}
+
+
+@app.middleware("http")
+async def _log_http_errors(request, call_next):
+    """任何 4xx/5xx 与未捕获异常都写进运行日志（含接口路径与返回消息），方便直接复制反馈。"""
+    try:
+        resp = await call_next(request)
+    except Exception as e:                      # 未捕获异常(500)
+        log_ai("报错", "-", False, 0, f"{request.method} {request.url.path} -> {type(e).__name__}: {e}")
+        raise
+    if resp.status_code >= 400:
+        try:
+            body = b"".join([c async for c in resp.body_iterator])
+            txt = body[:400].decode("utf-8", "ignore").replace("\n", " ")
+            if "/api/log/client" not in request.url.path:      # 避免前端报错上报自我循环
+                log_ai("报错", "-", False, 0,
+                       f"{request.method} {request.url.path} {resp.status_code} {txt}")
+            return Response(content=body, status_code=resp.status_code,
+                            headers=dict(resp.headers), media_type=resp.media_type)
+        except Exception:
+            pass
+    return resp
 
 
 @app.get("/api/logs")
@@ -3027,12 +3072,14 @@ DEFAULT_VAULT_NAME = "默认仓库"
 
 def _bind_data_paths(root):
     """把全部数据路径指向某个仓库目录(切换仓库时调用)。字体/Typst 包仍用程序目录。"""
-    global ROOT, PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, DB_FILE, TMP_DIR, PREFIX_FILE, \
-        TPL_PATH, AUTO_LAST_FILE, DRAFT_FILE, BACKUP_DIR, TRASH_DIR, SUBJ_FILE, _SUBJ_CACHE
+    global ROOT, PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, LOG_DIR, ERROR_LOG, DB_FILE, TMP_DIR, \
+        PREFIX_FILE, TPL_PATH, AUTO_LAST_FILE, DRAFT_FILE, BACKUP_DIR, TRASH_DIR, SUBJ_FILE, _SUBJ_CACHE
     ROOT = Path(root)
     PAGES_DIR = ROOT / "pages"
     ITEMS_DIR = ROOT / "items"
     UPLOADS_DIR = ROOT / "uploads"
+    LOG_DIR = ROOT / "logs"
+    ERROR_LOG = LOG_DIR / "error.log"
     DB_FILE = ROOT / "library.json"
     TMP_DIR = ROOT / ".tmp"
     PREFIX_FILE = ROOT / "code_prefix.json"
@@ -3043,7 +3090,7 @@ def _bind_data_paths(root):
     TRASH_DIR = ROOT / ".trash"
     SUBJ_FILE = ROOT / "subjects.json"
     _SUBJ_CACHE = None
-    for d in (PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, TMP_DIR, BACKUP_DIR, TRASH_DIR):
+    for d in (PAGES_DIR, ITEMS_DIR, UPLOADS_DIR, LOG_DIR, TMP_DIR, BACKUP_DIR, TRASH_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 

@@ -1324,10 +1324,14 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         <h3>运行日志</h3>
         <div class="actions" style="margin:0">
           <button class="btn ghost btn-sm" id="logRefresh"><svg class="ic"><use href="#ic-refresh"/></svg><span>刷新</span></button>
+          <button class="btn ghost btn-sm" id="logCopy"><span>复制日志</span></button>
           <button class="btn ghost btn-sm" id="logClear"><svg class="ic"><use href="#ic-trash"/></svg><span>清空</span></button>
         </div>
       </div>
-      <div class="hint" style="margin-bottom:10px">记录每次 AI 识别 / 拆题 / 测试连接的调用情况（时间、模型、耗时、结果）</div>
+      <div class="hint" style="margin-bottom:10px">
+        记录每次 AI 调用与<b>所有报错</b>（接口 4xx/5xx、未捕获异常、前端异常、PDF 生成失败等）；
+        报错同时写入 <code>logs/error.log</code>（重启也在）。需要反馈时点「复制日志」直接粘贴。
+      </div>
       <div id="logList" class="log-list"></div>
     </div>
   </section>
@@ -1567,10 +1571,32 @@ function toast(msg, kind = "") {
   t.textContent = msg; t.className = "toast show " + kind;
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2400);
 }
+/* 报错上报: 写进服务器运行日志（设置页可一键复制），失败也不影响主流程 */
+function reportErr(where, msg) {
+  try {
+    fetch("/api/log/client", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ where: where, msg: String(msg || "").slice(0, 400) }) }).catch(() => {});
+  } catch (e) { /* 忽略 */ }
+}
+window.addEventListener("error", e => reportErr("页面异常",
+  (e.message || "?") + " @ " + (e.filename || "?") + ":" + (e.lineno || 0)));
+window.addEventListener("unhandledrejection", e => reportErr("未处理的 Promise",
+  (e.reason && (e.reason.message || e.reason)) || "unknown"));
+
 async function api(url, opts) {
-  const r = await fetch(url, opts);
+  let r;
+  try {
+    r = await fetch(url, opts);
+  } catch (e) {                                  // 网络层失败
+    reportErr("请求失败 " + url, e.message || e);
+    throw e;
+  }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.msg || r.statusText);
+  if (!r.ok) {
+    const m = d.msg || r.statusText;
+    if (!String(url).includes("/api/log/client")) reportErr("接口 " + url, r.status + " " + m);
+    throw new Error(m);
+  }
   return d;
 }
 
@@ -5446,6 +5472,28 @@ async function loadLogs() {
   } catch (e) { $("logList").innerHTML = '<div class="hint" style="padding:14px">日志加载失败</div>'; }
 }
 $("logRefresh").onclick = loadLogs;
+$("logCopy").onclick = async () => {
+  let txt = "";
+  try {
+    const d = await api("/api/logs?limit=300");
+    txt = (d.logs || []).map(l => `[${l.time}] ${l.ok ? "成功" : "失败"} ${l.kind} · ${l.model}` +
+                                  (l.msg ? " · " + l.msg : "") + ` (${l.ms}ms)`).join("\n");
+  } catch (e) { txt = ""; }
+  if (!txt) txt = ($("logList").innerText || "").trim();
+  if (!txt) return toast("暂无日志可复制", "err");
+  const done = () => toast("日志已复制，可直接粘贴", "ok");
+  try {
+    await navigator.clipboard.writeText(txt);
+    done();
+  } catch (e) {                                  // 非 https / 旧浏览器兜底
+    const ta = document.createElement("textarea");
+    ta.value = txt; ta.style.position = "fixed"; ta.style.left = "-9999px";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); }
+    catch (e2) { toast("复制失败，请手动选中日志文本", "err"); }
+    ta.remove();
+  }
+};
 $("logClear").onclick = async () => {
   if (!confirm("清空全部运行日志？")) return;
   await api("/api/logs", { method: "DELETE" });
