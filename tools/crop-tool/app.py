@@ -1521,6 +1521,36 @@ AI_PROMPT_STRICT = (
     "只输出识别结果，不要解释。"
 )
 
+# 搜题 App（作业帮等）答案解析截图的提取提示词
+AI_PROMPT_ANSWER = (
+    "用户给的是**搜题 App/网站的答案解析截图**（作业帮、小猿搜题、百度教育…这类）。"
+    "你的任务：把截图里的**答案与解析**原样提取成结构化文本，存进错题本。\n"
+    "硬性规则（违反即为错误）：\n"
+    "1. 只输出截图里**真实可见**的文字；一个字都不许补、不许改、不许续写。"
+    "你可能会认出这是某道真题、并想起它的答案或解析——那些**不算提取结果**，一律不许输出；\n"
+    "2. 截图被截断（解析写到一半就没了）时，就在截断处结束，不要补全；\n"
+    "3. 忽略与答案无关的内容：App 的按钮/图标/菜单（收藏、分享、问老师、视频讲解、倍速…）、"
+    "广告、推荐题、“相关知识点/考点/举一反三”标签、水印（作业帮/小猿…）、页码、点赞数、用户名、"
+    "“本题由 xxx 提供”“解析由 AI 生成”这类声明，全都不要；\n"
+    "4. 截图里**只有答案没有解析**时，就只输出【答案】，**绝对不要自己编解析**；"
+    "只有解析没有答案时，【答案】写“见解析”；\n"
+    "5. 截图里出现**多道题**（列表/连续多题）时，只处理**最上面那道完整题**，其余不要输出。\n"
+    "输出格式（严格遵守，标记用全角方括号，各占一行）：\n"
+    "【题目】截图里题干的开头 15~25 字（给用户核对是不是这道题；不要抄题干全文）\n"
+    "【答案】答案本身；选择题只写字母（如 D 或 AC）；多小问按 (1)…(2)… 分行；解答题若只给“见解析”就写“见解析”\n"
+    "【解析】解答过程，按截图里的步骤分行保留；没有解析就不输出这个标记\n"
+    "公式写法（数学/化学）：一律用 $...$ 包裹的标准 LaTeX —— $\\frac{a}{b}$、$\\sqrt{3}$、$x^2$、$a_1$、"
+    "$\\overrightarrow{AB}$、$\\lambda$、$\\theta$、$\\perp$、$\\le$、$\\ge$、$\\ne$、$|m|$、$\\cos\\theta$、"
+    "$\\begin{cases}…\\\\ …\\end{cases}$、$\\ce{2H2 + O2 -> 2H2O}$；\n"
+    "禁止 frac(a,b)、sqrt(3)、arrow(AB)、abs(x)、cases(a,b)、lambda、m dot n、x <= y 这些写法；"
+    "也禁止 \\(...\\) 、\\[...\\] 、Unicode 数学斜体字母（𝑛𝑎𝑚𝑏𝑑𝑎）与纯文本公式（a/b、根号3）；\n"
+    "截图里若是**表格**（实验数据、参数表），用 Markdown 管道表：第一行 | 列1 | 列2 | ，第二行 | --- | --- | ，再写数据行；\n"
+    "截图里的图形/示意图不要描述，也不要输出 [图1] 这类图块标记（用户自己裁图）；\n"
+    "解析里的层级标题（解：、证：、（1）、①②）保留原样。\n"
+    "输出前自查：每一行都能在截图里逐字找到吗？公式是标准 LaTeX 吗？找不到的就删掉。\n"
+    "只输出上面三个标记与内容，不要解释、不要复述题干全文、不要说“以下是提取结果”。"
+)
+
 
 def real_text(t):
     """去掉【题干】【答案】等标记、图块标签、空白与标点后剩下的“有效文字”。
@@ -1531,8 +1561,9 @@ def real_text(t):
     return t
 
 
-def call_ai_vision(img_rgb):
-    """调用视觉大模型识别图片, 返回 Markdown 文本(公式为 LaTeX)。"""
+def call_ai_vision(img_rgb, prompt=None, kind="识别", proofread=None):
+    """调用视觉大模型。prompt 缺省=题干识别提示词; 答案提取等场景可传自己的提示词。
+    proofread=None 跟随设置(仅题干识别用), 传 False 则不跑校对。"""
     _t0 = time.time()
     hh, ww = img_rgb.shape[:2]
     maxpx = ai_config().get("max_px", 1600) or 1600     # 识别清晰度(最长边像素)
@@ -1543,7 +1574,8 @@ def call_ai_vision(img_rgb):
     _, buf = cv2.imencode(".jpg", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR),
                           [cv2.IMWRITE_JPEG_QUALITY, 90])
     b64 = base64.b64encode(buf).decode()
-    prompt = AI_PROMPT_STRICT
+    is_stem = prompt is None or prompt == AI_PROMPT_STRICT
+    prompt = prompt or AI_PROMPT_STRICT
     body = {
         "model": ai_config()["model"] or "glm-4v-flash",
         "messages": [{"role": "user", "content": [
@@ -1569,16 +1601,18 @@ def call_ai_vision(img_rgb):
             log_ai("识别", ai_config()["model"], False, (time.time() - _t0) * 1000,
                    "AI 输出被服务商的长度上限截断：可在「设置 → 最大输出长度」填更大的值（留空=不设限）")
         usage = d.get("usage") or {}
-        log_ai("识别", ai_config()["model"], True, (time.time() - _t0) * 1000,
+        log_ai(kind, ai_config()["model"], True, (time.time() - _t0) * 1000,
                f"{len(text)} 字" + (f" · {usage.get('total_tokens')} tokens" if usage.get("total_tokens") else ""))
+        if not is_stem:                              # 答案提取等: 原样返回, 不做题干后处理
+            return text
         out = clean_ai_text(text)
-        if ai_config().get("proofread", False):       # 可选: 额外一轮对照图片校对
-            fixed = ai_proofread(img_rgb, out)
+        if proofread if proofread is not None else ai_config().get("proofread", False):
+            fixed = ai_proofread(img_rgb, out)       # 可选: 额外一轮对照图片校对
             if fixed and len(fixed) >= 20:
                 out = clean_ai_text(fixed)
         return out
     except Exception as e:
-        log_ai("识别", ai_config()["model"], False, (time.time() - _t0) * 1000, str(e))
+        log_ai(kind, ai_config()["model"], False, (time.time() - _t0) * 1000, str(e))
         raise
 
 
@@ -2233,6 +2267,34 @@ def _one_math_ok(typ_frag, probe, probe_pdf, pre):
 def _raw(inner):
     """把公式原文包成 Typst 的 #raw(...)（转义字符串, 原样显示, 不会再编译失败）。"""
     return '#raw("' + inner.replace(chr(92), chr(92) * 2).replace('"', chr(92) + '"') + '")'
+
+
+def parse_answer_text(text):
+    """解析「答案提取」结果 -> {head, answer, analysis}。
+    容忍：缺标记(整段当答案)、全角/半角方括号、标记顺序不同、同一标记多次出现。"""
+    t = (text or "").replace("\r", "")
+    out = {"head": "", "answer": "", "analysis": ""}
+    marks = []
+    for key, names in (("head", ("题目", "题干")),
+                       ("answer", ("答案",)),
+                       ("analysis", ("解析", "详解", "解答"))):
+        for name in names:
+            for l, r in (("【", "】"), ("[", "]")):
+                needle = l + name + r
+                i = t.find(needle)
+                if i >= 0:
+                    marks.append((i, i + len(needle), key))
+    marks.sort()
+    if not marks:
+        out["answer"] = t.strip()
+        return out
+    for i, (_s, e, key) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(t)
+        val = t[e:end].strip()
+        if not val:
+            continue
+        out[key] = (out[key] + "\n" + val).strip() if out[key] else val
+    return out
 
 
 def compile_pdf(typ_path, pdf_path):
@@ -3084,6 +3146,52 @@ async def upload_figure(item_id: str, file: UploadFile = File(...), n: str = For
             save_db(db)
             return {"ok": True, "n": num, "figures": figs}
     return JSONResponse({"ok": False, "msg": "不存在"}, status_code=404)
+
+
+@app.post("/api/item/{item_id}/ai_answer")
+async def item_ai_answer(item_id: str, file: UploadFile = File(...), force: str = Form("")):
+    """上传「搜题 App 的答案解析截图」-> 视觉模型提取 -> 写入该题的 答案/解析。
+    题目已有答案/解析且未传 force 时，只返回提取结果、不覆盖（让用户先确认）。"""
+    if not ai_config()["key"] or not ai_config()["base_url"]:
+        return JSONResponse({"ok": False, "msg": "未配置 AI Key，请到「设置」页配置"}, status_code=400)
+    data = await file.read()
+    if len(data) < 100:
+        return JSONResponse({"ok": False, "msg": "文件为空"}, status_code=400)
+    if len(data) > MAX_UPLOAD_BYTES:
+        return JSONResponse({"ok": False, "msg": "图片太大了（上限 25MB）"}, status_code=400)
+    db = load_db()
+    it = next((x for x in db["items"] if x["id"] == item_id), None)
+    if it is None:
+        return JSONResponse({"ok": False, "msg": "题目不存在"}, status_code=404)
+    try:
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        arr = np.array(im)
+        im.close()
+    except Exception:
+        return JSONResponse({"ok": False, "msg": "不是有效的图片文件"}, status_code=400)
+    try:
+        text = call_ai_vision(arr, prompt=AI_PROMPT_ANSWER, kind="答案解析", proofread=False)
+    except Exception as e:
+        return JSONResponse({"ok": False, "msg": "AI 提取失败: " + str(e)[:200]}, status_code=502)
+    parsed = parse_answer_text(strip_fig_marks(text))
+    if not (parsed["answer"] or parsed["analysis"]):
+        return JSONResponse({"ok": False, "msg": "没提取到答案或解析（换张更完整的截图试试）"},
+                            status_code=502)
+    if not str(force).strip() and ((it.get("answer") or "").strip() or (it.get("analysis") or "").strip()):
+        return {"ok": True, "need_confirm": True, "msg": "该题已有答案/解析，确认后才覆盖", **parsed}
+    cur = None
+    with DB_LOCK:
+        db2 = load_db()
+        for x in db2["items"]:
+            if x["id"] == item_id:
+                x["answer"] = parsed["answer"]
+                x["analysis"] = parsed["analysis"]
+                cur = dict(x)
+                break
+        save_db(db2)
+    log_ai("答案解析", ai_config()["model"], True, 0,
+           f"{it.get('code')} 答案{len(parsed['answer'])}字 解析{len(parsed['analysis'])}字")
+    return {"ok": True, "item": cur, **parsed}
 
 
 @app.delete("/api/item/{item_id}/figure/{n}")

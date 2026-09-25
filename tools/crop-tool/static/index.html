@@ -1508,6 +1508,8 @@ button.badge { border: none; cursor: pointer; font-family: inherit; }
         </div>
         <div class="prev-ops">
           <button class="btn ghost" id="pvAi"><svg class="ic"><use href="#ic-sparkle"/></svg><span>AI 识别</span></button>
+          <button class="btn ghost" id="pvAiAns" title="上传搜题 App（作业帮等）的答案解析截图，自动填到「答案 / 解析」">
+            <span>识别答案截图</span></button>
           <button class="btn ghost" id="pvCropBtn">裁图</button>
           <button class="btn ghost" id="pvUploadBtn2" title="上传本地图片作为图块（插到「插入到」选中的框）">上传图片</button>
           <label class="chk" id="pvFromPageWrap" style="display:none"
@@ -4040,6 +4042,35 @@ $("pvAi").onclick = async () => {
     renderPvFigs(pvItem);
     loadLibrary();
   }
+};
+/* 答案解析截图: 上传 -> AI 提取 -> 填入 答案/解析 */
+let pvAnsForce = 0;
+$("pvAiAns").onclick = () => {
+  if (!pvItem) return;
+  const has = ($("pvAnswer").value || "").trim() || ($("pvAnalysis").value || "").trim();
+  if (has && !confirm("该题已有答案/解析，用截图提取的结果覆盖？")) return;
+  pvAnsForce = has ? 1 : 0;
+  $("pvAnsFile").click();
+};
+$("pvAnsFile").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f || !pvItem) return;
+  const btn = $("pvAiAns"), oldTxt = btn.textContent;
+  btn.disabled = true; btn.textContent = "提取中…";
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("force", pvAnsForce ? "1" : "");
+  try {
+    const d = await api(`/api/item/${pvItem.id}/ai_answer`, { method: "POST", body: fd });
+    $("pvAnswer").value = d.answer || "";
+    $("pvAnalysis").value = d.analysis || "";
+    pvItem.answer = d.answer || ""; pvItem.analysis = d.analysis || "";
+    if (d.item) Object.assign(pvItem, d.item);
+    loadLibrary();
+    toast("已填入答案/解析" + (d.head ? "（截图题目：" + d.head.slice(0, 18) + "）" : ""), "ok");
+  } catch (err) { toast("提取失败: " + err.message, "err"); }
+  btn.disabled = false; btn.textContent = oldTxt;
+  e.target.value = "";
 };
 $("pvClose2").onclick = () => $("prevMask").classList.remove("show");
 

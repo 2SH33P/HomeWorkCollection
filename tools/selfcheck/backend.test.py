@@ -523,6 +523,47 @@ ok("#grid(columns: 2" in _t4, "同一行写两个 [图N] -> 自动并排(2 列 g
 ok("#align(right)[#grid(" in _t4, "并排那一行也是右对齐")
 ok("#align(right)[#image(" in _t4, "单图整行默认右对齐")
 
+print("\n[23] 答案截图提取（提示词 + 解析器 + 接口）")
+_PA = m.AI_PROMPT_ANSWER
+ok("作业帮" in _PA and "水印" in _PA, "提示词知道来源是搜题 App 截图，并要忽略水印")
+ok("绝对不要自己编解析" in _PA, "提示词禁止凭空编解析")
+ok("见解析" in _PA, "提示词规定了只给解析时的答案写法")
+ok("frac(a,b)" in _PA and "标准 LaTeX" in _PA, "提示词要求标准 LaTeX 并给了反例")
+ok("最上面那道完整题" in _PA, "提示词规定多题截图只取最上面一道")
+_p1 = m.parse_answer_text("【题目】已知函数 f(x)=ln x\n【答案】AC\n【解析】解：\n(1) 由题意 $x>0$")
+eq(_p1["head"], "已知函数 f(x)=ln x", "解析器: 取到【题目】")
+eq(_p1["answer"], "AC", "解析器: 取到【答案】")
+ok("由题意" in _p1["analysis"], "解析器: 取到【解析】")
+_p2 = m.parse_answer_text("只有一段没有标记的答案 D")
+eq(_p2["answer"], "只有一段没有标记的答案 D", "解析器: 没标记时整段当答案")
+_p3 = m.parse_answer_text("【答案】见解析\n【解析】证明：取 AB 中点")
+eq((_p3["answer"], "证明" in _p3["analysis"]), ("见解析", True), "解析器: 只有解析时答案=见解析")
+# 接口: 假 AI 返回答案文本 -> 写入 答案/解析; 已有内容且未 force 时不覆盖
+class _FakeUp:
+    def __init__(self, data, name="jie.png"): self._d, self.filename = data, name
+    async def read(self): return self._d
+_ai_cfg2 = Path(m.AI_CONFIG_FILE)
+_ai_cfg2.write_text('{"base_url":"http://x/v1","model":"fake","key":"fake-key"}', encoding="utf-8")
+_iw = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-ANS", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "答案截图测试",
+     "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+_iid = _iw["items"][0]["id"]
+_real_cv2 = m.call_ai_vision
+m.call_ai_vision = lambda img, prompt=None, kind="识别", proofread=None: (
+    "【题目】答案截图测试题\n【答案】B\n【解析】因为 $\\frac{a}{b}=1$，所以选 B")
+try:
+    _png2 = __import__('io').BytesIO(); _Img.new("RGB", (80, 60), (200, 200, 200)).save(_png2, "PNG")
+    _r5 = asyncio.run(m.item_ai_answer(_iid, file=_FakeUp(_png2.getvalue()), force="1"))
+    eq(_r5.get("answer"), "B", "接口: 写入答案")
+    ok("frac" in (_r5.get("analysis") or ""), "接口: 写入解析")
+    _db5 = next(x for x in m.load_db()["items"] if x["id"] == _iid)
+    eq((_db5.get("answer"), "frac" in (_db5.get("analysis") or "")), ("B", True), "接口: 已落库")
+    _r6 = asyncio.run(m.item_ai_answer(_iid, file=_FakeUp(_png2.getvalue()), force=""))
+    ok(_r6.get("need_confirm") is True, "已有答案时不 force -> 只提示确认、不覆盖")
+    eq(next(x for x in m.load_db()["items"] if x["id"] == _iid).get("answer"), "B", "内容未被覆盖")
+finally:
+    m.call_ai_vision = _real_cv2
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 ok(not _REAL_AI_CFG.read_text("utf-8").count("fake-key") if _REAL_AI_CFG.exists() else True,
