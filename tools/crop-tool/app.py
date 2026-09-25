@@ -2209,7 +2209,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     def rep_new(m):
                         n2 = int(m.group(1))
                         spec = m.group(2) or ""
-                        al = m.group(3) or "center"
+                        al = m.group(3) or "right"          # 默认右对齐(可用 |left / |center 覆盖)
                         fp = fig_file(n2)
                         if fp:
                             infos.append({"file": str(fp),
@@ -2225,7 +2225,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         fp = crop_old(*(int(v) for v in m.groups()), len(infos))
                         infos.append({"file": str(fp),
                                       "size": fig_size_args(fp, "", fig_h_pct),
-                                      "align": "center"})
+                                      "align": "right"})
                         return f"@@F{len(infos) - 1}@@"
 
                     s = re.sub(r"\[图@(\d+),(\d+),(\d+),(\d+)\]", rep_old, s)
@@ -2233,7 +2233,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         _ip = ROOT / it["image"]
                         infos.append({"file": str(_ip),
                                       "size": fig_size_args(_ip, "45%", fig_h_pct),
-                                      "align": "center"})
+                                      "align": "right"})
                         s = s.replace("[图]", f"@@F{len(infos) - 1}@@")
                     s = s.replace("（图）", "").replace("(图)", "")
                     return s, infos
@@ -2308,8 +2308,8 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                         if len(infos) > 1:
                             cells = "".join(f'[#image("{typ_img(f0["file"])}", {f0["size"]})]'
                                             for f0 in infos)
-                            lines.append(f"#grid(columns: {len(infos)}, "
-                                         f"column-gutter: 0.6em, row-gutter: 0.5em){cells}")
+                            lines.append(f"#align({infos[0]['align']})[#grid(columns: {len(infos)}, "
+                                         f"column-gutter: 0.6em, row-gutter: 0.5em){cells}]")
                             if cap:
                                 lines.append("#align(center)[#v(-0.25cm)"
                                              f"#text(size: 0.88 * BODY)[{cap}]]")

@@ -303,7 +303,7 @@ _src = _ins.getsource(m.paper_pdf) + _ins.getsource(m.render_simple)
 eq(_src.count("#image("), _src.count("typ_img("), "每个 #image( 都走 typ_img()（防漏改）")
 # 抓一次真实编译参数, 确认没有反斜杠
 _w = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-W", "boxes": [
-    {"subject": "数学", "chapter": "一、选择题", "note": "Windows 路径测试 [图1]",
+    {"subject": "数学", "chapter": "一、选择题", "note": "Windows 路径测试\n[图1]",
      "x": 40, "y": 200, "w": 300, "h": 300,
      "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270}]}]}))
 _wid = _w["items"][0]["id"]
@@ -327,6 +327,8 @@ _typ = Path(_cap["in"]).read_text(encoding="utf-8")      # 本次编译的那份
 _imgs = [l.split('"')[1] for l in _typ.splitlines() if "#image(" in l]
 ok(_imgs and all(x.startswith("/") for x in _imgs), "图片路径都是 / 开头的 root 相对路径：" + str(_imgs[:2]))
 ok(all(":" not in x for x in _imgs), "图片路径里没有盘符(冒号)：" + str(_imgs[:2]))
+ok("#align(right)[#image(" in _typ, "单图默认右对齐")
+ok('or "right"' in _ins.getsource(m.paper_pdf), "默认对齐常量是 right（可被 |left/|center 覆盖）")
 eq(m.typ_file(m.ROOT / "items" / "x.jpg"), "/items/x.jpg", "typ_file: 数据目录内 -> /相对路径")
 eq(m.typ_file(r"D:\OCR\HWC\items\x.jpg") if False else m.typ_file(m.ROOT / "uploads" / "a.png"),
    "/uploads/a.png", "typ_file: 上传目录同样相对化")
