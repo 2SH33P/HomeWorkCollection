@@ -188,5 +188,16 @@ ok(src.includes('addEventListener("error"') && src.includes('addEventListener("u
 ok(src.includes('id="logCopy"') && src.includes("navigator.clipboard.writeText"), "设置页有「复制日志」按钮");
 ok(src.includes("execCommand(\"copy\")"), "剪贴板不可用时用 execCommand 兜底");
 
+console.log("\n[8] 图片插入位置 / 右对齐 / 并排");
+eval(src.match(/const caretPos[\s\S]*?function boxInsField\(bid\) \{[\s\S]*?\n\}/)[0].replace(/const /g, "var "));
+eq(clampCaret(3, 10), 3, "正常光标位置原样返回");
+eq(clampCaret(-1, 10), 10, "越界(负) -> 退到末尾");
+eq(clampCaret(99, 10), 10, "越界(超出) -> 退到末尾");
+eq(clampCaret(undefined, 10), 10, "没记录过光标 -> 末尾");
+ok(src.includes("caretFor(\"pv\"") && src.includes("caretFor(\"box\""),
+   "预览窗与框选页都用记住的光标位置插入（不是无脑追加末尾）");
+ok(src.includes('rememberCaret("pv"') && src.includes('rememberCaret("box"'),
+   "输入框 keyup/mouseup/blur/select 时会记录光标");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -2256,6 +2256,19 @@ const figPreviewCache = new Map();
 const lastFieldOf = {};                        // 每张卡片最后编辑的框: note/answer/analysis
 const BOX_FIELDS = ["note", "answer", "analysis"];
 const BOX_FIELD_NAME = { note: "题干", answer: "答案", analysis: "解析" };
+const caretPos = {};                           // 每个输入框记住光标位置(点按钮会丢焦点)
+function caretKey(scope, id, field) { return scope + "|" + id + "|" + field; }
+function clampCaret(pos, len) {                // 光标位置越界就退到末尾
+  return (typeof pos === "number" && pos >= 0 && pos <= len) ? pos : len;
+}
+function rememberCaret(scope, id, field, el) { // focusout/keyup/click 时记录
+  if (!el) return;
+  caretPos[caretKey(scope, id, field)] = el.selectionStart;
+}
+function caretFor(scope, id, field, el) {
+  if (document.activeElement === el) return el.selectionStart;
+  return clampCaret(caretPos[caretKey(scope, id, field)], el.value.length);
+}
 function boxInsField(bid) {                    // 图片引用插到哪个框(默认题干)
   const f = lastFieldOf[bid];
   return BOX_FIELDS.includes(f) ? f : "note";
@@ -2478,7 +2491,10 @@ $("boxList").addEventListener("focusin", e => {
   // 记住每张卡片最后编辑的框(题干/答案/解析): 图片引用就插到这里
   const card = e.target.closest && e.target.closest(".box-card");
   const f = e.target.dataset ? e.target.dataset.f : "";
-  if (card && (f === "note" || f === "answer" || f === "analysis")) lastFieldOf[card.dataset.id] = f;
+  if (card && (f === "note" || f === "answer" || f === "analysis")) {
+    lastFieldOf[card.dataset.id] = f;
+    rememberCaret("box", card.dataset.id, f, e.target);
+  }
 }, true);
 
 function renderBoxList() {
@@ -4069,10 +4085,11 @@ function renderPvFigs(it) {
   box.querySelectorAll("[data-ins]").forEach(b => b.onclick = () => {
     const tag = `[图${b.dataset.ins}]`;
     const ta = pvTargetEl();
-    const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+    const pos = caretFor("pv", "", pvInsField(), ta);      // 插到光标处(不是末尾)
     ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(pos);
     ta.focus();
-    toast(`已插入 ${tag} 到「${PV_FIELD_NAME[pvTarget()]}」`, "ok");
+    rememberCaret("pv", "", pvInsField(), ta);
+    toast(`已在光标处插入 ${tag} 到「${PV_FIELD_NAME[pvTarget()]}」`, "ok");
   });
   box.querySelectorAll("[data-bind]").forEach(s => s.onchange = async () => {
     const from = +s.dataset.bind, to = +s.value;
@@ -4111,17 +4128,23 @@ function pvInsField() {
 function pvTargetEl() { return $(PV_FIELDS[pvInsField()]); }
 ["pvNote", "pvAnswer", "pvAnalysis"].forEach(id => {
   const el = $(id);
-  if (el) el.addEventListener("focusin", () => {
+  if (!el) return;
+  el.addEventListener("focusin", () => {
     const f = Object.keys(PV_FIELDS).find(k => PV_FIELDS[k] === id);
     if (f && $("pvInsTo")) $("pvInsTo").value = f;
   });
+  ["keyup", "mouseup", "blur", "select"].forEach(ev => el.addEventListener(ev, () => {
+    const f = Object.keys(PV_FIELDS).find(k => PV_FIELDS[k] === id);
+    if (f) rememberCaret("pv", "", f, el);      // 记住光标, 点按钮插入时才能插到光标处
+  }));
 });
 
 $("pvCap").onclick = () => {
   const ta = pvTargetEl();
-  const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+  const pos = caretFor("pv", "", pvInsField(), ta);
   ta.value = ta.value.slice(0, pos) + "[图注:说明文字]" + ta.value.slice(pos);
   ta.focus();
+  rememberCaret("pv", "", pvInsField(), ta);
   toast(`已插入图注到「${PV_FIELD_NAME[pvInsField()]}」，写在与图片同一行的下一行即可排在图片正下方`, "");
 };
 /* 框选页「上传图片」: 传到 uploads/ -> 追加为本题图块 -> 插到你刚编辑的框 */
@@ -4144,9 +4167,10 @@ $("edUpload").onchange = async e => {
     const fld = boxInsField(b.id);                       // 光标所在的框(默认题干)
     const ta = document.querySelector('.box-card[data-id="' + b.id + '"] textarea[data-f="' + fld + '"]');
     if (ta) {
-      const pos = (document.activeElement === ta) ? ta.selectionStart : ta.value.length;
+      const pos = caretFor("box", b.id, fld, ta);
       ta.value = ta.value.slice(0, pos) + "[图" + n + "]" + ta.value.slice(pos);
       b[fld] = ta.value;
+      rememberCaret("box", b.id, fld, ta);
     }
     saveBoxesFor(t.pid, bs);
     if (t.pid === curPage) { boxes = bs; renderCanvas(); }

@@ -508,6 +508,21 @@ try:
 finally:
     m.urllib.request.urlopen = _real_urlopen
 
+print("\n[22] 图片：默认右对齐 + 一行多图并排")
+_w3 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-FIG", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题",
+     "note": "并排\n[图1][图2]\n单图\n[图3]",
+     "x": 40, "y": 200, "w": 300, "h": 300,
+     "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270},
+                 {"n": 2, "x": 250, "y": 330, "w": 340, "h": 270},
+                 {"n": 3, "x": 250, "y": 330, "w": 340, "h": 270}]}]}))
+_r4 = m.paper_pdf(ids=_w3["items"][0]["id"], fig_height="24")
+ok(isinstance(_r4, dict) and _r4.get("ok"), "多图出卷成功")
+_t4 = sorted(m.TMP_DIR.glob("paper_*.typ"))[-1].read_text(encoding="utf-8")
+ok("#grid(columns: 2" in _t4, "同一行写两个 [图N] -> 自动并排(2 列 grid)")
+ok("#align(right)[#grid(" in _t4, "并排那一行也是右对齐")
+ok("#align(right)[#image(" in _t4, "单图整行默认右对齐")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 ok(not _REAL_AI_CFG.read_text("utf-8").count("fake-key") if _REAL_AI_CFG.exists() else True,
