@@ -650,7 +650,7 @@ def ai_recognize_one(it, force=False):
         for x in db["items"]:
             if x["id"] == it["id"]:
                 if force or not (x.get("note") or "").strip():
-                    x["note"] = text[:4000]
+                    x["note"] = text[:20000]      # 不再 4000 字截断（长答案会写不下）
                 updated = dict(x)
                 break
         save_db(db)
@@ -1151,6 +1151,97 @@ def ce_to_latex(s):
     return fix_mitex_compat("".join(out))
 
 
+_BARE_CMD = ("lambda", "alpha", "beta", "gamma", "delta", "epsilon", "theta", "pi",
+             "sigma", "omega", "phi", "mu", "rho", "tau", "perp", "parallel", "cdot",
+             "times", "approx", "equiv", "angle", "triangle", "cup", "cap", "subset",
+             "infty", "le", "ge", "ne", "in")
+_FUNC_CMD = ("frac", "dfrac", "tfrac", "sqrt", "arrow", "overrightarrow", "vec")
+
+
+def normalize_math(t):
+    """把"无斜杠 LaTeX"补成标准 LaTeX（AI 有时会输出 frac(a,b) / arrow(SB) / lambda / <= 这种）。
+    纯函数, tools/selfcheck 会测它。"""
+    t = t or ""
+    t = t.replace("<=", "\\le ").replace(">=", "\\ge ").replace("!=", "\\ne ")
+    t = t.replace("infinity", "infty")
+    for _ in range(4):                                  # frac(sqrt(3), 2) 这种嵌套多跑几轮
+        new = re.sub(r"\b(frac|dfrac|tfrac|overrightarrow|arrow|vec|sqrt)\s*\(([^()]*)\)",
+                     lambda m: _bare_cmd(m.group(1), m.group(2)), t)
+        if new == t:
+            break
+        t = new
+    t = re.sub(r"(?<![\w\\])(" + "|".join(_BARE_CMD) + r")\b", lambda m: "\\" + m.group(1), t)
+    return t
+
+
+def _bare_cmd(name, args):
+    """frac(a,b) -> \\frac{a}{b}; sqrt(x) -> \\sqrt{x}; arrow(SB) -> \\overrightarrow{SB}"""
+    if name in ("frac", "dfrac", "tfrac"):
+        parts = [x.strip() for x in args.split(",", 1)]
+        if len(parts) == 2:
+            return "\\" + name + "{" + parts[0] + "}{" + parts[1] + "}"
+        return "\\" + name + "{" + args.strip() + "}"
+    if name == "sqrt":
+        return "\\sqrt{" + args.strip() + "}"
+    if name in ("arrow", "overrightarrow"):
+        return "\\overrightarrow{" + re.sub(r"\s+", "", args) + "}"
+    if name == "vec":
+        return "\\vec{" + re.sub(r"\s+", "", args) + "}"
+    return "\\" + name + "{" + args + "}"
+
+
+def unify_math_delims(t):
+    """把 LaTeX 行内/行间定界符 \\(...\\) 与 \\[...\\] 统一成 $...$（我们只渲染 $...$）。"""
+    t = t or ""
+    t = re.sub(r"\\\[(.+?)\\\]", lambda m: "$" + m.group(1).strip() + "$", t, flags=re.S)
+    t = re.sub(r"\\\((.+?)\\\)", lambda m: "$" + m.group(1).strip() + "$", t, flags=re.S)
+    return t
+
+
+_KNOWN_LATEX = None
+
+
+def _known_cmd(name):
+    """是不是我们认识(能被 mitex 渲染)的 LaTeX 命令。"""
+    global _KNOWN_LATEX
+    if _KNOWN_LATEX is None:
+        _KNOWN_LATEX = set(MATH_KEYWORDS) | {
+            "ce", "vec", "overrightarrow", "dfrac", "tfrac", "le", "ge", "ne", "perp",
+            "parallel", "cdot", "times", "infty", "triangle", "angle", "displaystyle",
+            "quad", "qquad", "overline", "underline", "hat", "bar", "partial", "nabla",
+            "cup", "cap", "subset", "subseteq", "forall", "exists", "mid", "to",
+            "rightarrow", "leftarrow", "Rightarrow", "Leftrightarrow", "pm", "mp",
+            "div", "ast", "circ", "bullet", "propto", "sim", "simeq", "cong", "lg",
+            "cot", "sec", "csc", "arcsin", "arccos", "arctan", "dfrac", "limits"}
+    return name in _KNOWN_LATEX
+
+
+def autowrap_math(t):
+    """正文里**没写定界符**的 LaTeX 片段也尽量渲染:
+    \\perp / \\frac{a}{b} / frac(a,b) / <= 等包成 $...$;
+    不认识的 \\命令 只去掉反斜杠留文字; 其余野反斜杠丢掉 —— 免得 Typst 把 \\ 当转义符报错。
+    ($...$ 里的内容原样保留, 不动。)"""
+    out = []
+    for seg in re.split(r"(\$[^$]+\$)", t or ""):
+        if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
+            out.append(seg)
+            continue
+
+        def _cmd(m):
+            if _known_cmd(m.group(1)):
+                return "$" + m.group(0) + "$"
+            return m.group(0)[1:]                     # 不认识: 去掉反斜杠, 保留文字
+
+        seg = re.sub(r"\\(?![a-zA-Z])", "", seg)     # 先清掉野反斜杠(如 \, \; \()
+        seg = re.sub(r"\\([a-zA-Z]+)(?:\{[^{}]*\})*", _cmd, seg)   # 再处理 \命令(...)
+        seg = re.sub(r"\b(frac|dfrac|tfrac|overrightarrow|arrow|vec|sqrt)\s*\(([^()]*)\)",
+                     lambda m: "$" + _bare_cmd(m.group(1), m.group(2)) + "$", seg)
+        seg = re.sub(r"(?<![$\w])(<=|>=|!=)",
+                     lambda m: "$" + {"<=": "\\le", ">=": "\\ge", "!=": "\\ne"}[m.group(1)] + "$", seg)
+        out.append(seg)
+    return "".join(out)
+
+
 def latex_var(s):
     """LaTeX 片段 -> 可放入 Typst 字符串 mi(\"...\") 的形式。"""
     s = ce_to_latex(s)
@@ -1238,7 +1329,8 @@ def ai_proofread(img_rgb, draft):
                 {"type": "text", "text": prompt},
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
-            "temperature": 0}
+            "temperature": 0,
+            "max_tokens": int(cfg.get("max_tokens") or 8000)}
     if "deepseek" in (cfg["base_url"] or "").lower():
         body["reasoning_effort"] = "none"
     req = urllib.request.Request(
@@ -1250,6 +1342,9 @@ def ai_proofread(img_rgb, draft):
         with urllib.request.urlopen(req, timeout=150) as r:
             d = json.loads(r.read())
         fixed = (d["choices"][0]["message"]["content"] or "").strip()
+        if (d["choices"][0].get("finish_reason") or "") == "length":
+            log_ai("校对", cfg["model"], False, (time.time() - _t0) * 1000,
+                   "校对输出达到长度上限被截断：请调大「最大输出长度」或关闭校对")
         log_ai("校对", cfg["model"], bool(fixed), (time.time() - _t0) * 1000,
                f"{len(draft)} -> {len(fixed)} 字")
         return fixed
@@ -1306,6 +1401,7 @@ def call_ai_vision(img_rgb):
             {"type": "image_url",
              "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]}],
         "temperature": 0.1,
+        "max_tokens": int(ai_config().get("max_tokens") or 8000),   # 长题/长答案需要更大的输出上限
     }
     if "deepseek" in (ai_config()["base_url"] or "").lower():
         body["reasoning_effort"] = "none"   # 识别是感知任务, 关思考可提速约 40%
@@ -1318,6 +1414,9 @@ def call_ai_vision(img_rgb):
         with urllib.request.urlopen(req, timeout=120) as r:
             d = json.loads(r.read())
         text = d["choices"][0]["message"]["content"]
+        if (d["choices"][0].get("finish_reason") or "") == "length":   # 被输出上限截断
+            log_ai("识别", ai_config()["model"], False, (time.time() - _t0) * 1000,
+                   "AI 输出达到长度上限被截断：请在「设置 → 最大输出长度」调大后重试")
         usage = d.get("usage") or {}
         log_ai("识别", ai_config()["model"], True, (time.time() - _t0) * 1000,
                f"{len(text)} 字" + (f" · {usage.get('total_tokens')} tokens" if usage.get("total_tokens") else ""))
@@ -1625,12 +1724,13 @@ def render_simple(txt, it, lines, fig_h_pct=24.0):
                 continue
         ln = re.sub(r"\[图(\d+)(?:\|([\d.]+%?[hH]?))?\]", _fig, ln)
         ln = ln.replace("（图）", "").replace("(图)", "")
+        ln = unify_math_delims(ln)
         out = ""
         for seg in re.split(r"(\$[^$]+\$)", ln):
             if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
-                out += '#mi("' + latex_var(seg[1:-1]) + '")'
+                out += '#mi("' + latex_var(normalize_math(seg[1:-1])) + '")'
             else:
-                out += md(seg)
+                out += md(autowrap_math(seg))
         for i, (fp, sz) in enumerate(figs):
             out = out.replace(f"@@F{i}@@", f'#image("{typ_img(fp)}", {sz})')
         if out.strip():
@@ -2149,13 +2249,16 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     return out
 
                 def esc_ln(s):
-                    """公式 $..$ 转 Typst, 其余文本: markdown 字体标记 + 转义"""
+                    """公式 $..$ 转 Typst, 其余文本: markdown 字体标记 + 转义。
+                    同时容错: \\(...\\) 也算公式; 无斜杠写法(frac/arrow/lambda/<=)自动补正;
+                    正文里裸的 \\命令 / frac(a,b) 自动包成公式, 避免 Typst 报错。"""
+                    s = unify_math_delims(s)
                     out = ""
                     for seg in re.split(r"(\$[^$]+\$)", s):
                         if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
-                            out += '#mi("' + latex_var(seg[1:-1]) + '")'   # 交给 mitex 渲染
+                            out += '#mi("' + latex_var(normalize_math(seg[1:-1])) + '")'
                         else:
-                            out += md_inline(seg)
+                            out += md_inline(autowrap_math(seg))
                     return out
 
                 def flush_opts():
@@ -2482,7 +2585,8 @@ def clear_logs():
 
 def ai_config():
     cfg = {"base_url": "", "key": "", "model": "", "proofread": False, "max_px": 1600,
-           "font_marks": True}     # font_marks: AI 是否标记原题的加粗/楷体字体差异
+           "font_marks": True, "max_tokens": 8000}   # max_tokens: 单次识别最大输出长度
+    # font_marks: AI 是否标记原题的加粗/楷体字体差异
     if AI_CONFIG_FILE.exists():
         try:
             cfg.update(json.loads(AI_CONFIG_FILE.read_text(encoding="utf-8")))
@@ -2508,7 +2612,8 @@ def get_ai_config():
     return {"ok": True, "base_url": cfg["base_url"], "model": cfg["model"],
             "key_set": bool(key),
             "key_hint": (key[:4] + "****" + key[-4:]) if len(key) > 10 else ("****" if key else ""),
-            "max_px": cfg.get("max_px", 1600), "proofread": bool(cfg.get("proofread")),
+            "max_px": cfg.get("max_px", 1600), "max_tokens": int(cfg.get("max_tokens") or 8000),
+            "proofread": bool(cfg.get("proofread")),
             "font_marks": bool(cfg.get("font_marks", True)),
             "presets": AI_PRESETS}
 
@@ -2526,6 +2631,11 @@ def set_ai_config(payload: dict):
     if "max_px" in payload:
         try:
             cfg["max_px"] = max(800, min(3000, int(payload["max_px"])))
+        except (TypeError, ValueError):
+            pass
+    if "max_tokens" in payload:
+        try:
+            cfg["max_tokens"] = max(256, min(32000, int(payload["max_tokens"])))
         except (TypeError, ValueError):
             pass
     AI_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
@@ -2691,7 +2801,7 @@ def update_item(item_id: str, payload: dict):
             for k in ("title", "chapter", "reason", "note", "subject",
                       "answer", "analysis", "keywords"):
                 if k in payload:
-                    it[k] = str(payload[k])[:4000]
+                    it[k] = str(payload[k])[:20000]
             if "star" in payload:
                 try:
                     it["star"] = max(0, min(5, int(payload["star"] or 0)))

@@ -26,6 +26,12 @@ sys.path.insert(0, str(ROOT / "tools" / "crop-tool"))
 import app as m  # noqa: E402
 
 PASS, FAIL = 0, 0
+
+
+def _items_first_id():
+    """库里第一条题目的 id（自测里用来改字段/出卷）。"""
+    its = m.load_db()["items"]
+    return its[0]["id"] if its else ""
 TMPROOT = Path(tempfile.mkdtemp(prefix="selfcheck-"))
 VAULT = TMPROOT / "vault"
 
@@ -378,6 +384,39 @@ _eq_saved = m.paper_pdf(ids=_it["id"], fig_height="24", attach="both")
 ok(isinstance(_eq_saved, dict) and _eq_saved.get("ok"),
    "坏数据（PNG 内容 + .jpg 名字）仍能生成 PDF：" + str(_eq_saved.get("msg")))
 ok(list(m.TMP_DIR.glob("fixed_*.jpg")), "坏图被自愈转存到 .tmp（fixed_*.jpg）")
+
+print("\n[18] 长答案不截断 + LaTeX 写法容错渲染")
+eq(m.normalize_math("frac(a, b)"), "\\frac{a}{b}", "无斜杠 frac(a,b) 补正")
+eq(m.normalize_math("arrow(S B)"), "\\overrightarrow{SB}", "arrow(SB) -> 向量")
+eq(m.normalize_math("frac(sqrt(3), 2)"), "\\frac{\\sqrt{3}}{2}", "嵌套 frac(sqrt(3),2)")
+eq(m.normalize_math("a <= b >= c != d"), "a \\le  b \\ge  c \\ne  d", "<= >= != 转 LaTeX")
+eq(m.unify_math_delims(r"由(1)知，\(BC \perp\)平面"), "由(1)知，$BC \\perp$平面", "\\(...\\) 也算公式")
+eq(m.autowrap_math(r"与 \perp 以及 frac(a,b) 和 <= 关系"),
+   "与 $\\perp$ 以及 $\\frac{a}{b}$ 和 $\\le$ 关系", "正文里裸的 LaTeX 自动包成公式")
+eq(m.autowrap_math(r"未知命令 \foobar 与文字"), "未知命令 foobar 与文字", "不认识的命令只去掉反斜杠，不炸")
+eq(m.autowrap_math(r"已是公式 $x^2$"), "已是公式 $x^2$", "已是公式的原样不动")
+ok(int(m.ai_config().get("max_tokens") or 0) >= 8000, "AI 默认最大输出长度 >= 8000")
+_ai_src = _ins.getsource(m.call_ai_vision)
+ok("max_tokens" in _ai_src, "识别请求带 max_tokens")
+ok("finish_reason" in _ai_src and "截断" in _ai_src, "识别被截断时会写日志告警")
+# 长答案不被 4000 字截断
+_long = "长" * 9000
+m.update_item(_items_first_id(), {"answer": _long})
+_dbit = next(x for x in m.load_db()["items"] if x["id"] == _items_first_id())
+eq(len(_dbit.get("answer") or ""), 9000, "答案 9000 字完整保存（不再 4000 截断）")
+# 端到端: 用户那条渲染不出来的答案
+_hard = ("(2) (i) 解：由(1)知，\\(BC \\perp\\)平面\\(ASD\\)，且\\(AD \\perp SD\\)，\n"
+         "则\\(D(0, 0, 0)\\)，\\(A(2, 0, 0)\\)，\\(S(0, 0, sqrt(3))\\)，\n"
+         "所以\\(arrow(S B) = (0, -1, -sqrt(3))\\)，设\\(arrow(S M) = lambda arrow(S B)\\)，0 <= lambda <= 1，\n"
+         "由于\\(frac(S M, S B) + frac(S N, S C) = 1\\)，即\\(N(0, 1 - lambda, sqrt(3)lambda)\\)。")
+m.update_item(_items_first_id(), {"analysis": _hard})
+_rr = m.paper_pdf(ids=_items_first_id(), attach="both", fig_height="24")
+ok(isinstance(_rr, dict) and _rr.get("ok"),
+   "这条 LaTeX 写法的答案能正常渲染出 PDF：" + str(_rr.get("msg")))
+_typ2 = sorted(m.TMP_DIR.glob("paper_*.typ"))[-1].read_text(encoding="utf-8")   # 本次出卷的 .typ
+ok("#mi(" in _typ2, "答案里的公式走了 mitex 渲染")
+ok(r"\\perp" in _typ2, "答案里的 \\perp 进了公式（#mi）")
+ok("arrow(" not in _typ2 and "frac(S" not in _typ2, "无斜杠写法已被补正，没有原样输出")
 
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
