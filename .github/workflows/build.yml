@@ -1,9 +1,12 @@
 name: build
 
-# 只编译并上传 Actions 产物（Artifacts），不创建 Release、不发布任何东西。
+# push 到 main      : 只编译 + 上传 Actions 产物（Artifacts），不发布任何东西。
+# 打 tag（例：v1.0）: 编译 + 自动创建 GitHub Release，把 Windows / macOS 包作为附件传上去。
+# 手动触发（Run workflow）: 同 push main（只出 Artifacts）。
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -76,3 +79,53 @@ jobs:
           name: HomeWorkCollection-macos-${{ runner.arch }}
           if-no-files-found: error
           path: ${{ env.ARTIFACT }}
+
+  # 只有推 tag（v1.0 这类）才会跑：把上面两个产物整理成可直接解压使用的 zip，发 Release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Package release assets
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          mkdir -p out
+          # Windows: 把 exe 提到压缩包根目录（和 fonts / typst-packages 同级，解压即用）
+          cd dl/HomeWorkCollection-windows
+          if [ -d dist ]; then mv dist/HomeWorkCollection.exe . ; rmdir dist ; fi
+          zip -qr "../../out/HomeWorkCollection-${VER}-windows.zip" .
+          cd ../..
+          # macOS: 产物本身就是 zip（内含可执行文件 + fonts + typst-packages）
+          for f in dl/HomeWorkCollection-macos-*/*.zip; do
+            arch="$(basename "$(dirname "$f")" | sed 's/.*macos-//' | tr 'A-Z' 'a-z')"
+            cp "$f" "out/HomeWorkCollection-${VER}-macos-${arch}.zip"
+          done
+          ls -lh out
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: 错题收集工具 ${{ github.ref_name }}
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: out/*
+          body: |
+            ## 错题收集工具 ${{ github.ref_name }}
+
+            **用法**：把下载的压缩包**完整解压**到一个目录（可执行文件必须和 `fonts/`、`typst-packages/` 在同一目录），
+            Windows 双击 `HomeWorkCollection.exe`；macOS 先 `chmod +x HomeWorkCollection` 再运行。
+            然后浏览器打开 <http://localhost:8091>（手机同一 WiFi 访问 `http://电脑IP:8091`）。
+
+            | 附件 | 内容 |
+            |---|---|
+            | `HomeWorkCollection-${{ github.ref_name }}-windows.zip` | 单文件 exe + 内置字体 + Typst 包 |
+            | `HomeWorkCollection-${{ github.ref_name }}-macos-*.zip` | macOS 可执行文件（Apple Silicon）+ 内置字体 + Typst 包 |
+
+            **数据存在哪**：就在可执行文件所在目录（`library.json`、`items/`、`pages/`、`backups/`…），
+            升级时只替换可执行文件即可，数据不动。
+
+            📖 使用教程：<https://2sh33p.github.io/HomeWorkCollection/>

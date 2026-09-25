@@ -55,14 +55,27 @@ kill <PID>
 
 ### 方式一：GitHub Actions 自动编译（推荐）
 
-推送到 `main` 分支，或在仓库 **Actions → build → Run workflow** 手动触发。运行结束后在该次运行的页面底部 **Artifacts** 下载：
+推送到 `main` 分支，或在仓库 **Actions → build → Run workflow** 手动触发（只出 Artifacts）。
+运行结束后在该次运行的页面底部 **Artifacts** 下载：
 
 | 产物 | 内容 |
 |---|---|
 | `HomeWorkCollection-windows` | `HomeWorkCollection.exe` + `fonts/` + `typst-packages/` |
 | `HomeWorkCollection-macos-<arch>` | `HomeWorkCollection` 可执行文件 + `fonts/` + `typst-packages/`（zip）|
 
-只上传 Artifacts，**不会创建 Release、不会发布任何东西**。
+**想要 Release 安装包**：给提交打一个 tag 再推送，workflow 会自动创建 Release 并附上两个压缩包：
+
+```bash
+git tag v1.0 && git push origin v1.0     # 版本号自己定，v1.0 / v1.2 …
+# 下载页：https://github.com/2SH33P/HomeWorkCollection/releases
+```
+
+| Release 附件 | 内容 |
+|---|---|
+| `HomeWorkCollection-<版本>-windows.zip` | 单文件 exe + `fonts/` + `typst-packages/`（解压即用）|
+| `HomeWorkCollection-<版本>-macos-<arch>.zip` | macOS 可执行文件 + `fonts/` + `typst-packages/` |
+
+推送到 `main` 则只上传 Artifacts，不发布任何东西。
 
 ### 方式二：本地编译
 

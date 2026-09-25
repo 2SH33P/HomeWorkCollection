@@ -276,8 +276,16 @@ backups/                 写库前自动备份（保留 30 份）
 
 ## 编译产物（GitHub Actions）
 
-仓库自带 `.github/workflows/build.yml`：推送到 `main` 或在 Actions 页手动触发后，自动编译并上传 **Artifacts**
-（不创建 Release、不发布任何东西）：
+仓库自带 `.github/workflows/build.yml`：
+
+- **推送到 `main`** / Actions 页手动触发 → 只编译并上传 **Artifacts**（不发布任何东西）；
+- **打 tag（`v1.0` 这类）** → 编译后**自动创建 GitHub Release**，把 Windows / macOS 压缩包作为附件传上去
+  （下载地址：<https://github.com/2SH33P/HomeWorkCollection/releases>）。
+
+| 产物 | 内容 |
+|---|---|
+| `HomeWorkCollection-<版本>-windows.zip` | 单文件 exe + 内置字体 + Typst 包（解压即用）|
+| `HomeWorkCollection-<版本>-macos-<arch>.zip` | macOS 可执行文件 + 内置字体 + Typst 包 |
 
 | 产物 | 内容 |
 |---|---|
