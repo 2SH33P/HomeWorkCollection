@@ -1202,7 +1202,8 @@ _BARE_CMD = ("lambda", "alpha", "beta", "gamma", "delta", "epsilon", "theta", "p
              "dot", "times", "approx", "equiv", "angle", "triangle", "cup", "cap",
              "subset", "infty", "le", "ge", "ne", "in", "cos", "sin", "tan", "log",
              "ln", "lg", "lim", "max", "min", "sum", "prod", "int", "div", "pm", "mp",
-             "partial", "nabla", "forall", "exists", "mid", "exp")
+             "partial", "nabla", "forall", "exists", "mid", "exp",
+             "cap", "sqcap", "oplus", "otimes", "odot", "ominus", "hbar")
 _BARE_MAP = {"dot": "cdot"}
 _FUNC_CALL_RE = r"(?<![\\A-Za-z])(" + "|".join(_FUNC) + r")\s*\("
 
@@ -1293,10 +1294,27 @@ _LATEX_FIX = [
 ]
 
 
+_MATH_TYPOS = [("lamda", "lambda"), ("lamba", "lambda"), ("lambada", "lambda"),
+               ("therfore", "therefore"), ("therefor", "therefore"),
+               ("becuase", "because"), ("becasue", "because"),
+               ("overbar", "overline"), ("overlline", "overline"),
+               ("infinity", "infty"), ("infinte", "infty"),
+               ("subsest", "subset"), ("trianlge", "triangle")]
+
+
+def fix_math_typos(t):
+    """常见 LaTeX 命令拼写错误 -> 正确命令。
+    实测 \\lamda 会让整条公式渲染失败并被降级成原文（用户就碰到过）。"""
+    t = t or ""
+    for bad, good in _MATH_TYPOS:
+        t = re.sub(re.escape(_BS) + bad + r"\b", lambda m, g=good: _BS + g, t)   # 替换串里的反斜杠得用函数给
+    return t
+
+
 def latex_fixups(t):
     """把 mitex 不认识的 LaTeX 写法换成能渲染的等价写法；
     不支持的 \\begin{...} 环境(矩阵/对齐/数组)去掉环境标签。cases 另有专门处理。"""
-    t = t or ""
+    t = fix_math_typos(t or "")
     for a, b in sorted(_LATEX_FIX, key=lambda kv: -len(kv[0])):   # 长命令优先, 免得 \sqcap 被 \cap 拆坏
         t = t.replace(a, b)
     t = re.sub(_BS * 2 + r"begin\{(?!cases)[a-zA-Z*]+\}", "", t)
@@ -1316,7 +1334,7 @@ def normalize_math(t):
     t = re.sub(r"(?<![A-Za-z\\{])(" + "|".join(_BARE_CMD) + r")(?![A-Za-z])(?![ \t]*\()",
                lambda m: "\\" + _BARE_MAP.get(m.group(1), m.group(1)), t)
     t = _parse_calls(t)
-    return t
+    return fix_math_typos(latex_fixups(t))     # 裸词补成命令后再修一次(bare cap -> \\cap -> ∩)
 
 
 def math_typst(latex):
@@ -1362,7 +1380,7 @@ def autowrap_math(t):
     \\perp / \\frac{a}{b} / frac(a,b) / <= 等包成 $...$;
     不认识的 \\命令 只去掉反斜杠留文字; 其余野反斜杠丢掉 —— 免得 Typst 把 \\ 当转义符报错。
     ($...$ 里的内容原样保留, 不动。)"""
-    t = t or ""
+    t = fix_math_typos(t or "")                 # 先修拼写, 否则 \\lamda 会被当未知命令把反斜杠去掉
     # 0) \begin{...}...\end{...} 必须**整块**包成一个公式，否则 cases 的 \begin/\end 会被拆成两个
     #    孤儿公式（之前 \end{cases} 单独进 mi() 就报 unexpected cases）。
     t = re.sub(r"(?<!\$)\\begin\{([a-zA-Z*]+)\}.*?\\end\{\1\}(?!\$)",
@@ -2265,14 +2283,60 @@ def _typst_run(inp, pdf_path):
                   root=posix(ROOT), package_path=posix(TYPST_PKG_DIR))
 
 
+_MATH_OK_CACHE = {}                     # 公式片段 -> 能否渲染（进程内缓存, 避免每次都体检）
+
+
 def _one_math_ok(typ_frag, probe, probe_pdf, pre):
-    """单独编译一个公式片段, 看它能不能渲染(mitex 不支持某些命令)。"""
+    """某个公式能不能渲染（带缓存）。"""
+    hit = _MATH_OK_CACHE.get(typ_frag)
+    if hit is not None:
+        return hit
     probe.write_text(pre + typ_frag + "\n", encoding="utf-8")
     try:
         _typst_run(probe, probe_pdf)
-        return True
+        ok = True
     except Exception:
-        return False
+        ok = False
+    if len(_MATH_OK_CACHE) > 4000:
+        _MATH_OK_CACHE.clear()
+    _MATH_OK_CACHE[typ_frag] = ok
+    return ok
+
+
+def _find_bad_math(snips, probe, probe_pdf, pre, batch=32):
+    """找出哪些公式渲染不了：先整批编译（默认 32 个一起），整批通过就跳过；
+    失败再对半细分 —— 只试 O(坏公式数 × log n) 次，比逐个试快一个数量级。
+    已知结果的公式走缓存。"""
+    bad, unknown = [], []
+    for sn in snips[:600]:
+        hit = _MATH_OK_CACHE.get(sn["typ"])
+        if hit is None:
+            unknown.append(sn)
+        elif not hit:
+            bad.append(sn)
+
+    def test(group):
+        if not group:
+            return
+        probe.write_text(pre + "\n".join(g["typ"] for g in group) + "\n", encoding="utf-8")
+        try:
+            _typst_run(probe, probe_pdf)
+            for g in group:                       # 整批通过 -> 全部记成"能渲染"
+                _MATH_OK_CACHE[g["typ"]] = True
+            return
+        except Exception:
+            pass
+        if len(group) == 1:
+            _MATH_OK_CACHE[group[0]["typ"]] = False
+            bad.append(group[0])
+            return
+        mid = len(group) // 2
+        test(group[:mid])
+        test(group[mid:])
+
+    for i in range(0, len(unknown), batch):
+        test(unknown[i:i + batch])
+    return bad
 
 
 def _raw(inner):
@@ -2325,10 +2389,7 @@ def compile_pdf(typ_path, pdf_path):
         probe = TMP_DIR / "probe.typ"
         probe_pdf = TMP_DIR / "probe.pdf"
         snips = _math_snips(txt)
-        bad = []
-        for sn in snips[:400]:
-            if not _one_math_ok(sn["typ"], probe, probe_pdf, pre):
-                bad.append(sn)
+        bad = _find_bad_math(snips, probe, probe_pdf, pre)   # 二分定位坏公式(逐个试太慢)
         soft = Path(typ_path).with_name(Path(typ_path).stem + "_soft.typ")
         if bad:
             new = txt

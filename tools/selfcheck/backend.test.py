@@ -413,7 +413,7 @@ eq(m.autowrap_math(r"未知命令 \foobar 与文字"), "未知命令 foobar 与�
 eq(m.autowrap_math(r"已是公式 $x^2$"), "已是公式 $x^2$", "已是公式的原样不动")
 # 用户实际遇到的那些写法（数字后跟 lambda、嵌套函数、cases、Unicode 数学斜体）
 eq(m.normalize_math("2lambda"), "2\\lambda", "数字后面的 lambda 也要补：2lambda")
-eq(m.normalize_math("abs(cos(lm, n))"), "\\left|\\cos(lm, n)\\right|", "嵌套 abs(cos(...))")
+eq(m.normalize_math("abs(cos(lm, n))"), "|\\cos(lm, n)|", "嵌套 abs(cos(...))（\\left|\\right 不支持, 会去掉）")
 eq(m.normalize_math("m dot n"), "m \\cdot n", "裸 dot -> cdot")
 eq(m.normalize_math("sqrt(lambda4-2lambda3)"), "\\sqrt{\\lambda4-2\\lambda3}", "sqrt 里的 lambda4")
 ok(m.normalize_math("cases(a, b)").startswith("\\begin{cases}"), "cases(...) -> 分段函数环境")
@@ -594,6 +594,43 @@ m.update_item(_wb["items"][0]["id"], {"analysis": _bundle})
 _rb = m.paper_pdf(ids=_wb["items"][0]["id"], attach="both")
 ok(isinstance(_rb, dict) and _rb.get("ok"), "含这些命令的解析能出卷")
 eq(_rb.get("degraded"), 0, "一个公式都没被降级（全部正常渲染）")
+
+print("\n[25] 拼写容错 + 裸 cap + 兜底不再拖慢出卷")
+_bs = chr(92)
+eq(m.normalize_math(_bs + "lamda"), _bs + "lambda", "常见拼写错误 \\lamda -> \\lambda")
+eq(m.normalize_math(_bs + "therfore"), _bs + "therefore", "\\therfore -> \\therefore")
+eq(m.normalize_math(_bs + "overline{A}cap B"), _bs + "overline{A}∩ B", "裸 cap（没斜杠）也补成 ∩")
+eq(m.normalize_math("cap"), "∩", "裸词 cap -> ∩")
+ok(_bs + "bigcap" not in m.normalize_math(_bs + "bigcap_i") and "⋂" in m.normalize_math(_bs + "bigcap_i"),
+   "\\bigcap 不会被裸 cap 规则拆坏")
+_user = ("已知随机事件 A,B 满足 P(A)=" + _bs + "frac{1}{2}，P(B)=" + _bs + "frac{5}{12}，"
+         "P(A" + _bs + "overline{B})+P(" + _bs + "overline{A}cap B)=" + _bs + "frac{1}{4}，"
+         "则 P(A" + _bs + "cap B)=___。其中用了" + _bs + "lamda 这种拼写错误。")
+_uu = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-TYPO", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "拼写容错测试 " + _user,
+     "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+_ru = m.paper_pdf(ids=_uu["items"][0]["id"], attach="both")
+ok(isinstance(_ru, dict) and _ru.get("ok"), "这段（含拼写错误）能出卷")
+eq(_ru.get("degraded"), 0, "拼写错误被自动修正，0 降级")
+# 性能守卫: 一个坏公式夹在 40 个公式里, 编译次数必须是"二分级别"(远小于 40)
+_cnt = {"n": 0}
+_real_run = m._typst_run
+def _counted(*a, **k):
+    _cnt["n"] += 1
+    return _real_run(*a, **k)
+m._typst_run = _counted
+m._MATH_OK_CACHE.clear()
+try:
+    _bad_note = "\n".join(["好公式 $x^%d$ 与 $y_%d$" % (i + 1, i) for i in range(20)])
+    _bad_note += "\n坏公式 $\\foobarcmd{x}$\n"
+    _rb2 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-PERF", "boxes": [
+        {"subject": "数学", "chapter": "一、选择题", "note": _bad_note,
+         "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+    _rp = m.paper_pdf(ids=_rb2["items"][0]["id"], attach="both")
+finally:
+    m._typst_run = _real_run
+eq(_rp.get("degraded"), 1, "只降级那 1 个坏公式")
+ok(_cnt["n"] <= 12, f"二分定位: 全程只编译 {_cnt['n']} 次（逐个试要 40+ 次）")
 
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
