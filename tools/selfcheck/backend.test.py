@@ -632,6 +632,25 @@ finally:
 eq(_rp.get("degraded"), 1, "只降级那 1 个坏公式")
 ok(_cnt["n"] <= 12, f"二分定位: 全程只编译 {_cnt['n']} 次（逐个试要 40+ 次）")
 
+print("\n[26] 跨行公式不再被拆碎（MA0015 那种写法）")
+_B = chr(92)
+_two = ("已知$P(A)=" + _B + "frac{1}{2}$，$P(A" + _B + "overline{B})+P(" + _B + "overline{A}B)\n"
+        "=" + _B + "frac{1}{4}$，则$P(A" + _B + "cap B)=$____。")
+_ls = m.merge_math_lines(_two)
+ok(1 <= len(_ls) <= 2, "跨行公式被接成一个逻辑行（实测 " + str(len(_ls)) + " 行, 不再逐行拆碎）")
+ok(all(x.count("$") % 2 == 0 for x in _ls), "接好后每行 $ 都是成对的")
+_w6 = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-ML", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": _two,
+     "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+_r6 = m.paper_pdf(ids=_w6["items"][0]["id"], attach="both")
+ok(isinstance(_r6, dict) and _r6.get("ok"), "跨行公式的题能出卷")
+eq(_r6.get("degraded"), 0, "0 降级")
+_t6 = sorted(m.TMP_DIR.glob("paper_*.typ"))[-1].read_text(encoding="utf-8")
+_spans = [x.group(1) for x in __import__("re").finditer(r'#mi\("((?:[^"\\\\]|\\\\.)*)"\)', _t6)]
+ok(any(_B + "frac{1}{4}" in x and "overline" in x for x in _spans),
+   "跨行的公式是一条完整的 #mi：" + str([x[:40] for x in _spans]))
+ok(not any(x.strip() in (")", "+ P(", "P") for x in _spans), "没有出现 ) / + P( / P 这种碎片")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 ok(not _REAL_AI_CFG.read_text("utf-8").count("fake-key") if _REAL_AI_CFG.exists() else True,

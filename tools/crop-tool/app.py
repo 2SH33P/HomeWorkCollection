@@ -1337,6 +1337,20 @@ def normalize_math(t):
     return fix_math_typos(latex_fixups(t))     # 裸词补成命令后再修一次(bare cap -> \\cap -> ∩)
 
 
+def merge_math_lines(txt):
+    """把「跨行的公式」接回一行：某行的 $ 个数是奇数时，与下一行合并（用空格连接）。
+    AI/搜题复制常把 $...$ 断成两行；逐行处理会把公式拆碎（MA0015 就是这种）。"""
+    out, buf = [], ""
+    for ln in (txt or "").split("\n"):
+        buf = (buf + " " + ln.strip()) if buf else ln
+        if buf.count("$") % 2 == 0:          # $ 成对 -> 一个逻辑行结束
+            out.append(buf)
+            buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
 def math_typst(latex):
     """一段 LaTeX 公式 -> Typst 片段。\begin{cases} 用 Typst 原生 cases()(mitex 不支持该环境),
     其余交给 mitex 的 mi()。"""
@@ -1896,7 +1910,7 @@ def render_simple(txt, it, lines, fig_h_pct=24.0):
         return out
 
     tbl_buf2 = []
-    for ln in txt.split("\n"):
+    for ln in merge_math_lines(txt):
         ln = ln.strip()
         if not ln:
             continue
@@ -2698,7 +2712,7 @@ def paper_pdf(ids: str = "", attach: str = "", index: str = "", header: str = ""
                     s = s.replace("（图）", "").replace("(图)", "")
                     return s, infos
 
-                raw_lines = txt.split("\n")
+                raw_lines = merge_math_lines(txt)
                 skip_next = False
                 for li, raw_ln in enumerate(raw_lines):
                     ln = raw_ln.strip()
