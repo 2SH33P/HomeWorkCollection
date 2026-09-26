@@ -564,6 +564,37 @@ try:
 finally:
     m.call_ai_vision = _real_cv2
 
+print("\n[24] 命令覆盖: mitex 不支持的常用命令都要能自动换成可渲染写法")
+_cap = chr(92)
+for _src, _want in [(_cap + "alpha" + _cap + "cap" + _cap + "beta=l", "∩"),
+                    ("A" + _cap + "sqcap B", "⊓"),
+                    ("A" + _cap + "oplus B", "⊕"),
+                    ("A" + _cap + "otimes B", "⊗"),
+                    ("A" + _cap + "odot B", "⊙"),
+                    ("A" + _cap + "ominus B", "⊖"),
+                    (_cap + "partial x", "∂"),
+                    (_cap + "hbar", "ℏ"),
+                    (_cap + "bigcap_{i=1}^n", "⋂")]:
+    out = m.normalize_math(_src)
+    ok(_want in out, f"{_src[:26]:28} -> {out[:30]}")
+ok(_cap + "cap" not in m.normalize_math("A" + _cap + "cap B"), "修完不再残留 \\cap（否则又会被 mitex 判错）")
+ok(_cap + "mathrm{arccot}" in m.normalize_math(_cap + "arccot x"), "arccot -> \\mathrm{arccot}")
+ok(_cap + "mathrm{sgn}" in m.normalize_math(_cap + "sgn x"), "sgn -> \\mathrm{sgn}")
+ok(m.math_typst(_cap + "begin{cases}x=1" + _cap * 2 + "y=2" + _cap + "end{cases}").startswith("$ cases("),
+   "cases 走 Typst 原生 cases()")
+# 端到端: 一整段含这些命令的解析 -> 出卷 degraded 必须为 0
+_bundle = ("设" + _cap + "alpha" + _cap + "cap" + _cap + "beta=l，则" + _cap + "partial x/"
+           + _cap + "partial t>0，" + _cap + "oplus 与" + _cap + "otimes 满足" + _cap + "odot 关系；"
+           "由" + _cap + "bigcap_{i=1}^n A_i 得" + _cap + "arccot x，" + _cap + "begin{cases}x=1"
+           + _cap * 2 + "y=2" + _cap + "end{cases}。")
+_wb = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-CMD", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "命令覆盖测试",
+     "x": 40, "y": 200, "w": 300, "h": 300, "figures": []}]}))
+m.update_item(_wb["items"][0]["id"], {"analysis": _bundle})
+_rb = m.paper_pdf(ids=_wb["items"][0]["id"], attach="both")
+ok(isinstance(_rb, dict) and _rb.get("ok"), "含这些命令的解析能出卷")
+eq(_rb.get("degraded"), 0, "一个公式都没被降级（全部正常渲染）")
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 ok(not _REAL_AI_CFG.read_text("utf-8").count("fake-key") if _REAL_AI_CFG.exists() else True,

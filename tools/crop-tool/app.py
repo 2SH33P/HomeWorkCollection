@@ -1285,6 +1285,11 @@ _LATEX_FIX = [
     (_BS + "lvert", "|"), (_BS + "rvert", "|"), (_BS + "vert", "|"),
     (_BS + "bigcap", "⋂"), (_BS + "bigcup", "⋃"),
     (_BS + "bigvee", "⋁"), (_BS + "bigwedge", "⋀"),
+    # 186 个常用命令实测扫描后补的（mitex 不支持这些；右边都是编译验证过的等价写法）
+    (_BS + "cap", "∩"), (_BS + "sqcap", "⊓"), (_BS + "oplus", "⊕"), (_BS + "otimes", "⊗"),
+    (_BS + "odot", "⊙"), (_BS + "ominus", "⊖"), (_BS + "partial", "∂"), (_BS + "hbar", "ℏ"),
+    (_BS + "celsius", "℃"), (_BS + "micro", "µ"), (_BS + "permil", "‰"),
+    (_BS + "arccot", _BS + "mathrm{arccot}"), (_BS + "sgn", _BS + "mathrm{sgn}"),
 ]
 
 
@@ -1292,12 +1297,12 @@ def latex_fixups(t):
     """把 mitex 不认识的 LaTeX 写法换成能渲染的等价写法；
     不支持的 \\begin{...} 环境(矩阵/对齐/数组)去掉环境标签。cases 另有专门处理。"""
     t = t or ""
-    for a, b in _LATEX_FIX:
+    for a, b in sorted(_LATEX_FIX, key=lambda kv: -len(kv[0])):   # 长命令优先, 免得 \sqcap 被 \cap 拆坏
         t = t.replace(a, b)
     t = re.sub(_BS * 2 + r"begin\{(?!cases)[a-zA-Z*]+\}", "", t)
     t = re.sub(_BS * 2 + r"end\{(?!cases)[a-zA-Z*]+\}", "", t)
-    if _BS + "begin{cases}" not in t:            # 非 cases 环境里的换行(\\ )换成 ; 免得 mi() 报错
-        t = t.replace(_BS * 2, "; ")
+    if _BS + "begin{cases}" not in t:            # 非 cases 环境(矩阵/对齐): 换行换 ; , & 换逗号
+        t = t.replace(_BS * 2, "; ").replace("&", ", ")
     return t
 
 
@@ -1341,7 +1346,8 @@ def _known_cmd(name):
     """是不是我们认识(能被 mitex 渲染)的 LaTeX 命令。"""
     global _KNOWN_LATEX
     if _KNOWN_LATEX is None:
-        _KNOWN_LATEX = set(MATH_KEYWORDS) | set(_BARE_CMD) | set(_FUNC) | {
+        _KNOWN_LATEX = {a[1:] for a, _b in _LATEX_FIX if a.startswith(_BS)}   # 能修正的都算认识
+        _KNOWN_LATEX |= set(MATH_KEYWORDS) | set(_BARE_CMD) | set(_FUNC) | {
             "ce", "dfrac", "tfrac", "overrightarrow", "overline", "underline", "hat",
             "bar", "partial", "nabla", "cup", "cap", "subset", "subseteq", "forall",
             "exists", "mid", "to", "rightarrow", "leftarrow", "Rightarrow",
@@ -1356,8 +1362,13 @@ def autowrap_math(t):
     \\perp / \\frac{a}{b} / frac(a,b) / <= 等包成 $...$;
     不认识的 \\命令 只去掉反斜杠留文字; 其余野反斜杠丢掉 —— 免得 Typst 把 \\ 当转义符报错。
     ($...$ 里的内容原样保留, 不动。)"""
+    t = t or ""
+    # 0) \begin{...}...\end{...} 必须**整块**包成一个公式，否则 cases 的 \begin/\end 会被拆成两个
+    #    孤儿公式（之前 \end{cases} 单独进 mi() 就报 unexpected cases）。
+    t = re.sub(r"(?<!\$)\\begin\{([a-zA-Z*]+)\}.*?\\end\{\1\}(?!\$)",
+               lambda m: "$" + m.group(0) + "$", t, flags=re.S)
     out = []
-    for seg in re.split(r"(\$[^$]+\$)", t or ""):
+    for seg in re.split(r"(\$[^$]+\$)", t):
         if seg.startswith("$") and seg.endswith("$") and len(seg) > 2:
             out.append(seg)
             continue
