@@ -199,5 +199,12 @@ ok(src.includes("caretFor(\"pv\"") && src.includes("caretFor(\"box\""),
 ok(src.includes('rememberCaret("pv"') && src.includes('rememberCaret("box"'),
    "输入框 keyup/mouseup/blur/select 时会记录光标");
 
+console.log("\n[9] HTML/JS 一致性：悬空 id 会让整页脚本中断（就是它让导入数据包没反应）");
+const _idsHtml = (src.match(/id="[^"]+"/g) || []).map(s => s.slice(4, -1));
+const _idsJs = [...new Set((src.match(/\$\("[^"]+"\)/g) || []).map(s => s.slice(3, -2)))];
+const _missing = _idsJs.filter(i => !_idsHtml.includes(i));
+eq(_missing, [], "JS 里所有 $() 引用的 id 在 HTML 里都存在");
+ok(_idsJs.length > 100, "共检查 " + _idsJs.length + " 个 id 引用");
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);
