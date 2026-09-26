@@ -4121,7 +4121,7 @@ function renderPvFigs(it) {
     ta.value = ta.value.slice(0, pos) + tag + ta.value.slice(pos);
     ta.focus();
     rememberCaret("pv", "", pvInsField(), ta);
-    toast(`已在光标处插入 ${tag} 到「${PV_FIELD_NAME[pvTarget()]}」`, "ok");
+    toast(`已在光标处插入 ${tag} 到「${PV_FIELD_NAME[pvInsField()]}」`, "ok");
   });
   box.querySelectorAll("[data-bind]").forEach(s => s.onchange = async () => {
     const from = +s.dataset.bind, to = +s.value;

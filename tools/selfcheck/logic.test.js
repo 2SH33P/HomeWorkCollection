@@ -206,5 +206,45 @@ const _missing = _idsJs.filter(i => !_idsHtml.includes(i));
 eq(_missing, [], "JS 里所有 $() 引用的 id 在 HTML 里都存在");
 ok(_idsJs.length > 100, "共检查 " + _idsJs.length + " 个 id 引用");
 
+console.log("\n[10] 静态体检：调用未定义函数 / 接口路径 / 重复定义（本次抓到过 pvTarget）");
+const _code = script
+  .replace(/\/\*[\s\S]*?\*\//g, " ")
+  .replace(/\/\/[^\n]*/g, " ")
+  .replace(/`(?:[^`\\]|\\.)*`/g, '""')
+  .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  .replace(/'(?:[^'\\]|\\.)*'/g, "''");
+const _defined = new Set();
+for (const m of script.matchAll(/function\s+([A-Za-z_$][\w$]*)/g)) _defined.add(m[1]);
+for (const m of script.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) _defined.add(m[1]);
+for (const m of script.matchAll(/function\s*[\w$]*\s*\(([^)]*)\)/g))
+  m[1].split(",").forEach(x => { const n = x.trim().split("=")[0].trim(); if (n) _defined.add(n); });
+for (const m of script.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*=>/g)) _defined.add(m[1]);
+for (const m of script.matchAll(/\(([^)]*)\)\s*=>/g))
+  m[1].split(",").forEach(x => { const n = x.trim().split("=")[0].trim(); if (n) _defined.add(n); });
+const _BUILTIN = new Set(("Array Object JSON Number String Boolean Math Date Promise Set Map Image " +
+  "FileReader FormData URLSearchParams fetch parseInt parseFloat isNaN isFinite getComputedStyle " +
+  "setTimeout clearTimeout setInterval clearInterval requestAnimationFrame alert confirm prompt " +
+  "encodeURIComponent decodeURIComponent btoa atob structuredClone Intl BigInt ArrayBuffer Blob " +
+  "File URL Event CustomEvent MutationObserver function if for while switch catch return new typeof void do else async var let const rgb rgba hsl url")
+  .split(" "));
+const _calls = [...new Set([..._code.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]))];
+const _undef = _calls.filter(c => !_defined.has(c) && !_BUILTIN.has(c) && !/^[A-Z]/.test(c));
+eq(_undef, [], "没有「调用了但没定义」的函数");
+
+const _apiPaths = [...new Set([...script.matchAll(/["'`](\/api\/[^"'`?\s]*)/g)].map(m => m[1]))];
+const _py = fs.readFileSync(path.join(__dirname, "..", "crop-tool", "app.py"), "utf8");
+const _norm = s => s.replace(/\$\{[^}]*\}/g, "{x}").replace(/\{[^}]*\}/g, "{x}").replace(/\/+$/, "");
+const _routes = [...new Set([..._py.matchAll(/@app\.(?:get|post|put|patch|delete)\("([^"]+)"/g)].map(m => _norm(m[1])))];
+const _missApi = [...new Set(_apiPaths.map(_norm))].filter(p =>
+  !_routes.some(r => r === p || r.startsWith(p + "/") || p.startsWith(r.split("{x}")[0])));
+eq(_missApi, [], "前端调用的 /api 路径后端都存在");
+
+const _fnNames = [...script.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]);
+const _dupFn = [...new Set(_fnNames.filter((n, i) => _fnNames.indexOf(n) !== i))];
+eq(_dupFn, [], "JS 里没有重复定义的函数");
+const _idsAll = (src.match(/id="[^"]+"/g) || []).map(s => s.slice(4, -1)).filter(x => !x.includes("${"));
+const _dupId = [...new Set(_idsAll.filter((n, i) => _idsAll.indexOf(n) !== i))];
+ok(_dupId.every(n => n === "backBtn"), "重复 id 只有已知无害的 backBtn：" + (_dupId.join(",") || "无"));
+
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
 process.exit(fail ? 1 : 0);

@@ -651,6 +651,47 @@ ok(any(_B + "frac{1}{4}" in x and "overline" in x for x in _spans),
    "跨行的公式是一条完整的 #mi：" + str([x[:40] for x in _spans]))
 ok(not any(x.strip() in (")", "+ P(", "P") for x in _spans), "没有出现 ) / + P( / P 这种碎片")
 
+print("\n[28] 流程集成：换仓库出卷 / 导出导入 / 撤销 / 删除进回收站")
+# 1) 换仓库后仍能出卷（字体与 typst 包在程序目录, 数据在仓库目录）
+m.create_vault({"name": "自检仓库C"})
+make_page("P1", 600, 900, [(120, 300, 220, 380)])      # 新仓库里也得有整页图
+_rv = asyncio.run(m.crop({"page": "P1", "batch": "BATCH-VC", "boxes": [
+    {"subject": "数学", "chapter": "一、选择题", "note": "换仓库测试 [图1]",
+     "answer": "A", "analysis": "解析文本",
+     "x": 40, "y": 200, "w": 300, "h": 300,
+     "figures": [{"n": 1, "x": 250, "y": 330, "w": 340, "h": 270}]}]}))
+_vid = _rv["items"][0]["id"]
+_rr2 = m.paper_pdf(ids=_vid, attach="both")
+ok(isinstance(_rr2, dict) and _rr2.get("ok"), "换到新仓库后 PDF 仍能生成：" + str(_rr2.get("msg")))
+# 2) 导出 -> 导入（导出的 ZIP 再导回本仓库, 题目应 +1 且图片在）
+_z = m.export_data()
+ok(len(getattr(_z, "body", b"")) > 1000, "导出 ZIP 有内容")
+_before2 = len(m.load_db()["items"])
+class _Up2:
+    filename = "pack.zip"
+    def __init__(self, d): self._d = d
+    async def read(self): return self._d
+_ri = asyncio.run(m.import_data(file=_Up2(_z.body)))
+eq(_ri.get("ok"), True, "导入成功")
+eq(len(m.load_db()["items"]), _before2 + 1, "导入后题目 +1")
+_new = m.load_db()["items"][-1]
+ok((m.ROOT / _new["image"]).exists(), "导入的图片落盘")
+ok([f["n"] for f in _new["figures"]] == [1], "导入的图块保留")
+# 3) 撤销上次写库
+_n_before3 = len(m.load_db()["items"])
+_ru2 = m.undo_last_write()
+ok(isinstance(_ru2, dict) and _ru2.get("ok"), "撤销可用：" + str(_ru2.get("msg")) if isinstance(_ru2, dict) else "?")
+ok(len(m.load_db()["items"]) <= _n_before3, "撤销后题目数回到之前")
+# 4) 删除题目 -> 图片进 .trash
+_del_it = next((x for x in m.load_db()["items"] if x["id"] == _vid), None)   # 用第 1 步建的题(导入那条已被撤销回滚)
+_img = m.ROOT / (_del_it or {}).get("image", "")
+if _del_it and _img.exists():
+    m.delete_item(_del_it["id"])
+    ok(not _img.exists(), "删除后原图不在 items 里")
+    trashed = list(m.TRASH_DIR.glob(f"*{_img.name}"))
+    ok(bool(trashed), "图片进了 .trash（可恢复）：" + str([p.name for p in trashed[:2]]))
+m._bind_data_paths(VAULT)          # 切回原自检仓库, 不影响后续
+
 # ---------------------------------------------------------------- 收尾
 shutil.rmtree(TMPROOT, ignore_errors=True)
 ok(not _REAL_AI_CFG.read_text("utf-8").count("fake-key") if _REAL_AI_CFG.exists() else True,

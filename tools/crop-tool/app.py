@@ -1100,8 +1100,6 @@ MATH_KEYWORDS = {"frac", "sqrt", "sin", "cos", "tan", "log", "ln", "exp", "lim",
                  "mu", "rho", "tau", "cdots", "to", "Delta", "angle", "perp",
                  "parallel", "degrees", "equiv", "dots", "subset", "union",
                  "intersect", "in", "upright"}
-_SUB = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
-_SUP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
 
 
 CE_ARROWS = [("<=>>", " \\rightleftharpoons "), ("<<=>", " \\leftrightharpoons "),
@@ -1424,59 +1422,6 @@ def latex_var(s):
     """LaTeX 片段 -> 可放入 Typst 字符串 mi(\"...\") 的形式。"""
     s = ce_to_latex(s)
     return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def latex_to_typst(s):
-    """把 OCR/AI 输出的公式片段转成 Typst 数学语法, 化学式用正体。"""
-    s = re.sub(r"\\ce\{([^{}]*)\}", r"\1", s)   # mhchem \ce{H2O} -> H2O
-    s = re.sub(r"\\pu\{([^{}]*)\}", r"\1", s)
-    s = re.sub(r"[₀-₉]", lambda m: "_" + m.group(0).translate(_SUB), s)
-    s = re.sub(r"[⁰-⁹]", lambda m: "^" + m.group(0).translate(_SUP), s)
-    s = s.replace("⁻", "^(-)").replace("⁺", "^(+)")
-    s = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"frac(\1, \2)", s)
-    s = re.sub(r"\\sqrt\{([^{}]*)\}", r"sqrt(\1)", s)
-    s = s.replace("\\times", " times ").replace("\\cdot", " dot ")
-    s = s.replace("\\pm", " plus.minus ").replace("\\rightarrow", " arrow.r ")
-    s = s.replace("\\infty", " infinity ")
-    s = s.replace("\\le", " lt.eq ").replace("\\ge", " gt.eq ")
-    for k, v in (("\\Delta", "Delta"), ("\\alpha", "alpha"), ("\\beta", "beta"),
-                 ("\\gamma", "gamma"), ("\\theta", "theta"), ("\\lambda", "lambda"),
-                 ("\\mu", "mu"), ("\\pi", "pi"), ("\\sigma", "sigma"),
-                 ("\\omega", "omega"), ("\\phi", "phi"), ("\\epsilon", "epsilon"),
-                 ("\\angle", "angle"), ("\\perp", "perp"), ("\\parallel", "parallel"),
-                 ("\\circ", "degrees"), ("\\dots", " dots "), ("\\ldots", " dots "),
-                 ("\\equiv", " equiv "), ("\\approx", " approx "), ("\\neq", " ne "),
-                 ("\\geq", " gt.eq "), ("\\leq", " lt.eq "), ("\\in", " in "),
-                 ("\\subset", " subset "), ("\\cup", " union "), ("\\cap", " intersect "),
-                 ("\\,", " "), ("\\!", " "), ("\\ ", " ")):
-        s = s.replace(k, v)
-    # 化学/结构式常用命令
-    s = re.sub(r"\\dot\{([^{}]*)\}", r"dot(\1)", s)
-    for k, v in (("\\leftharpoons", " arrow.l.r "), ("\\rightleftharpoons", " arrow.l.r "),
-                 ("\\longleftrightarrow", " arrow.l.r "), ("\\longrightarrow", " arrow.r "),
-                 ("\\longleftarrow", " arrow.l "), ("\\implies", " arrow.r.double "),
-                 ("\\iff", " arrow.l.r.double "), ("\\quad", " "), ("\\qquad", " "),
-                 ("\\operatorname", ""), ("\\text", ""), ("\\underset", ""),
-                 ("\\overset", ""), ("\\stackrel", ""), ("\\begin", ""),
-                 ("\\end", ""), ("\\dfrac", "frac"), ("\\tfrac", "frac"),
-                 ("\\displaystyle", ""), ("\\limits", ""),
-                 ("\\left(", "("), ("\\right)", ")"), ("\\left[", "["),
-                 ("\\right]", "]"), ("\\left.", ""), ("\\right.", "")):
-        s = s.replace(k, v)
-    # 兜底: 其余未知 LaTeX 命令去掉反斜杠, 避免 Typst 解析错误
-    s = re.sub(r"\\([a-zA-Z]+)", r"\1", s)
-    s = s.replace("⇌", " arrow.l.r ").replace("↔", " arrow.l.r ")
-    s = s.replace("→", " arrow.r ").replace("←", " arrow.l ")
-    s = s.replace("≤", " lt.eq ").replace("≥", " gt.eq ").replace("≠", " ne ")
-    s = s.replace("×", " times ").replace("·", " dot ")
-    s = re.sub(r"[{}]", "", s)   # 先删花括号, 再包 upright
-    # 多字母串/字母数字组合(化学式/元素) -> upright 正体; 单字母是变量保持斜体
-    s = re.sub(r"([A-Za-z][A-Za-z0-9]*)",
-               lambda m: m.group(1)
-               if (len(m.group(1)) == 1 and m.group(1).isalpha())
-                  or m.group(1).lower() in MATH_KEYWORDS
-               else f'upright("{m.group(1)}")', s)
-    return s
 
 
 def ai_proofread(img_rgb, draft):
@@ -2298,23 +2243,6 @@ def _typst_run(inp, pdf_path):
 
 
 _MATH_OK_CACHE = {}                     # 公式片段 -> 能否渲染（进程内缓存, 避免每次都体检）
-
-
-def _one_math_ok(typ_frag, probe, probe_pdf, pre):
-    """某个公式能不能渲染（带缓存）。"""
-    hit = _MATH_OK_CACHE.get(typ_frag)
-    if hit is not None:
-        return hit
-    probe.write_text(pre + typ_frag + "\n", encoding="utf-8")
-    try:
-        _typst_run(probe, probe_pdf)
-        ok = True
-    except Exception:
-        ok = False
-    if len(_MATH_OK_CACHE) > 4000:
-        _MATH_OK_CACHE.clear()
-    _MATH_OK_CACHE[typ_frag] = ok
-    return ok
 
 
 def _find_bad_math(snips, probe, probe_pdf, pre, batch=32):
